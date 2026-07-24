@@ -1,6 +1,6 @@
 /** Cursor Agent adapter (base command `agent`). */
 import { GENERIC_SKILL_BODY } from "../agent-skill-content";
-import { modelArgs } from "./common";
+import { modelArgs, providerArgs } from "./common";
 import { shellEscape } from "./shell";
 import { buildTaskPrompt } from "./template";
 import type { AgentAdapter } from "./types";
@@ -26,6 +26,7 @@ export const cursorAdapter: AgentAdapter = {
 		}
 
 		args.push(...modelArgs(config, options));
+		args.push(...providerArgs(options));
 
 		if (config?.permissionMode && config.permissionMode !== "default") {
 			if (config.permissionMode === "plan") args.push("--mode", "plan");

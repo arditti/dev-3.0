@@ -1,6 +1,6 @@
 /** OpenCode adapter. */
 import { GENERIC_SKILL_BODY } from "../agent-skill-content";
-import { modelArgs } from "./common";
+import { modelArgs, providerArgs } from "./common";
 import { shellEscape } from "./shell";
 import { buildTaskPrompt } from "./template";
 import type { AgentAdapter } from "./types";
@@ -23,6 +23,7 @@ export const opencodeAdapter: AgentAdapter = {
 		}
 
 		args.push(...modelArgs(config, options));
+		args.push(...providerArgs(options));
 		// OpenCode ignores dev3's --permission-mode / --effort / --max-budget-usd.
 
 		if (config?.additionalArgs) args.push(...config.additionalArgs);

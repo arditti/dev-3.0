@@ -797,8 +797,19 @@ export interface PxpipeProxyStatus {
  * + a registry entry + its i18n labels.
  */
 export const LLM_PROVIDER = {
-	Anthropic: "anthropic",
-	Bedrock: "bedrock",
+	/** The agent's own native backend (Anthropic API for Claude, OpenAI for
+	 *  Codex). The stored value stays the historical `"anthropic"` — it is the
+	 *  persisted default sentinel in users' settings, so renaming it would
+	 *  silently reset existing setups. */
+	Native: "anthropic",
+	/** Amazon Bedrock as the backend for the Claude agent. The stored value
+	 *  stays the historical `"bedrock"` — it is persisted in users' settings
+	 *  (agent.llmProvider + providerConfig keys), so renaming it would silently
+	 *  reset existing Bedrock setups. */
+	BedrockClaude: "bedrock",
+	/** Amazon Bedrock as the backend for the Codex agent. A separate id because
+	 *  the registry pairs each id with one agent command. */
+	BedrockCodex: "bedrock-codex",
 } as const;
 
 export type LlmProvider = (typeof LLM_PROVIDER)[keyof typeof LLM_PROVIDER];
@@ -3013,6 +3024,10 @@ export type AppRPCSchema = {
 			setAgentBinaryPath: {
 				params: { agentId: string; path: string };
 				response: void;
+			};
+			checkCodexBedrockConfig: {
+				params: void;
+				response: { configured: boolean };
 			};
 			getChangelogs: {
 				params: void;
