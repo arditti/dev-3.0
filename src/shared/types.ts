@@ -3025,6 +3025,10 @@ export type AppRPCSchema = {
 				params: { agentId: string; path: string };
 				response: void;
 			};
+			checkCodexBedrockConfig: {
+				params: void;
+				response: { configured: boolean };
+			};
 			getChangelogs: {
 				params: void;
 				response: ChangelogEntry[];

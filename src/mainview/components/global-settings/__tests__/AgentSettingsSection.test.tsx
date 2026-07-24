@@ -18,9 +18,12 @@ vi.mock("../../../rpc", () => ({
 				}),
 			),
 			setActiveAgentAccount: vi.fn(),
+			checkCodexBedrockConfig: vi.fn(() => Promise.resolve({ configured: true })),
 		},
 	},
 }));
+
+import { api } from "../../../rpc";
 
 const baseSettings: GlobalSettings = {
 	defaultAgentId: "builtin-claude",
@@ -173,6 +176,49 @@ describe("AgentSettingsSection — per-agent provider selector", () => {
 		expect(screen.getByDisplayValue("us.anthropic.claude-opus-4-8")).toBeTruthy();
 		expect(screen.getAllByText("settings.providerModelManual").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("settings.providerModelRevert").length).toBeGreaterThan(0);
+	});
+
+	it("Codex on Bedrock: warns when ~/.codex/config.toml lacks the provider section", async () => {
+		vi.mocked(api.request.checkCodexBedrockConfig).mockResolvedValueOnce({ configured: false });
+		const user = userEvent.setup();
+		render(
+			<I18nProvider>
+				<AgentSettingsSection
+					t={((k: string) => k) as never}
+					agents={DEFAULT_AGENTS.map((a) =>
+						a.baseCommand === "codex" ? { ...a, llmProvider: "bedrock-codex" as const } : a,
+					)}
+					globalSettings={baseSettings}
+					onAgentsChange={vi.fn()}
+					onDefaultAgentChange={vi.fn()}
+					onDefaultConfigChange={vi.fn()}
+				/>
+			</I18nProvider>,
+		);
+		await expandAgent(user, "Codex");
+		expect(await screen.findByText("settings.providerBedrockCodexConfigMissing")).toBeTruthy();
+	});
+
+	it("Codex on Bedrock: no warning when the provider section exists (default mock)", async () => {
+		const user = userEvent.setup();
+		render(
+			<I18nProvider>
+				<AgentSettingsSection
+					t={((k: string) => k) as never}
+					agents={DEFAULT_AGENTS.map((a) =>
+						a.baseCommand === "codex" ? { ...a, llmProvider: "bedrock-codex" as const } : a,
+					)}
+					globalSettings={baseSettings}
+					onAgentsChange={vi.fn()}
+					onDefaultAgentChange={vi.fn()}
+					onDefaultConfigChange={vi.fn()}
+				/>
+			</I18nProvider>,
+		);
+		await expandAgent(user, "Codex");
+		// Let the preflight promise resolve before asserting the negative.
+		expect(screen.getByPlaceholderText("openai.gpt-5.6-sol")).toBeTruthy();
+		expect(screen.queryByText("settings.providerBedrockCodexConfigMissing")).toBeNull();
 	});
 
 	it("a stale provider id (base command changed to codex) renders no provider fields", async () => {

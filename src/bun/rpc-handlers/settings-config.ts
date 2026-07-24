@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { PATHS } from "../electrobun-platform";
 import type { AgentCheckResult, CodingAgent, ConfigSourceEntry, Dev3RepoConfig, GitHubCliStatus, GlobalSettings, Project, ProjectSettingsUpdate, RequirementCheckResult, RosettaWarningInfo } from "../../shared/types";
@@ -17,7 +18,7 @@ import { isFreshStartMode } from "../fresh-start";
 import { spawn } from "../spawn";
 import { setCurrentUiTheme } from "../theme-state";
 import { extractConfigFromParams, getPushMessage, getSystemRequirements, log, resolveBinaryPath, setFocusMode } from "./shared";
-import { tmuxSearchPaths } from "./shared-pure";
+import { hasModelProviderSection, tmuxSearchPaths } from "./shared-pure";
 import { whichSync } from "../which";
 import { isExecutableFile } from "../executable";
 
@@ -396,6 +397,19 @@ async function setAgentBinaryPath(params: { agentId: string; path: string }): Pr
 	log.info("<- setAgentBinaryPath saved");
 }
 
+/** Preflight for the Codex Bedrock backend: dev3 only routes codex at the
+ *  provider via `-c model_provider=...`; the `[model_providers.amazon-bedrock]`
+ *  section itself must exist in the user's ~/.codex/config.toml. */
+async function checkCodexBedrockConfig(): Promise<{ configured: boolean }> {
+	log.info("-> checkCodexBedrockConfig");
+	try {
+		const toml = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
+		return { configured: hasModelProviderSection(toml, "amazon-bedrock") };
+	} catch {
+		return { configured: false };
+	}
+}
+
 async function setTmuxTheme(params: { theme: "dark" | "light"; preference?: "dark" | "light" | "system" }): Promise<void> {
 	log.info("→ setTmuxTheme", params);
 	const settings = await loadSettings();
@@ -435,5 +449,6 @@ export const settingsConfigHandlers = {
 	setCustomBinaryPath,
 	checkAgentAvailability,
 	setAgentBinaryPath,
+	checkCodexBedrockConfig,
 	setTmuxTheme,
 };

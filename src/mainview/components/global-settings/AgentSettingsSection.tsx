@@ -1426,6 +1426,27 @@ function ProviderSelector({
 	const settings = activeDef ? providerConfig?.[activeDef.id] : undefined;
 	const geo = settings?.geo ?? DEFAULT_BEDROCK_GEO;
 
+	// Preflight: codex is routed at Bedrock via a `-c` override, but the
+	// `[model_providers.amazon-bedrock]` section must exist in the user's own
+	// ~/.codex/config.toml — warn here instead of failing at launch.
+	const [codexConfigMissing, setCodexConfigMissing] = useState(false);
+	useEffect(() => {
+		if (activeDef?.id !== LLM_PROVIDER.BedrockCodex) {
+			setCodexConfigMissing(false);
+			return;
+		}
+		let cancelled = false;
+		api.request
+			.checkCodexBedrockConfig()
+			.then((result) => {
+				if (!cancelled) setCodexConfigMissing(!result.configured);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeDef?.id]);
+
 	const patchProvider = (patch: Partial<ProviderSettings>) => {
 		if (!activeDef) return;
 		onChange({
@@ -1471,6 +1492,11 @@ function ProviderSelector({
 					<p className="text-fg-3 text-xs">
 						{t(activeDef.hintKey as Parameters<TFunction>[0])}
 					</p>
+					{codexConfigMissing ? (
+						<p className="text-danger text-xs">
+							{t("settings.providerBedrockCodexConfigMissing")}
+						</p>
+					) : null}
 					{activeDef.usesGeo ? (
 						<div>
 							<span className="block text-fg-2 text-xs mb-1">

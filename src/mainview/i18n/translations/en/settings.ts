@@ -105,6 +105,7 @@ const settings = {
 	"settings.providerBedrock": "Amazon Bedrock",
 	"settings.providerBedrockHint": "Credentials and AWS region come from your own Claude Code setup. Pick the inference-profile region below; model ids map automatically — edit a row to pin a specific profile or ARN.",
 	"settings.providerBedrockCodexHint": "Credentials and AWS region come from your own Codex setup (~/.codex/config.toml, [model_providers.amazon-bedrock]). Model ids map automatically — edit a row to pin a specific id.",
+	"settings.providerBedrockCodexConfigMissing": "~/.codex/config.toml has no [model_providers.amazon-bedrock] section — launches on this backend will fail until you add it.",
 	"settings.providerBedrockGeo": "Inference-profile region",
 	"settings.providerModelTable": "Model mapping",
 	"settings.providerModelTableHint": "dev3 alias → provider model id",
