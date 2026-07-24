@@ -797,7 +797,11 @@ export interface PxpipeProxyStatus {
  * + a registry entry + its i18n labels.
  */
 export const LLM_PROVIDER = {
-	Anthropic: "anthropic",
+	/** The agent's own native backend (Anthropic API for Claude, OpenAI for
+	 *  Codex). The stored value stays the historical `"anthropic"` — it is the
+	 *  persisted default sentinel in users' settings, so renaming it would
+	 *  silently reset existing setups. */
+	Native: "anthropic",
 	/** Amazon Bedrock as the backend for the Claude agent. The stored value
 	 *  stays the historical `"bedrock"` — it is persisted in users' settings
 	 *  (agent.llmProvider + providerConfig keys), so renaming it would silently

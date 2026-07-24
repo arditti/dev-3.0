@@ -11,6 +11,7 @@ import type {
 	ProviderConfig,
 	ProviderSettings,
 } from "../../../shared/types";
+import { LLM_PROVIDER } from "../../../shared/types";
 import { randomUUID } from "../../uuid";
 import { ListEditor } from "../ListEditor";
 import AgentConfigPicker from "../AgentConfigPicker";
@@ -1390,8 +1391,9 @@ function modelsForAgent(agent: CodingAgent): string[] {
 /**
  * Per-agent LLM-backend selector: the agent's native API (default) or any
  * third-party backend registered for that agent (e.g. Amazon Bedrock for
- * Claude). Selecting a third-party provider injects its enable flag + the mapped
- * model into the agent's launches and drops dev3's --model alias.
+ * Claude or Codex). Selecting a third-party provider routes the agent's
+ * launches at that backend with the mapped model — via env (dropping --model)
+ * or via CLI args with the --model alias rewritten, per the registry entry.
  * Credentials/region are NOT set here — the customer owns those in their own
  * agent config. Renders nothing for agents with no registered backend; provider
  * fields appear only for the selected provider, driven by its registry entry.
@@ -1414,7 +1416,13 @@ function ProviderSelector({
 	const options = providersForAgent(baseCommand);
 	const setProvider = (next: LlmProvider) => onChange({ llmProvider: next });
 
-	const activeDef = getProviderDefinition(provider);
+	// Mirror the launcher: only a backend registered for THIS agent's command
+	// applies (same guard as agentProvider in agents.ts); a stale id — e.g. after
+	// the base command was edited — renders and behaves as the native default.
+	const def = getProviderDefinition(provider);
+	const cmdName = baseCommand.split("/").pop() ?? "";
+	const activeDef = def && def.agentCommand === cmdName ? def : undefined;
+	const effectiveProvider = activeDef ? provider : LLM_PROVIDER.Native;
 	const settings = activeDef ? providerConfig?.[activeDef.id] : undefined;
 	const geo = settings?.geo ?? DEFAULT_BEDROCK_GEO;
 
@@ -1440,7 +1448,7 @@ function ProviderSelector({
 
 			<div className="inline-flex rounded-xl border border-edge bg-base p-1 gap-1">
 				{options.map((opt) => {
-					const active = provider === opt.id;
+					const active = effectiveProvider === opt.id;
 					return (
 						<button
 							key={opt.id}

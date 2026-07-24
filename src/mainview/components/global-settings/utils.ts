@@ -144,7 +144,8 @@ export function buildCommandPreview(
 			? (providerPinnedModel(llmProvider, providerConfig, config.model) ?? config.model)
 			: config.model;
 
-	if (previewModel && !modelViaEnv) {
+	// Env channel → no --model at all; flag channel → the (possibly pinned) model.
+	if (!modelViaEnv && previewModel) {
 		// Match the actual launcher: quote when the value would otherwise be
 		// glob-expanded by the shell (e.g. `claude-opus-4-8[1m]`).
 		parts.push("--model", quoteIfUnsafeForPreview(previewModel));

@@ -133,6 +133,8 @@ export const PROVIDER_REGISTRY: Partial<Record<LlmProvider, ProviderDefinition>>
 		hintKey: "settings.providerBedrockCodexHint",
 		// Codex has no model env var: the model rides the --model flag (rewritten
 		// to the mapped id) and the backend is selected via a config override.
+		// Caveat: a config with NO model emits no --model, so codex falls back to
+		// its own default (all built-in codex configs set one; custom configs may not).
 		enableArgs: ["-c", 'model_provider="amazon-bedrock"'],
 		usesGeo: false,
 		// Bedrock exposes OpenAI models as flat `openai.<family>` ids — no
@@ -178,7 +180,7 @@ export function providersForAgent(
 	if (third.length === 0) return [];
 	const nativeLabel = NATIVE_PROVIDER_LABEL[agentKey(baseCommand)] ?? "settings.providerNative";
 	return [
-		{ id: LLM_PROVIDER.Anthropic, labelKey: nativeLabel },
+		{ id: LLM_PROVIDER.Native, labelKey: nativeLabel },
 		...third.map((def) => ({ id: def.id, labelKey: def.labelKey })),
 	];
 }
@@ -186,11 +188,6 @@ export function providersForAgent(
 /** Look up the registry entry for a provider id (undefined for the native default / unknown). */
 export function getProviderDefinition(provider: LlmProvider | undefined): ProviderDefinition | undefined {
 	return provider ? PROVIDER_REGISTRY[provider] : undefined;
-}
-
-/** True when the provider is a third-party backend (dev3 pins the model id). */
-export function isThirdPartyProvider(provider: LlmProvider | undefined): boolean {
-	return getProviderDefinition(provider) !== undefined;
 }
 
 /** True when the provider delivers the model via env (`modelEnv`), so the
@@ -223,11 +220,11 @@ export function providerPinnedModel(
 /**
  * Resolve the provider-native model id for a dev3 config model alias.
  *
- * dev3 always pins the model on a third-party backend rather than letting Claude
- * Code fall back to its own default — otherwise the control plane (dev3) and the
- * data plane (the launched agent) could run different models. Known families use
- * the exact mapped id; unknown/new families are derived from the normalized
- * alias. Returns undefined for the Anthropic default or when no model is given.
+ * dev3 always pins the model on a third-party backend rather than letting the
+ * agent fall back to its own default — otherwise the control plane (dev3) and
+ * the data plane (the launched agent) could run different models. The id is
+ * derived from the normalized alias via the provider's `mapFamily`. Returns
+ * undefined for the native default or when no model is given.
  */
 export function mapModelForProvider(
 	model: string | undefined,

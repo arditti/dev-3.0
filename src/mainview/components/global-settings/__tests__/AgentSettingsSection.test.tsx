@@ -175,6 +175,27 @@ describe("AgentSettingsSection — per-agent provider selector", () => {
 		expect(screen.getAllByText("settings.providerModelRevert").length).toBeGreaterThan(0);
 	});
 
+	it("a stale provider id (base command changed to codex) renders no provider fields", async () => {
+		const user = userEvent.setup();
+		// Claude was on Bedrock, then its base command was edited to `codex`:
+		// `"bedrock"` belongs to the claude backend, so nothing should render for it.
+		renderSection({ llmProvider: "bedrock", baseCommand: "codex" });
+		await expandAgent(user, "Claude");
+		expect(screen.queryByText("settings.providerBedrockHint")).toBeNull();
+		expect(screen.queryByRole("button", { name: "global" })).toBeNull();
+		expect(screen.queryByText("settings.providerModelTable")).toBeNull();
+	});
+
+	it("a stale provider id highlights the native option (matches launcher fallback)", async () => {
+		const user = userEvent.setup();
+		renderSection({ llmProvider: "bedrock", baseCommand: "codex" });
+		await expandAgent(user, "Claude");
+		// The launcher rejects the mismatched id and launches native — the toggle
+		// must show the same reality, not render with no active option.
+		const native = screen.getAllByRole("button", { name: "settings.providerOpenAI" })[0];
+		expect(native.className).toContain("bg-accent");
+	});
+
 	it("clicking Revert clears that model's override", async () => {
 		const user = userEvent.setup();
 		const onAgentsChange = renderSection({

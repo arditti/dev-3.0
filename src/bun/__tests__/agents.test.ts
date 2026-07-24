@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveAgentCommand, supportsResume, supportsPreAssignedSessionId, buildResumeCommand, skillInvocationPrefix, mergeMcpApproval, mergeWithDefaults, applyLayoutResync, applyModelOverride, applyProviderModel, claudeModelFamily, __setCodexProfileV2Override, type TemplateContext } from "../agents";
+import { resolveAgentCommand, supportsResume, supportsPreAssignedSessionId, buildResumeCommand, skillInvocationPrefix, mergeMcpApproval, mergeWithDefaults, applyLayoutResync, applyModelOverride, applyProviderModel, resolveLaunchConfig, claudeModelFamily, __setCodexProfileV2Override, type TemplateContext } from "../agents";
 import type { AgentConfiguration, CodingAgent } from "../../shared/types";
 import { DEFAULT_AGENTS } from "../../shared/types";
 import { ENV_UNSET } from "../../shared/agent-accounts";
@@ -1150,6 +1150,27 @@ describe("applyProviderModel — flag-delivered backends rewrite the model alias
 	it("ignores a provider registered for a different agent command", () => {
 		const config = makeConfig({ model: "gpt-5.6-sol" });
 		expect(applyProviderModel(config, makeAgent({ baseCommand: "gemini", llmProvider: "bedrock-codex" }))).toBe(config);
+	});
+});
+
+describe("resolveLaunchConfig — the shared launch-time model pipeline", () => {
+	it("rewrites a codex alias to the pinned Bedrock id (provider step applies)", () => {
+		const agent = makeAgent({ baseCommand: "codex", llmProvider: "bedrock-codex" });
+		const config = makeConfig({ model: "gpt-5.6-sol" });
+		const result = resolveLaunchConfig(config, agent, "codex", {});
+		expect(result?.model).toBe("openai.gpt-5.6-sol");
+	});
+
+	it("applies the session-env model override after the provider step (claude)", () => {
+		const agent = makeAgent({ baseCommand: "claude" });
+		const config = makeConfig({ model: "sonnet" });
+		const result = resolveLaunchConfig(config, agent, "claude", { ANTHROPIC_MODEL: "my-model" });
+		expect(result?.model).toBe("my-model");
+	});
+
+	it("is a no-op for a native codex config with no session env", () => {
+		const config = makeConfig({ model: "gpt-5.6-sol" });
+		expect(resolveLaunchConfig(config, makeAgent({ baseCommand: "codex" }), "codex", {})).toBe(config);
 	});
 });
 

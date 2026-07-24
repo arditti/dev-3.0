@@ -3,7 +3,6 @@ import {
 	buildProviderEnv,
 	defaultModelMap,
 	getProviderDefinition,
-	isThirdPartyProvider,
 	mapModelForProvider,
 	normalizeAlias,
 	providerOmitsModelFlag,
@@ -49,7 +48,7 @@ describe("getProviderDefinition", () => {
 		expect(def?.usesGeo).toBe(false);
 	});
 	it("returns undefined for the Anthropic default and unknown ids", () => {
-		expect(getProviderDefinition(LLM_PROVIDER.Anthropic)).toBeUndefined();
+		expect(getProviderDefinition(LLM_PROVIDER.Native)).toBeUndefined();
 		expect(getProviderDefinition(undefined)).toBeUndefined();
 	});
 });
@@ -98,7 +97,7 @@ describe("mapModelForProvider", () => {
 		);
 	});
 	it("returns undefined for the Anthropic default or when no model is given", () => {
-		expect(mapModelForProvider("claude-opus-4-8[1m]", LLM_PROVIDER.Anthropic)).toBeUndefined();
+		expect(mapModelForProvider("claude-opus-4-8[1m]", LLM_PROVIDER.Native)).toBeUndefined();
 		expect(mapModelForProvider(undefined, LLM_PROVIDER.BedrockClaude)).toBeUndefined();
 		expect(mapModelForProvider("", LLM_PROVIDER.BedrockClaude)).toBeUndefined();
 	});
@@ -124,13 +123,13 @@ describe("thirdPartyProvidersForAgent", () => {
 describe("providersForAgent", () => {
 	it("lists the native option first, then registered backends, for claude", () => {
 		expect(providersForAgent("claude")).toEqual([
-			{ id: LLM_PROVIDER.Anthropic, labelKey: "settings.providerAnthropic" },
+			{ id: LLM_PROVIDER.Native, labelKey: "settings.providerAnthropic" },
 			{ id: LLM_PROVIDER.BedrockClaude, labelKey: "settings.providerBedrock" },
 		]);
 	});
 	it("lists OpenAI (native) first, then Bedrock, for codex", () => {
 		expect(providersForAgent("codex")).toEqual([
-			{ id: LLM_PROVIDER.Anthropic, labelKey: "settings.providerOpenAI" },
+			{ id: LLM_PROVIDER.Native, labelKey: "settings.providerOpenAI" },
 			{ id: LLM_PROVIDER.BedrockCodex, labelKey: "settings.providerBedrock" },
 		]);
 	});
@@ -139,21 +138,12 @@ describe("providersForAgent", () => {
 	});
 });
 
-describe("isThirdPartyProvider", () => {
-	it("is true for bedrock and bedrock-codex, false otherwise", () => {
-		expect(isThirdPartyProvider(LLM_PROVIDER.BedrockClaude)).toBe(true);
-		expect(isThirdPartyProvider(LLM_PROVIDER.BedrockCodex)).toBe(true);
-		expect(isThirdPartyProvider(LLM_PROVIDER.Anthropic)).toBe(false);
-		expect(isThirdPartyProvider(undefined)).toBe(false);
-	});
-});
-
 describe("providerOmitsModelFlag", () => {
 	it("is true only for env-delivering backends (Claude on Bedrock)", () => {
 		expect(providerOmitsModelFlag(LLM_PROVIDER.BedrockClaude)).toBe(true);
 		// Codex delivers the model via a rewritten --model flag, not env.
 		expect(providerOmitsModelFlag(LLM_PROVIDER.BedrockCodex)).toBe(false);
-		expect(providerOmitsModelFlag(LLM_PROVIDER.Anthropic)).toBe(false);
+		expect(providerOmitsModelFlag(LLM_PROVIDER.Native)).toBe(false);
 		expect(providerOmitsModelFlag(undefined)).toBe(false);
 	});
 });
@@ -177,7 +167,7 @@ describe("providerPinnedModel (bedrock-codex)", () => {
 		).toBe("openai.custom-id");
 	});
 	it("is undefined for the native default or when the config has no model", () => {
-		expect(providerPinnedModel(LLM_PROVIDER.Anthropic, undefined, "gpt-5.6-sol")).toBeUndefined();
+		expect(providerPinnedModel(LLM_PROVIDER.Native, undefined, "gpt-5.6-sol")).toBeUndefined();
 		expect(providerPinnedModel(LLM_PROVIDER.BedrockCodex, undefined, undefined)).toBeUndefined();
 	});
 });
@@ -187,7 +177,7 @@ describe("buildProviderEnv", () => {
 		expect(buildProviderEnv(LLM_PROVIDER.BedrockCodex, undefined, "gpt-5.6-sol")).toEqual({});
 	});
 	it("returns {} for anthropic (default) — nothing injected", () => {
-		expect(buildProviderEnv(LLM_PROVIDER.Anthropic, undefined, "claude-opus-4-8[1m]")).toEqual({});
+		expect(buildProviderEnv(LLM_PROVIDER.Native, undefined, "claude-opus-4-8[1m]")).toEqual({});
 		expect(buildProviderEnv(undefined, undefined, "claude-opus-4-8[1m]")).toEqual({});
 	});
 

@@ -641,11 +641,24 @@ export async function resolveCommandForAgent(
 	await applyCodexAccountEnv(baseCmd, extraEnv, options?.accountId);
 	const command = resolveAgentCommand(
 		agentWithPath,
-		applyModelOverride(applyProviderModel(config, agentWithPath), baseCmd, extraEnv),
+		resolveLaunchConfig(config, agentWithPath, baseCmd, extraEnv),
 		ctx,
 		providerOpts,
 	);
 	return { command, agent, config, extraEnv };
+}
+
+/** The launch-time model pipeline shared by both resolveCommand* entry points:
+ *  rewrite the alias to the pinned provider id (flag-delivering backends), then
+ *  apply session-env model overrides (API profiles). One seam, so neither
+ *  application can be silently dropped from a call site. */
+export function resolveLaunchConfig(
+	config: AgentConfiguration | undefined,
+	agent: CodingAgent,
+	baseCmd: string,
+	extraEnv: Record<string, string>,
+): AgentConfiguration | undefined {
+	return applyModelOverride(applyProviderModel(config, agent), baseCmd, extraEnv);
 }
 
 /** The provider selected on this agent, but only if it's a backend actually
@@ -732,7 +745,7 @@ export async function resolveCommandForProject(
 		await applyCodexAccountEnv(baseCmd, extraEnv, options?.accountId);
 		const command = resolveAgentCommand(
 			agentWithPath,
-			applyModelOverride(applyProviderModel(config, agentWithPath), baseCmd, extraEnv),
+			resolveLaunchConfig(config, agentWithPath, baseCmd, extraEnv),
 			ctx,
 			providerOpts,
 		);

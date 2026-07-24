@@ -43,7 +43,8 @@ export const codexAdapter: AgentAdapter = {
 		// generic permission-mode / effort / budget flags.
 		args.push(...modelArgs(config, options));
 		// Backend routing (e.g. Bedrock's `-c model_provider=...`) before the
-		// config's additionalArgs, so an explicit user override still wins.
+		// config's additionalArgs, so an explicit user override still wins —
+		// relies on codex's repeated-`-c` last-wins semantics (decision 163).
 		args.push(...providerArgs(options));
 		if (config?.additionalArgs) args.push(...config.additionalArgs);
 

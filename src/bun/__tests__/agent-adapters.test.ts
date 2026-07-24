@@ -223,3 +223,18 @@ describe("launchArgs — Gemini / Cursor / OpenCode / Generic", () => {
 			.toBe("aider --model sonnet -- 'Fix the login bug'");
 	});
 });
+
+describe("launchArgs — provider routing args (registry promise)", () => {
+	// The llm-provider registry promises that a backend's enableArgs reach the
+	// launch with no adapter special-casing. Pin it for EVERY adapter so a future
+	// backend (e.g. one for gemini) can't silently drop its routing args.
+	it.each(["claude", "codex", "gemini", "agent", "opencode", "aider"])(
+		"%s emits options.providerArgs (shell-quoted)",
+		(base) => {
+			const cmd = launch(base, cfg({ model: undefined }), {
+				providerArgs: ["-c", 'model_provider="amazon-bedrock"'],
+			});
+			expect(cmd).toContain(`-c 'model_provider="amazon-bedrock"'`);
+		},
+	);
+});

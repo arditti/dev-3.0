@@ -8,7 +8,7 @@
  * applied it to every agent). Byte-identical output is guarded by the Seam A
  * golden test — do not "clean this up" into body injection. */
 import { GENERIC_SKILL_BODY } from "../agent-skill-content";
-import { modelArgs } from "./common";
+import { modelArgs, providerArgs } from "./common";
 import { shellEscape } from "./shell";
 import { buildTaskPrompt } from "./template";
 import type { AgentAdapter } from "./types";
@@ -25,6 +25,7 @@ export const genericAdapter: AgentAdapter = {
 		const args: string[] = [];
 
 		args.push(...modelArgs(config, options));
+		args.push(...providerArgs(options));
 
 		if (config?.permissionMode && config.permissionMode !== "default") {
 			args.push("--permission-mode", config.permissionMode);
