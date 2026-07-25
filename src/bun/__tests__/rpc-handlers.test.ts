@@ -99,9 +99,16 @@ vi.mock("../github", () => ({
 
 vi.mock("../pty-server", () => ({
 	createSession: vi.fn(),
+	createNativeTaskSession: vi.fn(),
+	reattachNativeTaskSession: vi.fn(() => Promise.resolve(false)),
 	destroySession: vi.fn(),
+	destroySessionAwaited: vi.fn(() => Promise.resolve()),
+	destroyNativeTaskSession: vi.fn(),
 	hasSession: vi.fn(),
 	hasDeadSession: vi.fn(),
+	// Unmarked tasks are tmux — the native branches are exercised by their own suites.
+	getSessionBackend: vi.fn(() => "tmux"),
+	isNativeSessionSettling: vi.fn(() => false),
 	tmuxSessionExists: vi.fn(() => true),
 	listPaneIds: vi.fn(() => Promise.resolve(["%5"])),
 	getPtyPort: vi.fn(() => 9999),
@@ -5297,6 +5304,21 @@ describe("handlers.getPtyUrl", () => {
 		expect(result).toEqual({ url: "ws://localhost:9999?session=task-1" });
 	});
 
+	it("leaves a settling native session alone instead of probing and tearing it down", async () => {
+		// The host has not written its record yet, so a liveness probe would report
+		// "gone" and destroy a session that is still coming up.
+		vi.mocked(pty.hasSession).mockReturnValue(true);
+		vi.mocked(pty.isNativeSessionSettling).mockReturnValueOnce(true);
+		vi.mocked(pty.getPtyPort).mockReturnValue(9999);
+
+		const result = await handlers.getPtyUrl({ taskId: "task-1" });
+
+		expect(result).toEqual({ url: "ws://localhost:9999?session=task-1" });
+		expect(pty.destroySessionAwaited).not.toHaveBeenCalled();
+		expect(pty.tmuxSessionExists).not.toHaveBeenCalled();
+		expect(pty.createSession).not.toHaveBeenCalled();
+	});
+
 	it("destroys stale session when tmux is gone and offers recovery", async () => {
 		const project = makeProject();
 		const sessionState = { panes: [{ agentCmd: "claude", sessionId: "sid-1", agentId: "a", configId: "c" }] };
@@ -5310,7 +5332,7 @@ describe("handlers.getPtyUrl", () => {
 		vi.mocked(data.getTask).mockResolvedValue(task);
 
 		const result = await handlers.getPtyUrl({ taskId: "task-1" });
-		expect(pty.destroySession).toHaveBeenCalledWith("task-1");
+		expect(pty.destroySessionAwaited).toHaveBeenCalledWith("task-1");
 		expect(result).toEqual({ recoverable: true, sessionState });
 	});
 
@@ -5449,7 +5471,7 @@ describe("handlers.getPtyUrl", () => {
 
 		const result = await handlers.getPtyUrl({ taskId: "task-1", resume: true });
 
-		expect(pty.destroySession).toHaveBeenCalledWith("task-1");
+		expect(pty.destroySessionAwaited).toHaveBeenCalledWith("task-1");
 		expect(result).toEqual({ url: expect.stringContaining("session=task-1") });
 		expect(pty.createSession).toHaveBeenCalled();
 	});
@@ -5481,7 +5503,7 @@ describe("handlers.getPtyUrl", () => {
 
 		await handlers.getPtyUrl({ taskId: "task-1" });
 
-		expect(pty.destroySession).toHaveBeenCalledWith("task-1");
+		expect(pty.destroySessionAwaited).toHaveBeenCalledWith("task-1");
 	});
 
 	it("passes task agentId and configId when restoring session", async () => {
