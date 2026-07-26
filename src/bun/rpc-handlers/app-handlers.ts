@@ -15,6 +15,8 @@ import type { NotificationClickTarget } from "../native-notifications";
 import { BUNDLED_CHANGELOG } from "../changelog-bundled";
 import * as repoConfig from "../repo-config";
 import { DEV3_HOME } from "../paths";
+import { pathBasename, projectStorageKey } from "../../shared/project-storage-key";
+import { listFilesystemRoots } from "../../shared/filesystem-roots";
 import { listAgentSkills as scanAgentSkills } from "../skills-catalog";
 import { spawn, spawnSync } from "../spawn";
 import { writeSystemClipboard } from "../system-clipboard";
@@ -191,6 +193,7 @@ async function listDirectory(params?: { path?: string | null; includeFiles?: boo
 	const includeFiles = params?.includeFiles === true;
 	const showHidden = params?.showHidden === true;
 	const home = homedir();
+	const roots = listFilesystemRoots();
 	log.info("→ listDirectory", { path: requestedPath, includeFiles, showHidden });
 
 	const parentOf = (p: string): string | null => {
@@ -204,6 +207,7 @@ async function listDirectory(params?: { path?: string | null; includeFiles?: boo
 			path: requestedPath,
 			parent: parentOf(requestedPath),
 			home,
+			roots,
 			entries: [],
 			error: "Path does not exist",
 		};
@@ -237,6 +241,7 @@ async function listDirectory(params?: { path?: string | null; includeFiles?: boo
 			path: requestedPath,
 			parent: parentOf(requestedPath),
 			home,
+			roots,
 			entries,
 		};
 	} catch (err) {
@@ -245,6 +250,7 @@ async function listDirectory(params?: { path?: string | null; includeFiles?: boo
 			path: requestedPath,
 			parent: parentOf(requestedPath),
 			home,
+			roots,
 			entries: [],
 			error: String(err),
 		};
@@ -267,7 +273,7 @@ async function listAgentSkills(params?: { projectPath?: string | null }): Promis
 	}
 }
 
-async function addProjectImpl(params: { path: string; name: string }): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
+async function addProjectImpl(params: { path: string; name?: string }): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
 	log.info("→ addProject", params);
 	try {
 		// Protect the synthetic virtual-project namespace: a real git repo must
@@ -281,7 +287,10 @@ async function addProjectImpl(params: { path: string; name: string }): Promise<{
 			log.warn("Not a git repo", { path: params.path });
 			return { ok: false, error: "Selected folder is not a git repository" };
 		}
-		const project = await data.addProject(params.path, params.name);
+		// A renderer cannot name a project from its path: in remote mode the browser
+		// may be macOS while the repo lives on a Windows drive.
+		const name = params.name?.trim() || pathBasename(params.path);
+		const project = await data.addProject(params.path, name);
 		try {
 			const defaultBranch = await git.getDefaultBranch(params.path);
 			await data.updateProject(project.id, { defaultBaseBranch: defaultBranch });
@@ -425,7 +434,7 @@ function isEffectivelyEmpty(path: string): boolean {
  * - Non-empty and not a git repo → refuse (we don't want to silently add
  *   files into someone's unrelated folder).
  */
-async function initAndAddProject(params: { path: string; name: string }): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
+async function initAndAddProject(params: { path: string; name?: string }): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
 	log.info("→ initAndAddProject", params);
 	try {
 		if (!isAbsolute(params.path) || !existsSync(params.path)) {
@@ -721,10 +730,8 @@ async function saveUploadedFile(
 	opts?: { filename?: string; mimeType?: string },
 ): Promise<{ path: string }> {
 	const project = await data.getProject(projectId);
-	const slug = project.path.replace(/^\//, "").replaceAll("/", "-");
-	const uploadsDir = `${DEV3_HOME}/worktrees/${slug}/uploads`;
-	const mkdirProc = spawn(["mkdir", "-p", uploadsDir]);
-	await mkdirProc.exited;
+	const uploadsDir = `${DEV3_HOME}/worktrees/${projectStorageKey(project.path)}/uploads`;
+	mkdirSync(uploadsDir, { recursive: true });
 	const filename = buildUploadedFilename(opts);
 	const fullPath = `${uploadsDir}/${filename}`;
 	await Bun.write(fullPath, fileData);

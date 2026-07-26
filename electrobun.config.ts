@@ -1,6 +1,19 @@
 import type { ElectrobunConfig } from "electrobun";
 import { MINIMUM_WINDOWS_CONPTY_BUN_VERSION } from "./src/shared/native-terminal-runtime";
 
+/** Windows refuses to execute an extensionless binary, so the packaged CLI keeps `.exe`. */
+export function cliBinaryName(platform: NodeJS.Platform = process.platform): string {
+	return platform === "win32" ? "dev3.exe" : "dev3";
+}
+
+/** `copy` is a flat map with no per-platform section, so the entry is picked here. */
+export function cliCopyEntry(platform: NodeJS.Platform = process.platform): [string, string] {
+	const name = cliBinaryName(platform);
+	return [`dist/${name}`, `cli/${name}`];
+}
+
+const [cliCopySource, cliCopyDestination] = cliCopyEntry();
+
 export default {
 	app: {
 		name: "dev-3.0",
@@ -41,8 +54,15 @@ export default {
 		copy: {
 			"dist/index.html": "views/mainview/index.html",
 			"dist/assets": "views/mainview/assets",
+			// index.html links these at the views root. They were never copied, so
+			// every launch failed three resource loads — silent on macOS, loud in the
+			// Windows console.
+			"dist/favicon.png": "views/mainview/favicon.png",
+			"dist/favicon-32.png": "views/mainview/favicon-32.png",
+			"dist/favicon-16.png": "views/mainview/favicon-16.png",
+			"dist/apple-touch-icon.png": "views/mainview/apple-touch-icon.png",
 			"changelog.json": "changelog.json",
-			"dist/dev3": "cli/dev3",
+			[cliCopySource]: cliCopyDestination,
 			"src/assets/sounds": "sounds",
 			"src/assets/artifact-template": "artifact-template",
 			// macOS notification-click shim (empty dir on Linux) — see decisions/106.

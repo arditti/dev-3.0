@@ -2395,7 +2395,9 @@ export interface RequirementCheckResult {
 	name: string;
 	installed: boolean;
 	installHint: string; // i18n key
-	installCommand: string;
+	/** Copy-pasteable install command; absent when the tool cannot be installed
+	 *  on this platform (e.g. tmux on Windows). */
+	installCommand?: string;
 	resolvedPath?: string; // full path to the binary (if found)
 	brewInstallable: boolean;
 	customPathError?: boolean; // true if custom path was set but file doesn't exist
@@ -2454,6 +2456,12 @@ export interface FolderListing {
 	parent: string | null;
 	home: string;
 	entries: FolderEntry[];
+	/**
+	 * Filesystem roots to offer as shortcuts. Windows-only: `parent` is null at
+	 * `C:\`, so without these a repo on another drive is unreachable. POSIX has
+	 * the single `/` root and omits the field.
+	 */
+	roots?: string[];
 	/** Present when the requested path could not be read. `entries` is empty then. */
 	error?: string;
 }
@@ -2609,7 +2617,9 @@ export type AppRPCSchema = {
 				response: Project;
 			};
 			addProject: {
-				params: { path: string; name: string };
+				/** `name` is optional: the backend derives it from the path, which is the
+				 *  only side that knows how to spell a path on its own platform. */
+				params: { path: string; name?: string };
 				response: { ok: true; project: Project } | { ok: false; error: string };
 			};
 			cloneAndAddProject: {
@@ -2621,7 +2631,7 @@ export type AppRPCSchema = {
 				response: { ok: true; path: string } | { ok: false; error: string };
 			};
 			initAndAddProject: {
-				params: { path: string; name: string };
+				params: { path: string; name?: string };
 				response: { ok: true; project: Project } | { ok: false; error: string };
 			};
 			/** Create a virtual "Operations" board (no git repo). Stored in virtual-projects.json. */
