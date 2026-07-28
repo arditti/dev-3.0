@@ -13,12 +13,12 @@ import {
 } from "../../shared/types";
 
 describe("babysitterEnabled", () => {
-	it("is disabled when config or autonomy is absent", () => {
-		expect(babysitterEnabled(undefined)).toBe(false);
-		expect(babysitterEnabled({})).toBe(false);
+	it("defaults to enabled (read-only Triage) when config or autonomy is absent", () => {
+		expect(babysitterEnabled(undefined)).toBe(true);
+		expect(babysitterEnabled({})).toBe(true);
 	});
 
-	it("is disabled when autonomy is off", () => {
+	it("is disabled only by the explicit off opt-out", () => {
 		expect(babysitterEnabled({ autonomy: "off" })).toBe(false);
 	});
 
@@ -56,8 +56,8 @@ describe("effectiveBabysitterCapabilities", () => {
 		expect(caps.reply).toBe(true);
 	});
 
-	it("defaults to the fix preset when config is absent", () => {
-		expect(effectiveBabysitterCapabilities(undefined)).toEqual(BABYSITTER_AUTONOMY_PRESETS.fix);
+	it("defaults to the read-only triage preset when config is absent", () => {
+		expect(effectiveBabysitterCapabilities(undefined)).toEqual(BABYSITTER_AUTONOMY_PRESETS.triage);
 	});
 });
 
@@ -100,6 +100,17 @@ describe("composeBabysitPrompt", () => {
 		expect(prompt).toContain("draft them all into a single task note");
 	});
 
+	it("without the reply capability, comments are always monitored — handleComments=false is ignored", () => {
+		for (const config of [
+			{ autonomy: "triage" as const, handleComments: false },
+			{ autonomy: "fix" as const, overrides: { reply: false }, handleComments: false },
+		]) {
+			const prompt = composeBabysitPrompt(config);
+			expect(prompt).toContain("Classify each one");
+			expect(prompt).toContain("draft them all into a single task note");
+		}
+	});
+
 	it("fix grants push/reply/rebase and keeps auto-merge forbidden", () => {
 		const prompt = composeBabysitPrompt({ autonomy: "fix" });
 		expect(prompt).toContain("You MAY fix problems in this worktree");
@@ -135,7 +146,8 @@ describe("composeBabysitPrompt", () => {
 		}
 	});
 
-	it("DEFAULT_BABYSIT_PROMPT equals the composition of the default knobs", () => {
-		expect(DEFAULT_BABYSIT_PROMPT).toBe(composeBabysitPrompt({ autonomy: "fix" }));
+	it("DEFAULT_BABYSIT_PROMPT equals the composition of the default knobs (triage)", () => {
+		expect(DEFAULT_BABYSIT_PROMPT).toBe(composeBabysitPrompt());
+		expect(DEFAULT_BABYSIT_PROMPT).toContain("read-only triage run");
 	});
 });

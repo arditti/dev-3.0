@@ -276,7 +276,8 @@ export interface BabysitterCapabilities {
 /**
  * Per-project PR babysitter config, stored alongside builtinColumnAgents in
  * Project + .dev3/config.json (additive field — older versions ignore it).
- * Absent object, or autonomy absent/"off", means the babysitter is disabled.
+ * Absent object/autonomy defaults to read-only "triage" (zero GitHub writes);
+ * "off" is an explicit opt-out.
  */
 export interface BabysitterConfig {
 	autonomy?: BabysitterAutonomy;
@@ -292,13 +293,18 @@ export const BABYSITTER_AUTONOMY_PRESETS: Record<Exclude<BabysitterAutonomy, "of
 	land: { push: true, reply: true, resolve: true, rebase: true, rerunChecks: true, armAutoMerge: true },
 };
 
+/** Absent config defaults to read-only Triage; "off" is an explicit opt-out. */
+export function effectiveBabysitterAutonomy(config?: BabysitterConfig): BabysitterAutonomy {
+	return config?.autonomy ?? "triage";
+}
+
 export function babysitterEnabled(config?: BabysitterConfig): boolean {
-	return config?.autonomy !== undefined && config.autonomy !== "off";
+	return effectiveBabysitterAutonomy(config) !== "off";
 }
 
 export function effectiveBabysitterCapabilities(config?: BabysitterConfig): BabysitterCapabilities {
-	const autonomy = config?.autonomy && config.autonomy !== "off" ? config.autonomy : "fix";
-	return { ...BABYSITTER_AUTONOMY_PRESETS[autonomy], ...config?.overrides };
+	const autonomy = effectiveBabysitterAutonomy(config);
+	return { ...BABYSITTER_AUTONOMY_PRESETS[autonomy === "off" ? "triage" : autonomy], ...config?.overrides };
 }
 
 /**
@@ -307,7 +313,10 @@ export function effectiveBabysitterCapabilities(config?: BabysitterConfig): Baby
  */
 export function composeBabysitPrompt(config?: BabysitterConfig): string {
 	const caps = effectiveBabysitterCapabilities(config);
-	const handleComments = config?.handleComments !== false;
+	// Without the reply capability (e.g. Triage), comments are always monitored —
+	// triaged and drafted into a task note, never posted. The toggle only governs
+	// levels that can actually answer.
+	const handleComments = !caps.reply || config?.handleComments !== false;
 	const readOnly = !caps.push && !caps.reply && !caps.resolve && !caps.rebase && !caps.rerunChecks && !caps.armAutoMerge;
 
 	const capabilityLines = [
@@ -363,8 +372,8 @@ If you are blocked, a human decision is needed, or the same problem persists aft
 Otherwise leave the task in its current column (the PR is still in review).`;
 }
 
-/** The prompt composed from the default knobs (autonomy Fix, handle comments ON). */
-export const DEFAULT_BABYSIT_PROMPT = composeBabysitPrompt({ autonomy: "fix" });
+/** The prompt composed from the default knobs (autonomy Triage, comments monitored). */
+export const DEFAULT_BABYSIT_PROMPT = composeBabysitPrompt();
 
 export function getPrimaryStopTarget(autoReviewEnabled?: boolean): TaskStatus {
 	return autoReviewEnabled ? "review-by-ai" : "review-by-user";

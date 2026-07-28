@@ -1096,7 +1096,7 @@ function ProjectSettings({
 	// PR Babysitter state (stored as project.babysitter + builtinColumnAgents["review-by-colleague"])
 	const babysitterCfg = project?.babysitter;
 	const bsColumnCfg = project?.builtinColumnAgents?.["review-by-colleague"];
-	const [bsAutonomy, setBsAutonomy] = useState<BabysitterAutonomy>(babysitterCfg?.autonomy ?? "off");
+	const [bsAutonomy, setBsAutonomy] = useState<BabysitterAutonomy>(babysitterCfg?.autonomy ?? "triage");
 	const [bsHandleComments, setBsHandleComments] = useState(babysitterCfg?.handleComments !== false);
 	const [bsOverrides, setBsOverrides] = useState<Partial<BabysitterCapabilities>>(babysitterCfg?.overrides ?? {});
 	const [bsAgentId, setBsAgentId] = useState(bsColumnCfg?.agentId ?? DEFAULT_REVIEW_AGENT_ID);
@@ -1105,19 +1105,19 @@ function ProjectSettings({
 	const [bsPrompt, setBsPrompt] = useState(bsColumnCfg?.prompt ?? "");
 	const [bsAdvancedOpen, setBsAdvancedOpen] = useState(false);
 	const initialBabysitterRef = useRef(serializeBabysitterState({
-		autonomy: babysitterCfg?.autonomy ?? "off",
+		autonomy: babysitterCfg?.autonomy ?? "triage",
 		handleComments: babysitterCfg?.handleComments !== false,
 		overrides: babysitterCfg?.overrides ?? {},
 		agentId: bsColumnCfg?.agentId ?? DEFAULT_REVIEW_AGENT_ID,
 		configId: bsColumnCfg?.configId ?? DEFAULT_REVIEW_CONFIG_ID,
 		prompt: bsColumnCfg?.prompt ?? "",
 	}));
-	const bsPreset = BABYSITTER_AUTONOMY_PRESETS[bsAutonomy === "off" ? "fix" : bsAutonomy];
+	const bsPreset = BABYSITTER_AUTONOMY_PRESETS[bsAutonomy === "off" ? "triage" : bsAutonomy];
 	const bsCaps: BabysitterCapabilities = { ...bsPreset, ...bsOverrides };
 	const bsIsCustom = (Object.keys(bsOverrides) as (keyof BabysitterCapabilities)[])
 		.some((k) => bsOverrides[k] !== undefined && bsOverrides[k] !== bsPreset[k]);
 	const bsComposedPrompt = composeBabysitPrompt({
-		autonomy: bsAutonomy === "off" ? "fix" : bsAutonomy,
+		autonomy: bsAutonomy === "off" ? "triage" : bsAutonomy,
 		overrides: bsOverrides,
 		handleComments: bsHandleComments,
 	});
@@ -1428,7 +1428,9 @@ function ProjectSettings({
 			const babysitter: BabysitterConfig = {
 				autonomy: bsAutonomy,
 				...(bsIsCustom ? { overrides: bsOverrides } : {}),
-				...(bsHandleComments ? {} : { handleComments: false }),
+				// handleComments only means something when the level can reply;
+				// read-only levels always monitor comments (drafts into a note).
+				...(bsCaps.reply && !bsHandleComments ? { handleComments: false } : {}),
 			};
 			const bsPromptToStore = bsPrompt.trim() === bsComposedPrompt.trim() ? "" : bsPrompt.trim();
 			const builtinColumnAgents: Record<string, ColumnAgentConfig> = {
@@ -1448,8 +1450,7 @@ function ProjectSettings({
 			const toSave = {
 				...sanitizeConfigPaths(projectConfig),
 				builtinColumnAgents,
-				// Skip writing an "off" babysitter into projects that never had one.
-				...(bsAutonomy !== "off" || project?.babysitter ? { babysitter } : {}),
+				babysitter,
 			};
 			const updated = await api.request.updateProjectSettings({ projectId, ...toSave });
 			dispatch({ type: "updateProject", project: updated });
@@ -1874,27 +1875,32 @@ function ProjectSettings({
 											<div className="flex items-center justify-between">
 												<div>
 													<label className="block text-fg-2 text-sm">{t("projectSettings.babysitterHandleComments")}</label>
-													<p className="text-fg-muted text-xs">{t("projectSettings.babysitterHandleCommentsDesc")}</p>
+													<p className="text-fg-muted text-xs">
+														{bsCaps.reply
+															? t("projectSettings.babysitterHandleCommentsDesc")
+															: t("projectSettings.babysitterHandleCommentsReadOnlyDesc")}
+													</p>
 												</div>
 												<button
 													type="button"
 													role="switch"
-													aria-checked={bsHandleComments}
+													aria-checked={bsCaps.reply ? bsHandleComments : false}
 													aria-label={t("projectSettings.babysitterHandleComments")}
+													disabled={!bsCaps.reply}
 													onClick={() => setBsHandleComments(!bsHandleComments)}
-													className={`relative flex-shrink-0 ml-4 w-10 h-6 rounded-full transition-colors focus:outline-none ${
-														bsHandleComments ? "bg-accent" : "bg-edge-active"
+													className={`relative flex-shrink-0 ml-4 w-10 h-6 rounded-full transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${
+														bsCaps.reply && bsHandleComments ? "bg-accent" : "bg-edge-active"
 													}`}
 												>
 													<span
 														className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
-															bsHandleComments ? "translate-x-4" : "translate-x-0"
+															bsCaps.reply && bsHandleComments ? "translate-x-4" : "translate-x-0"
 														}`}
 													/>
 												</button>
 											</div>
 											<div className="flex items-center gap-3">
-												<label htmlFor="babysitter-agent" className="text-fg-2 text-sm w-28 flex-shrink-0">{t("projectSettings.aiReviewAgent")}</label>
+												<label htmlFor="babysitter-agent" className="text-fg-2 text-sm w-28 flex-shrink-0">{t("projectSettings.babysitterAgent")}</label>
 												<select
 													id="babysitter-agent"
 													value={bsAgentId}
@@ -1913,7 +1919,7 @@ function ProjectSettings({
 												</select>
 											</div>
 											<div className="flex items-center gap-3">
-												<label htmlFor="babysitter-config" className="text-fg-2 text-sm w-28 flex-shrink-0">{t("projectSettings.aiReviewConfig")}</label>
+												<label htmlFor="babysitter-config" className="text-fg-2 text-sm w-28 flex-shrink-0">{t("projectSettings.babysitterConfig")}</label>
 												<select
 													id="babysitter-config"
 													value={bsConfigId}

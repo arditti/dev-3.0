@@ -19,8 +19,11 @@ arming auto-merge — without new enforcement machinery.
   go green, never touch drafts, `--force-with-lease` only after a legit rebase, reply before
   resolve, park via `dev3 task move --status user-questions`) are appended verbatim to EVERY
   prompt — they are policy, not knobs.
-- **Default is OFF** (absent `babysitter` = no agent). Unlike review-by-ai's on-by-default agent,
-  a default-on babysitter would push to real PRs of every existing project on upgrade.
+- **Default is read-only Triage** (absent `babysitter` = Triage; `off` is an explicit opt-out).
+  Triage makes zero GitHub writes, so shipping it on by default is safe on upgrade; anything
+  that writes to the PR (Fix/Land) stays opt-in. Comments are ALWAYS monitored when the level
+  cannot reply — triaged and drafted into a task note, never posted; the Handle-comments toggle
+  only governs reply-capable levels (user ruling during phase 1 review).
 - **No `onExitCommand`** for the babysitter pane (`columnAgentConfig` in
   `src/bun/lifecycle/executor.ts`): the PR is still in review when the run ends, so the task must
   stay in the column; the prompt itself parks to `user-questions` when a human is needed.

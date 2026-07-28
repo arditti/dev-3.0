@@ -284,11 +284,20 @@ describe("ProjectSettings", () => {
 	});
 
 	describe("PR babysitter", () => {
-		it("shows the block with autonomy Off and hides sub-controls by default", async () => {
+		it("defaults to autonomy Triage with sub-controls visible", async () => {
 			await renderProjectSettings();
 			await goToProjectTab();
 			const autonomy = screen.getByLabelText("Autonomy") as HTMLSelectElement;
-			expect(autonomy.value).toBe("off");
+			expect(autonomy.value).toBe("triage");
+			expect(screen.getByRole("switch", { name: "Handle comments" })).toBeInTheDocument();
+			expect(screen.getByLabelText("Babysitter Prompt")).toBeInTheDocument();
+		});
+
+		it("selecting Off hides the sub-controls", async () => {
+			const user = userEvent.setup();
+			await renderProjectSettings();
+			await goToProjectTab();
+			await user.selectOptions(screen.getByLabelText("Autonomy"), "off");
 			expect(screen.queryByRole("switch", { name: "Handle comments" })).not.toBeInTheDocument();
 			expect(screen.queryByLabelText("Babysitter Prompt")).not.toBeInTheDocument();
 		});
@@ -324,7 +333,7 @@ describe("ProjectSettings", () => {
 			});
 		});
 
-		it("does not write a babysitter object when it stays off and was never set", async () => {
+		it("persists the default triage babysitter on an untouched save", async () => {
 			const { api } = await import("../../rpc");
 			const mockSave = api.request.updateProjectSettings as ReturnType<typeof vi.fn>;
 			mockSave.mockClear();
@@ -339,8 +348,27 @@ describe("ProjectSettings", () => {
 				expect(mockSave).toHaveBeenCalled();
 			});
 			const payload = mockSave.mock.calls[0][0];
-			expect(payload.babysitter).toBeUndefined();
-			expect(payload.builtinColumnAgents["review-by-colleague"]).toBeUndefined();
+			expect(payload.babysitter).toEqual({ autonomy: "triage" });
+			expect(payload.builtinColumnAgents["review-by-colleague"]).toEqual(
+				expect.objectContaining({ agentId: "builtin-claude", prompt: "" }),
+			);
+		});
+
+		it("saves the explicit off opt-out", async () => {
+			const { api } = await import("../../rpc");
+			const mockSave = api.request.updateProjectSettings as ReturnType<typeof vi.fn>;
+			mockSave.mockClear();
+			const user = userEvent.setup();
+			await renderProjectSettings();
+			await goToProjectTab();
+			await user.selectOptions(screen.getByLabelText("Autonomy"), "off");
+			await user.click(screen.getByText("Save"));
+			await vi.waitFor(() => {
+				expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({
+					babysitter: { autonomy: "off" },
+				}));
+			});
+			expect(mockSave.mock.calls[0][0].builtinColumnAgents["review-by-colleague"]).toBeUndefined();
 		});
 
 		it("capability override in Advanced marks the preset as Custom and is saved", async () => {
@@ -382,11 +410,22 @@ describe("ProjectSettings", () => {
 
 		it("loads an existing babysitter config into the form", async () => {
 			await renderProjectSettings(mockProject, {
-				babysitter: { autonomy: "triage", handleComments: false },
+				babysitter: { autonomy: "fix", handleComments: false },
 			});
 			await goToProjectTab();
-			expect((screen.getByLabelText("Autonomy") as HTMLSelectElement).value).toBe("triage");
+			expect((screen.getByLabelText("Autonomy") as HTMLSelectElement).value).toBe("fix");
 			expect(screen.getByRole("switch", { name: "Handle comments" })).toHaveAttribute("aria-checked", "false");
+		});
+
+		it("locks Handle comments off at read-only levels (comments still monitored via notes)", async () => {
+			const user = userEvent.setup();
+			await renderProjectSettings();
+			await goToProjectTab();
+			await user.selectOptions(screen.getByLabelText("Autonomy"), "triage");
+			const toggle = screen.getByRole("switch", { name: "Handle comments" });
+			expect(toggle).toBeDisabled();
+			expect(toggle).toHaveAttribute("aria-checked", "false");
+			expect(screen.getByText(/suggested replies are drafted into a task note/i)).toBeInTheDocument();
 		});
 	});
 

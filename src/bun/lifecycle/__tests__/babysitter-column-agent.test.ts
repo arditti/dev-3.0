@@ -131,20 +131,8 @@ beforeEach(() => {
 });
 
 describe("review-by-colleague column agent (PR babysitter)", () => {
-	it("does nothing when no babysitter config exists", async () => {
+	it("launches the read-only triage babysitter by default when no config exists", async () => {
 		const result = await launchLifecycleColumnAgent(project(), task(), COLUMN);
-		expect(result).toBeNull();
-		expect(launchColumnAgent).not.toHaveBeenCalled();
-	});
-
-	it("does nothing when babysitter autonomy is off", async () => {
-		const result = await launchLifecycleColumnAgent(project({ babysitter: { autonomy: "off" } }), task(), COLUMN);
-		expect(result).toBeNull();
-		expect(launchColumnAgent).not.toHaveBeenCalled();
-	});
-
-	it("launches the default agent with the composed prompt when enabled", async () => {
-		const result = await launchLifecycleColumnAgent(project({ babysitter: { autonomy: "fix" } }), task(), COLUMN);
 		expect(result).toBeNull();
 		expect(launchColumnAgent).toHaveBeenCalledWith(
 			expect.anything(),
@@ -156,6 +144,19 @@ describe("review-by-colleague column agent (PR babysitter)", () => {
 			},
 			{ paneTitle: "PR Review", onExitCommand: undefined },
 		);
+	});
+
+	it("does nothing when babysitter autonomy is off", async () => {
+		const result = await launchLifecycleColumnAgent(project({ babysitter: { autonomy: "off" } }), task(), COLUMN);
+		expect(result).toBeNull();
+		expect(launchColumnAgent).not.toHaveBeenCalled();
+	});
+
+	it("launches with the composed prompt of the configured level", async () => {
+		const result = await launchLifecycleColumnAgent(project({ babysitter: { autonomy: "fix" } }), task(), COLUMN);
+		expect(result).toBeNull();
+		const [, , config] = vi.mocked(launchColumnAgent).mock.calls[0];
+		expect(config.prompt).toBe(composeBabysitPrompt({ autonomy: "fix" }));
 	});
 
 	it("composes the prompt from the resolved babysitter knobs", async () => {
@@ -192,7 +193,7 @@ describe("review-by-colleague column agent (PR babysitter)", () => {
 			COLUMN,
 		);
 		const [, , config] = vi.mocked(launchColumnAgent).mock.calls[0];
-		expect(config.prompt).toBe(DEFAULT_BABYSIT_PROMPT);
+		expect(config.prompt).toBe(composeBabysitPrompt({ autonomy: "fix" }));
 	});
 
 	it("titles the pane from customStatusLabels", async () => {
