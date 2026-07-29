@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
 	addClaudeApiProfile,
 	claudeAccountDir,
-	CLAUDE_SHARED_ENTRIES,
+	isPrivateClaudeEntry,
 	codexAccountDir,
 	completeClaudeLogin,
 	completeCodexLogin,
@@ -18,6 +18,7 @@ import {
 	listAgentAccounts,
 	prepareClaudeLogin,
 	prepareCodexLogin,
+	registeredOutputStyleName,
 	removeAgentAccount,
 	renameAgentAccount,
 	setActiveClaudeAccount,
@@ -110,6 +111,46 @@ afterEach(() => {
 	rmSync(root, { recursive: true, force: true });
 });
 
+describe("isPrivateClaudeEntry", () => {
+	it("keeps login, identity, usage and org policy per-account", () => {
+		for (const entry of [".credentials.json", ".claude.json", "stats-cache.json", "policy-limits.json", "statsig"]) {
+			expect(isPrivateClaudeEntry(entry)).toBe(true);
+		}
+	});
+
+	it("catches credential-shaped names dev3 has never seen", () => {
+		for (const entry of ["oauth-credentials.json", "auth.json", "authProfile.json", "refresh-token", "api.key"]) {
+			expect(isPrivateClaudeEntry(entry)).toBe(true);
+		}
+	});
+
+	it("shares user customization and ordinary runtime state", () => {
+		for (const entry of ["settings.json", "settings.local.json", "skills", "workflows", "routines", "hooks", "CLAUDE.md", "history.jsonl", "sessions", "cache"]) {
+			expect(isPrivateClaudeEntry(entry)).toBe(false);
+		}
+	});
+});
+
+describe("registeredOutputStyleName", () => {
+	// Claude Code registers a style under frontmatter `name` INSTEAD of the
+	// filename slug — the slug is not kept as an alias, so a settings.json value
+	// of "low-battery" never matches a file declaring `name: Low Battery`.
+	it("prefers the frontmatter name over the filename slug", () => {
+		const md = "---\nname: Low Battery\ndescription: x\nkeep-coding-instructions: true\n---\n\n# body\n";
+		expect(registeredOutputStyleName("low-battery.md", md)).toBe("Low Battery");
+	});
+
+	it("falls back to the filename slug when there is no frontmatter name", () => {
+		expect(registeredOutputStyleName("my-style.md", "---\ndescription: x\n---\nbody")).toBe("my-style");
+		expect(registeredOutputStyleName("my-style.md", "# no frontmatter at all")).toBe("my-style");
+	});
+
+	it("ignores a name-like line in the body and strips quotes", () => {
+		expect(registeredOutputStyleName("s.md", '---\nname: "Quoted Name"\n---\nname: Not This\n')).toBe("Quoted Name");
+		expect(registeredOutputStyleName("s.md", "---\ndescription: x\n---\nname: Body Name\n")).toBe("s");
+	});
+});
+
 describe("importCurrentClaudeAccount", () => {
 	it("snapshots the current login into a managed config dir", async () => {
 		seedClaudeLogin();
@@ -125,17 +166,41 @@ describe("importCurrentClaudeAccount", () => {
 		expect(lstatSync(join(dir, "settings.json")).isSymbolicLink()).toBe(true);
 	});
 
-	it("symlinks every shared entry, incl. output-styles, so settings.json names resolve", async () => {
+	it("symlinks every non-private ~/.claude entry, including ones dev3 has never heard of", async () => {
 		seedClaudeLogin();
 		mkdirSync(join(paths.claudeHome, "output-styles"), { recursive: true });
 		writeFileSync(join(paths.claudeHome, "output-styles", "custom.md"), "# custom");
+		// Resource types Claude Code resolves by name that predate no allow-list entry.
+		for (const dirName of ["skills", "workflows", "routines", "hooks", "some-future-thing"]) {
+			mkdirSync(join(paths.claudeHome, dirName), { recursive: true });
+		}
+		writeFileSync(join(paths.claudeHome, "RTK.md"), "# imported via @RTK.md");
+		writeFileSync(join(paths.claudeHome, ".DS_Store"), "junk");
+
 		const account = await importCurrentClaudeAccount(paths);
 		const dir = claudeAccountDir(account.id, paths);
 
-		for (const entry of CLAUDE_SHARED_ENTRIES) {
+		for (const entry of ["settings.json", "output-styles", "workflows", "routines", "hooks", "some-future-thing", "RTK.md"]) {
 			expect(lstatSync(join(dir, entry)).isSymbolicLink()).toBe(true);
 		}
 		expect(existsSync(join(dir, "output-styles", "custom.md"))).toBe(true);
+		expect(existsSync(join(dir, ".DS_Store"))).toBe(false);
+	});
+
+	it("never symlinks the entries that make an account an account", async () => {
+		seedClaudeLogin();
+		for (const file of ["stats-cache.json", "policy-limits.json", "oauth-token.json", "authProfile.json"]) {
+			writeFileSync(join(paths.claudeHome, file), "{}");
+		}
+		mkdirSync(join(paths.claudeHome, "statsig"), { recursive: true });
+		const account = await importCurrentClaudeAccount(paths);
+		const dir = claudeAccountDir(account.id, paths);
+
+		for (const entry of ["stats-cache.json", "policy-limits.json", "statsig", "oauth-token.json", "authProfile.json"]) {
+			expect(existsSync(join(dir, entry))).toBe(false);
+		}
+		// The login is a real per-account copy, never a link into ~/.claude.
+		expect(lstatSync(join(dir, ".credentials.json")).isSymbolicLink()).toBe(false);
 	});
 
 	it("does not auto-activate the imported account (system login stays active)", async () => {
