@@ -14,6 +14,7 @@ const kanban = {
 	"kanban.showLess": "Show less",
 	"kanban.collapseColumn": "Unpin column",
 	"kanban.renameColumn": "Rename column",
+	"kanban.draftNotDroppable": "This is a draft — finish its description and save it as a task before starting it.",
 
 	// CreateTaskModal
 	"createTask.title": "New Task",
@@ -30,7 +31,11 @@ const kanban = {
 	"createTask.scratch": "Scratch Task",
 	"createTask.scratchSubtitle": "No prompt — agent will ask",
 	"createTask.scratchHint": "Open a terminal + agent with no prompt. The agent will name the task itself once you tell it what to do.",
-	"createTask.discardConfirm": "Discard changes? Your description will be lost.",
+	"createTask.saveAsDraft": "Save as draft",
+	"createTask.saveAsDraftHint": "Park this task as an unfinished draft. It stays in To Do and nothing can start it until you finish the description.",
+	"createTask.editDraftTitle": "Edit Draft",
+	"createTask.draftSaveFailed": "Failed to save draft: {error}",
+	"createTask.discardConfirm": "Unsaved changes — park them as a draft, or discard?",
 	"createTask.keepEditing": "Keep editing",
 	"createTask.discard": "Discard",
 	"createTask.branchLabel": "Branch",
@@ -63,6 +68,8 @@ const kanban = {
 
 	// TaskCard
 	"task.moveTo": "Move to",
+	"task.draftBadge": "Draft",
+	"task.draftHint": "Unfinished draft — click to keep writing. Nothing can start it yet.",
 	"task.delete": "Delete",
 	"task.confirmDelete": "Delete task \"{title}\"?",
 	"task.failedMove": "Failed to move task: {error}",

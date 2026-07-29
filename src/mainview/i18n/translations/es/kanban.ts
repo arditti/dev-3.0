@@ -14,6 +14,7 @@ const kanban = {
 	"kanban.showLess": "Mostrar menos",
 	"kanban.collapseColumn": "Desanclar columna",
 	"kanban.renameColumn": "Renombrar columna",
+	"kanban.draftNotDroppable": "Esto es un borrador: completa su descripción y guárdalo como tarea antes de iniciarlo.",
 
 	// CreateTaskModal
 	"createTask.title": "Nueva tarea",
@@ -30,7 +31,11 @@ const kanban = {
 	"createTask.scratch": "Tarea rápida",
 	"createTask.scratchSubtitle": "Sin prompt — el agente preguntará",
 	"createTask.scratchHint": "Abre un terminal con un agente sin prompt. El agente nombrará la tarea por sí mismo cuando le digas qué hacer.",
-	"createTask.discardConfirm": "¿Descartar cambios? Se perderá la descripción introducida.",
+	"createTask.saveAsDraft": "Guardar como borrador",
+	"createTask.saveAsDraftHint": "Aparca esta tarea como un borrador sin terminar. Permanece en To Do y nada puede iniciarla hasta que completes la descripción.",
+	"createTask.editDraftTitle": "Editar borrador",
+	"createTask.draftSaveFailed": "No se pudo guardar el borrador: {error}",
+	"createTask.discardConfirm": "Cambios sin guardar: ¿guardarlos como borrador o descartarlos?",
 	"createTask.keepEditing": "Seguir editando",
 	"createTask.discard": "Descartar",
 	"createTask.branchLabel": "Rama",
@@ -63,6 +68,8 @@ const kanban = {
 
 	// TaskCard
 	"task.moveTo": "Mover a",
+	"task.draftBadge": "Borrador",
+	"task.draftHint": "Borrador sin terminar: haz clic para seguir escribiendo. Todavía nada puede iniciarlo.",
 	"task.delete": "Eliminar",
 	"task.confirmDelete": "¿Eliminar tarea \"{title}\"?",
 	"task.failedMove": "Error al mover tarea: {error}",
