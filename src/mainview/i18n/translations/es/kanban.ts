@@ -173,6 +173,12 @@ const kanban = {
 	"task.warnUnpushed": "{count} commit(s) sin enviar — se perderán",
 	"task.warnUnmerged": "{count} commit(s) enviados pero no fusionados en {branch}",
 	"task.warnCompletionFooter": "El worktree y la rama se eliminarán. ¿Continuar?",
+	"task.confirmCompleteTitle": "¿Completar la tarea?",
+	"task.confirmCompleteFooter": "La tarea pasará a Completed.",
+	"task.confirmCancelTitle": "¿Cancelar la tarea?",
+	"task.confirmCancelFooter": "La tarea pasará a Cancelled.",
+	"task.checkingBranchState": "Comprobando la rama por trabajo sin guardar…",
+	"task.branchStateUnknown": "No se pudo comprobar la rama por trabajo sin guardar.",
 
 	// LaunchVariantsModal
 	"launch.title": "Lanzar tarea",
@@ -255,6 +261,8 @@ const kanban = {
 
 	// Pipeline
 	"pipeline.current": "actual",
+	"pipeline.stageOf": "Etapa {current} de {total}",
+	"pipeline.completeTooltip": "Mover a Completed",
 
 	// Git pull (Kanban toolbar)
 	"kanban.gitPull": "Git Pull",

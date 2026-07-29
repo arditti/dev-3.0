@@ -173,6 +173,12 @@ const kanban = {
 	"task.warnUnpushed": "{count} unpushed commit(s) — will be lost",
 	"task.warnUnmerged": "{count} commit(s) pushed but not merged into {branch}",
 	"task.warnCompletionFooter": "The worktree and branch will be deleted. Continue?",
+	"task.confirmCompleteTitle": "Complete task?",
+	"task.confirmCompleteFooter": "This task will move to Completed.",
+	"task.confirmCancelTitle": "Cancel task?",
+	"task.confirmCancelFooter": "This task will move to Cancelled.",
+	"task.checkingBranchState": "Checking the branch for unsaved work…",
+	"task.branchStateUnknown": "Could not check the branch for unsaved work.",
 
 	// LaunchVariantsModal
 	"launch.title": "Launch Task",
@@ -255,6 +261,8 @@ const kanban = {
 
 	// Pipeline
 	"pipeline.current": "current",
+	"pipeline.stageOf": "Stage {current} of {total}",
+	"pipeline.completeTooltip": "Move to Completed",
 
 	// Git pull (Kanban toolbar)
 	"kanban.gitPull": "Git Pull",

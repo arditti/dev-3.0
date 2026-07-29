@@ -177,6 +177,12 @@ const kanban = {
 	"task.warnUnpushed": "{count} незапушенных коммит(ов) — будут потеряны",
 	"task.warnUnmerged": "{count} коммит(ов) запушено, но не слито в {branch}",
 	"task.warnCompletionFooter": "Worktree и ветка будут удалены. Продолжить?",
+	"task.confirmCompleteTitle": "Завершить задачу?",
+	"task.confirmCompleteFooter": "Задача будет перенесена в Completed.",
+	"task.confirmCancelTitle": "Отменить задачу?",
+	"task.confirmCancelFooter": "Задача будет перенесена в Cancelled.",
+	"task.checkingBranchState": "Проверяем ветку на несохранённую работу…",
+	"task.branchStateUnknown": "Не удалось проверить ветку на несохранённую работу.",
 
 	// LaunchVariantsModal
 	"launch.title": "Запуск задачи",
@@ -259,6 +265,8 @@ const kanban = {
 
 	// Pipeline
 	"pipeline.current": "текущий",
+	"pipeline.stageOf": "Этап {current} из {total}",
+	"pipeline.completeTooltip": "Перевести в Completed",
 
 	// Git pull (Kanban toolbar)
 	"kanban.gitPull": "Git Pull",

@@ -6,7 +6,7 @@ import LabelChip from "./LabelChip";
 import PriorityBadge from "./PriorityBadge";
 import OpenInMenu from "./OpenInMenu";
 import { formatDate } from "./NoteItem";
-import { ACTIVE_STATUSES, getTaskTitle, resolveTaskCompareBaseBranch } from "../../shared/types";
+import { ACTIVE_STATUSES, getAllowedTransitions, getTaskTitle, resolveTaskCompareBaseBranch } from "../../shared/types";
 import InlineRename from "./InlineRename";
 import { getTaskOpenMode, taskClosedHomeRoute, type AppAction, type Route } from "../state";
 import { api } from "../rpc";
@@ -16,7 +16,7 @@ import { getStatusLabel } from "../utils/statusLabel";
 import { trackEvent, agentNameFromId } from "../analytics";
 import { moveTaskToStatus } from "../utils/moveTaskToStatus";
 import { ImageAttachmentsStrip } from "./ImageAttachmentsStrip";
-import MiniPipeline from "./MiniPipeline";
+import PipelineRing, { CompleteCheckIcon } from "./PipelineRing";
 import PipelineDropdown from "./PipelineDropdown";
 import SpawnAgentModal from "./SpawnAgentModal";
 import ScheduleMessageModal from "./ScheduleMessageModal";
@@ -165,6 +165,7 @@ function TaskInfoPanel({
 	const [statusMenuPos, setStatusMenuPos] = useState({ top: 0, left: 0 });
 	const [statusMenuVisible, setStatusMenuVisible] = useState(false);
 	const [movingStatus, setMovingStatus] = useState(false);
+	const [quickCompleting, setQuickCompleting] = useState(false);
 	const [spawnModalOpen, setSpawnModalOpen] = useState(false);
 	const [scheduleMsgOpen, setScheduleMsgOpen] = useState(false);
 	const [bugHuntersOpen, setBugHuntersOpen] = useState(false);
@@ -341,7 +342,18 @@ function TaskInfoPanel({
 		setStatusMenuOpen((open) => !open);
 	}
 
-	async function handleStatusMove(newStatus: TaskStatus) {
+	// Acknowledge the ✓ on the same tick — its dialog still has a git check
+	// streaming in, so silence here reads as a dead button.
+	async function handleQuickComplete() {
+		setQuickCompleting(true);
+		try {
+			await handleStatusMove("completed", { alwaysConfirm: true });
+		} finally {
+			setQuickCompleting(false);
+		}
+	}
+
+	async function handleStatusMove(newStatus: TaskStatus, opts?: { alwaysConfirm?: boolean }) {
 		setStatusMenuOpen(false);
 		const terminal = newStatus === "completed" || newStatus === "cancelled";
 		const openTaskFromDialog = () => {
@@ -364,6 +376,7 @@ function TaskInfoPanel({
 			dispatch,
 			t,
 			onOpenTask: openTaskFromDialog,
+			alwaysConfirm: opts?.alwaysConfirm,
 			// Terminal moves leave the screen and keep the optimistic completion on
 			// failure (matches the fire-and-forget behaviour); other moves stay and
 			// revert + toast if the RPC fails.
@@ -784,29 +797,48 @@ function TaskInfoPanel({
 
 	// On narrow the chip is a primary touch target — bump it to ≥44px (§12.6).
 	const statusDropdownButton = (
-		<button
-			ref={statusTriggerRef}
-			onClick={toggleStatusMenu}
-			disabled={movingStatus}
-			className={`flex items-center gap-2 rounded-lg hover:bg-elevated transition-colors ${
-				narrow ? "px-3 min-h-[2.75rem]" : "px-2.5 py-1"
-			} ${tight && !narrow ? "min-w-0 shrink" : "flex-shrink-0"}`}
-		>
-			{activeCustomColumn ? (
-				<div
-					className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-					style={{ background: activeCustomColumn.color, boxShadow: `0 0 6px ${activeCustomColumn.color}60` }}
-				/>
-			) : (
-				<MiniPipeline status={task.status} />
+		<div className={`flex items-center rounded-lg hover:bg-elevated transition-colors ${tight && !narrow ? "min-w-0 shrink" : "flex-shrink-0"}`}>
+			<button
+				ref={statusTriggerRef}
+				onClick={toggleStatusMenu}
+				disabled={movingStatus}
+				className={`flex min-w-0 items-center gap-2 rounded-lg ${narrow ? "px-3 min-h-[2.75rem]" : "px-2.5 py-1"}`}
+			>
+				{activeCustomColumn ? (
+					<div
+						className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+						style={{ background: activeCustomColumn.color, boxShadow: `0 0 6px ${activeCustomColumn.color}60` }}
+					/>
+				) : (
+					<PipelineRing status={task.status} size={narrow ? "touch" : "default"} />
+				)}
+				<span className={`font-medium text-fg-2 truncate ${narrow ? "text-sm" : "text-[0.6875rem]"}`}>
+					{activeCustomColumn ? activeCustomColumn.name : getStatusLabel(task.status, t, project)}
+				</span>
+				<svg className={`flex-shrink-0 text-fg-3 ${narrow ? "w-4 h-4" : "w-3 h-3"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+				</svg>
+			</button>
+			{!narrow && !movingStatus && getAllowedTransitions(task.status).includes("completed") && (
+				<Tooltip content={t("pipeline.completeTooltip")} disabled={quickCompleting}>
+					<button
+						data-testid="task-info-quick-complete"
+						onClick={handleQuickComplete}
+						disabled={quickCompleting}
+						aria-label={t("pipeline.completeTooltip")}
+						className={`mr-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-success transition-all ${
+							quickCompleting ? "bg-success/25 opacity-100" : "opacity-60 hover:bg-success/20 hover:opacity-100"
+						}`}
+					>
+						{quickCompleting ? (
+							<span className="h-3 w-3 animate-spin rounded-full border-2 border-success/30 border-t-success" />
+						) : (
+							<CompleteCheckIcon className="w-3 h-3" />
+						)}
+					</button>
+				</Tooltip>
 			)}
-			<span className={`font-medium text-fg-2 truncate ${narrow ? "text-sm" : "text-[0.6875rem]"}`}>
-				{activeCustomColumn ? activeCustomColumn.name : getStatusLabel(task.status, t, project)}
-			</span>
-			<svg className={`text-fg-3 ${narrow ? "w-4 h-4" : "w-3 h-3"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-			</svg>
-		</button>
+		</div>
 	);
 
 	const statusDropdownPortal = statusMenuOpen && createPortal(

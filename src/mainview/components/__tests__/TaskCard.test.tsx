@@ -443,6 +443,70 @@ describe("TaskCard", () => {
 			});
 		});
 
+		it("quick-complete check moves the task straight to completed", async () => {
+			const user = userEvent.setup();
+			const task = makeTask({ status: "review-by-user", worktreePath: "/tmp/wt", branchName: "dev3/test" });
+			mockedConfirmTaskCompletion.mockResolvedValue(true);
+			mockedApi.request.moveTask.mockResolvedValue({ ...task, status: "completed" });
+
+			renderCard(task);
+
+			await user.click(screen.getByTestId("task-card-quick-complete"));
+
+			// A one-click control must never complete silently — it forces the dialog
+			// even when the branch is clean.
+			expect(mockedConfirmTaskCompletion).toHaveBeenCalledWith(
+				expect.objectContaining({ id: "t1" }),
+				expect.anything(),
+				"completed",
+				expect.anything(),
+				expect.anything(),
+				{ alwaysConfirm: true },
+			);
+			await waitFor(() => {
+				expect(mockedApi.request.moveTask).toHaveBeenCalledWith(
+					expect.objectContaining({ taskId: "t1", newStatus: "completed" }),
+				);
+			});
+		});
+
+		it("acknowledges the quick-complete click while the confirmation is still pending", async () => {
+			const user = userEvent.setup();
+			const task = makeTask({ status: "review-by-user", worktreePath: "/tmp/wt", branchName: "dev3/test" });
+			let decide: (ok: boolean) => void = () => {};
+			mockedConfirmTaskCompletion.mockReturnValue(new Promise<boolean>((resolve) => { decide = resolve; }));
+
+			renderCard(task);
+
+			await user.click(screen.getByTestId("task-card-quick-complete"));
+
+			// The pending state must be visible before the dialog resolves — a slow
+			// git check must never look like a dead click.
+			expect(screen.getByTestId("task-card-quick-complete")).toBeDisabled();
+
+			await act(async () => { decide(false); });
+
+			expect(screen.getByTestId("task-card-quick-complete")).toBeEnabled();
+		});
+
+		it("does not move the task when the quick-complete confirmation is declined", async () => {
+			const user = userEvent.setup();
+			const task = makeTask({ status: "review-by-user", worktreePath: "/tmp/wt", branchName: "dev3/test" });
+			mockedConfirmTaskCompletion.mockResolvedValue(false);
+
+			renderCard(task);
+
+			await user.click(screen.getByTestId("task-card-quick-complete"));
+
+			expect(mockedApi.request.moveTask).not.toHaveBeenCalled();
+		});
+
+		it("hides the quick-complete check once the task is completed", () => {
+			renderCard(makeTask({ status: "completed" }));
+
+			expect(screen.queryByTestId("task-card-quick-complete")).not.toBeInTheDocument();
+		});
+
 		it("status dropdown opens with In Progress and Cancelled", async () => {
 			const user = userEvent.setup();
 			renderCard(makeTask({ status: "todo" }));
