@@ -99,7 +99,61 @@ const task: Task = {
 	updatedAt: "2025-06-15T12:00:00Z",
 };
 
+const artifact: SharedArtifact = {
+	id: "artifact-1",
+	kind: "html",
+	title: "Metrics",
+	name: "metrics.html",
+	storedPath: "/tmp/shared-artifacts/artifact-1/metrics.html",
+	originalPath: "/tmp/metrics.html",
+	bytes: 10,
+	createdAt: 1,
+	assets: [],
+};
+
 const renderWorkspace = (element: ReactElement) => render(element, { wrapper: I18nProvider });
+
+function mockPointerCapture(separator: HTMLElement) {
+	const setPointerCapture = vi.fn();
+	const releasePointerCapture = vi.fn();
+	Object.defineProperties(separator, {
+		setPointerCapture: { value: setPointerCapture },
+		releasePointerCapture: { value: releasePointerCapture },
+		hasPointerCapture: { value: () => true },
+	});
+	return { releasePointerCapture, setPointerCapture };
+}
+
+function expectArtifactResizeFinished(
+	separator: HTMLElement,
+	releasePointerCapture: ReturnType<typeof vi.fn>,
+	expectedWidth: string,
+) {
+	expect(releasePointerCapture).toHaveBeenCalledWith(7);
+	expect(separator).toHaveAttribute("aria-valuenow", expectedWidth);
+	expect(screen.queryByTestId("artifact-resize-shield")).not.toBeInTheDocument();
+	expect(document.body.style.cursor).toBe("");
+	expect(document.body.style.userSelect).toBe("");
+}
+
+function startArtifactResize() {
+	renderWorkspace(
+		<TaskWorkspaceView
+			projectId="p1"
+			taskId="t1"
+			tasks={[task]}
+			projects={[project]}
+			navigate={vi.fn()}
+			dispatch={vi.fn()}
+			artifactViewer={{ taskId: "t1", artifacts: [artifact], index: 0 }}
+		/>,
+	);
+
+	const separator = screen.getByRole("separator", { name: "Resize artifact panel" });
+	const { releasePointerCapture } = mockPointerCapture(separator);
+	fireEvent.pointerDown(separator, { pointerId: 7, clientX: 900 });
+	return { releasePointerCapture, separator };
+}
 
 describe("TaskWorkspaceView", () => {
 	beforeEach(() => {
@@ -225,17 +279,6 @@ describe("TaskWorkspaceView", () => {
 
 	it("shows a task artifact beside the terminal and closes it independently", async () => {
 		const onClose = vi.fn();
-		const artifact: SharedArtifact = {
-			id: "artifact-1",
-			kind: "html",
-			title: "Metrics",
-			name: "metrics.html",
-			storedPath: "/tmp/shared-artifacts/artifact-1/metrics.html",
-			originalPath: "/tmp/metrics.html",
-			bytes: 10,
-			createdAt: 1,
-			assets: [],
-		};
 		renderWorkspace(
 			<TaskWorkspaceView
 				projectId="p1"
@@ -257,13 +300,7 @@ describe("TaskWorkspaceView", () => {
 		separator.focus();
 		await userEvent.keyboard("{ArrowLeft}");
 		expect(separator).toHaveAttribute("aria-valuenow", "584");
-		const setPointerCapture = vi.fn();
-		const releasePointerCapture = vi.fn();
-		Object.defineProperties(separator, {
-			setPointerCapture: { value: setPointerCapture },
-			releasePointerCapture: { value: releasePointerCapture },
-			hasPointerCapture: { value: () => true },
-		});
+		const { releasePointerCapture, setPointerCapture } = mockPointerCapture(separator);
 		fireEvent.pointerDown(separator, { pointerId: 7, clientX: 900 });
 		expect(setPointerCapture).toHaveBeenCalledWith(7);
 		expect(screen.getByTestId("artifact-resize-shield")).toBeInTheDocument();
@@ -272,13 +309,46 @@ describe("TaskWorkspaceView", () => {
 		expect(screen.getByTestId("artifact-resize-ghost")).toBeInTheDocument();
 		expect(separator).toHaveAttribute("aria-valuenow", "584");
 		fireEvent.pointerUp(separator, { pointerId: 7, clientX: 850 });
-		expect(releasePointerCapture).toHaveBeenCalledWith(7);
-		expect(separator).toHaveAttribute("aria-valuenow", "634");
-		expect(screen.queryByTestId("artifact-resize-shield")).not.toBeInTheDocument();
-		expect(document.body.style.cursor).toBe("");
-		expect(document.body.style.userSelect).toBe("");
+		expectArtifactResizeFinished(separator, releasePointerCapture, "634");
 		await userEvent.click(screen.getByText("Close Artifact"));
 		expect(onClose).toHaveBeenCalledOnce();
+	});
+
+	it("finishes artifact resizing when pointer release misses the separator", () => {
+		const { releasePointerCapture, separator } = startArtifactResize();
+		fireEvent.pointerMove(separator, { pointerId: 7, clientX: 850 });
+		fireEvent.pointerUp(window, { pointerId: 7, clientX: 850 });
+
+		expectArtifactResizeFinished(separator, releasePointerCapture, "610");
+	});
+
+	it("finishes artifact resizing when pointer cancellation misses the separator", () => {
+		const { releasePointerCapture, separator } = startArtifactResize();
+		fireEvent.pointerMove(separator, { pointerId: 7, clientX: 850 });
+		fireEvent.pointerCancel(window, { pointerId: 7, clientX: 850 });
+
+		expectArtifactResizeFinished(separator, releasePointerCapture, "610");
+	});
+
+	it("finishes artifact resizing when the window loses focus", () => {
+		const { releasePointerCapture, separator } = startArtifactResize();
+		fireEvent.pointerMove(separator, { pointerId: 7, clientX: 850 });
+		fireEvent.blur(window);
+
+		expectArtifactResizeFinished(separator, releasePointerCapture, "610");
+	});
+
+	it("finishes artifact resizing when the document becomes hidden", () => {
+		const visibilityState = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+		try {
+			const { releasePointerCapture, separator } = startArtifactResize();
+			fireEvent.pointerMove(separator, { pointerId: 7, clientX: 850 });
+			fireEvent(document, new Event("visibilitychange"));
+
+			expectArtifactResizeFinished(separator, releasePointerCapture, "610");
+		} finally {
+			visibilityState.mockRestore();
+		}
 	});
 
 	// Regression test for the `key={taskId}` prop on TaskTerminal in
