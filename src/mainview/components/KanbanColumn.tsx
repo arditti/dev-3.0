@@ -144,6 +144,9 @@ function KanbanColumn({
 	const [editing, setEditing] = useState(false);
 	const [editValue, setEditValue] = useState("");
 	const [compactExpanded, setCompactExpanded] = useState(false);
+	// A card clipped by the scroll edge sits flush against the pinned footer (tip
+	// card / + New Task) and reads as the footer lying on top of it.
+	const [listClipped, setListClipped] = useState(false);
 	const renameInputRef = useRef<HTMLInputElement>(null);
 	const taskListRef = useRef<HTMLDivElement>(null);
 	const compactDwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -184,6 +187,12 @@ function KanbanColumn({
 	useEffect(() => {
 		if (!isCompact) setCompactExpanded(false);
 	}, [isCompact]);
+
+	function syncListClipped() {
+		const el = taskListRef.current;
+		if (!el) return;
+		setListClipped(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+	}
 
 	function handleCompactPointerEnter() {
 		if (!isCompact || isAnyDragActive) return;
@@ -361,12 +370,27 @@ function KanbanColumn({
 	const visibleTasks = expanded ? tasks : tasks.slice(0, COLUMN_TASK_LIMIT);
 	const hiddenCount = tasks.length - visibleTasks.length;
 
+	// Re-measure the scroll edge whenever the rendered task set changes, plus on
+	// any resize of the list itself (window height, sibling panes).
+	useEffect(syncListClipped, [visibleTasks.length, expanded, tip, isCompactNarrow]);
+	useEffect(() => {
+		const el = taskListRef.current;
+		if (!el) return;
+		const observer = new ResizeObserver(syncListClipped);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+
+	// Pinned footers (tip card, + New Task) sit directly under the scroll area;
+	// the hairline only appears while a card is actually clipped beneath them.
+	const footerSeam = `border-t pt-2.5 transition-colors duration-150 ${listClipped ? "border-edge" : "border-transparent"}`;
+
 	// Collapsed column rendering
 	if (collapsed) {
 		return (
 			<>
 			<div
-				className={`group/col relative flex flex-col flex-shrink-0 w-12 glass-column column-glow rounded-2xl border cursor-pointer select-none ${
+				className={`group/col relative flex flex-col flex-shrink-0 w-12 glass-column column-glow rounded-2xl border cursor-pointer select-none transition-[background-color,border-color,box-shadow,opacity] duration-150 ease-out ${
 					showDropHighlight
 						? "border-accent bg-accent/5 shadow-lg shadow-accent/10"
 						: isCrossColumnTarget && (dragFromStatus || dragFromCustomColumnId)
@@ -428,7 +452,7 @@ function KanbanColumn({
 					<div className="flex justify-center pb-3">
 						<button
 							onClick={(e) => { e.stopPropagation(); onAddTask(); }}
-							className="text-fg-3 hover:text-accent transition-colors w-7 h-7 flex items-center justify-center rounded-lg hover:bg-accent/10 border border-dashed border-edge hover:border-accent/30 text-base leading-none"
+							className="text-fg-3 hover:text-accent transition-[color,background-color,border-color,transform] duration-150 ease-out motion-safe:active:scale-[0.96] w-7 h-7 flex items-center justify-center rounded-lg hover:bg-accent/10 border border-dashed border-edge hover:border-accent/30 text-base leading-none"
 							aria-label={t("kanban.newTask")}
 							title={t("kanban.newTask")}
 						>
@@ -444,7 +468,7 @@ function KanbanColumn({
 	return (
 		<>
 		<div
-			className={`group/col relative flex flex-col flex-shrink-0 glass-column column-glow rounded-2xl border transition-colors ${
+			className={`group/col relative flex flex-col flex-shrink-0 glass-column column-glow rounded-2xl border transition-[background-color,border-color,box-shadow,opacity,width] duration-150 ease-out ${
 				fullWidth ? "w-full" : isCompactNarrow ? "w-[6.125rem]" : "w-[17.5rem]"
 			} ${
 				showDropHighlight
@@ -536,7 +560,7 @@ function KanbanColumn({
 					{!editing && onRenameColumn && !isCompactNarrow && (
 						<button
 							onClick={startEditing}
-							className="text-fg-muted hover:text-fg-3 transition-colors w-4 h-4 flex items-center justify-center text-xs leading-none flex-shrink-0 opacity-0 group-hover/col:opacity-100 focus:opacity-100"
+							className="text-fg-muted hover:text-fg-3 transition-[color,opacity] duration-150 ease-out w-4 h-4 flex items-center justify-center text-xs leading-none flex-shrink-0 opacity-0 group-hover/col:opacity-100 focus:opacity-100"
 							style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
 							aria-label={t("kanban.renameColumn")}
 							title={t("kanban.renameColumn")}
@@ -573,7 +597,7 @@ function KanbanColumn({
 					{onCollapseToggle && !isCompactNarrow && (
 						<button
 							onClick={(e) => { e.stopPropagation(); onCollapseToggle(); }}
-							className="text-fg-muted hover:text-fg-3 transition-colors w-4 h-4 flex items-center justify-center text-sm leading-none flex-shrink-0 opacity-0 group-hover/col:opacity-100 focus:opacity-100"
+							className="text-fg-muted hover:text-fg-3 transition-[color,opacity] duration-150 ease-out w-4 h-4 flex items-center justify-center text-sm leading-none flex-shrink-0 opacity-0 group-hover/col:opacity-100 focus:opacity-100"
 							style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
 							aria-label={t("kanban.collapseColumn")}
 							title={t("kanban.collapseColumn")}
@@ -588,6 +612,7 @@ function KanbanColumn({
 			<div
 				ref={taskListRef}
 				className="flex-1 overflow-y-auto px-3 py-3 space-y-2"
+				onScroll={syncListClipped}
 				onDoubleClick={!isCustomColumn && status === "todo" ? (e) => {
 					// Only trigger when clicking empty space, not on a task card
 					if ((e.target as HTMLElement).closest("[data-task-id]")) return;
@@ -597,7 +622,7 @@ function KanbanColumn({
 				{visibleTasks.map((task, index) => (
 					<div key={task.id} data-task-id={task.id}>
 						{isSameColumnDrag && dropIndex === index && task.id !== draggedTaskId && (
-							<div className="h-0.5 bg-accent rounded-full mx-1 mb-2 transition-all" />
+							<div className="h-0.5 bg-accent rounded-full mx-1 mb-2" />
 						)}
 						<TaskCard
 							task={task}
@@ -624,13 +649,13 @@ function KanbanColumn({
 					</div>
 				))}
 				{isSameColumnDrag && dropIndex === visibleTasks.length && (
-					<div className="h-0.5 bg-accent rounded-full mx-1 mt-0 transition-all" />
+					<div className="h-0.5 bg-accent rounded-full mx-1 mt-0" />
 				)}
 
 				{hiddenCount > 0 && (
 					<button
 						onClick={() => setExpanded(true)}
-						className="w-full text-fg-muted hover:text-fg-2 text-xs text-center py-2 mt-1 rounded-lg hover:bg-raised-hover transition-colors"
+						className="w-full text-fg-muted hover:text-fg-2 text-xs text-center py-2 mt-1 rounded-lg hover:bg-raised-hover transition-[color,background-color,transform] duration-150 ease-out motion-safe:active:scale-[0.96]"
 					>
 						{t("kanban.showMore", { count: String(hiddenCount) })}
 					</button>
@@ -657,17 +682,17 @@ function KanbanColumn({
 
 			{/* Tip card — pinned to bottom, above the add-task button */}
 			{tip && tipState && onTipChanged && (
-				<div className="px-3 pb-3 flex-shrink-0">
+				<div className={`px-3 pb-3 flex-shrink-0 ${footerSeam}`}>
 					<TipCard tip={tip} tipState={tipState} onChanged={onTipChanged} />
 				</div>
 			)}
 
 			{/* Add task button (only in To Do column, not custom columns) */}
 			{!isCustomColumn && status === "todo" && (
-				<div className="px-3 pb-3 flex-shrink-0">
+				<div className={`px-3 pb-3 flex-shrink-0 ${tip ? "" : footerSeam}`}>
 					<button
 						onClick={onAddTask}
-						className="w-full text-fg-3 hover:text-accent text-sm font-medium text-center py-2.5 rounded-xl hover:bg-accent/10 border border-dashed border-edge hover:border-accent/30 transition-all"
+						className="w-full text-fg-3 hover:text-accent text-sm font-medium text-center py-2.5 rounded-lg hover:bg-accent/10 border border-dashed border-edge hover:border-accent/30 transition-[color,background-color,border-color,transform] duration-150 ease-out motion-safe:active:scale-[0.96]"
 					>
 						{t("kanban.newTask")}
 					</button>
