@@ -30,6 +30,7 @@ export default {
 					emphasis: "rgb(var(--accent-emphasis) / <alpha-value>)",
 				},
 				danger: "rgb(var(--danger) / <alpha-value>)",
+				"danger-strong": "rgb(var(--danger-strong) / <alpha-value>)",
 				warning: "rgb(var(--warning) / <alpha-value>)",
 				favorite: "rgb(var(--favorite) / <alpha-value>)",
 				awake: {

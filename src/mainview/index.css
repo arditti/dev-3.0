@@ -68,6 +68,7 @@ html {
 	--accent-hover: 28 119 241;    /* accent fills: deeper, keeps white ink readable */
 	--accent-emphasis: 137 190 255; /* accent text/icons on hover: lifts on dark */
 	--danger: 255 137 135;
+	--danger-strong: 255 137 135; /* danger ink on a danger-tinted fill */
 	--success: 63 223 126;
 	--success-hover: 4 190 88;
 	--warning: 240 210 78;
@@ -161,6 +162,7 @@ html {
 	--accent-hover: 8 93 199;
 	--accent-emphasis: 5 84 181;
 	--danger: 214 17 51;
+	--danger-strong: 159 18 57; /* --danger on a danger/10 fill is only 4.28:1 */
 	--success: 14 138 71;
 	--success-hover: 10 114 57;
 	--warning: 145 118 13;
