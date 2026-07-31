@@ -36,37 +36,44 @@ html {
 	font-display: swap;
 }
 
-/* ---- Theme tokens (space-separated RGB for Tailwind alpha support) ---- */
+/* ---- Theme tokens (space-separated RGB for Tailwind alpha support) ----
+   Both themes are authored in OKLCH and emitted as sRGB: surfaces share one
+   hue with a monotonic lightness ramp, the text ladder is spaced by APCA
+   contrast, and hover tokens move in the direction their role needs
+   (fills deepen, text lifts on dark). See DESIGN.md for the measured table. */
 :root,
 [data-theme="dark"] {
-	/* ---- Surfaces (opaque fallbacks, used outside kanban) ---- */
-	--surface-base: 6 9 21;
-	--surface-raised: 14 18 30;
-	--surface-raised-hover: 23 28 44;
-	--surface-elevated: 21 26 41;
-	--surface-elevated-hover: 35 40 58;
-	--surface-overlay: 17 23 37;
+	/* ---- Surfaces (opaque fallbacks, used outside kanban) ----
+	   oklch hue 268, L 0.145 → 0.262; overlay sits above elevated so a popup
+	   separates from the card it covers. */
+	--surface-base: 6 9 22;
+	--surface-raised: 14 19 33;
+	--surface-raised-hover: 19 25 41;
+	--surface-elevated: 21 27 43;
+	--surface-elevated-hover: 29 36 53;
+	--surface-overlay: 27 33 48;
 
-	/* ---- Text ---- */
-	--text-primary: 250 252 255;
-	--text-secondary: 170 187 212;
-	--text-tertiary: 115 133 160;
-	--text-muted: 82 98 121;
+	/* ---- Text (oklch hue 262; APCA Lc ~99 / 78 / 61 / 41 on a card) ---- */
+	--text-primary: 239 244 252;
+	--text-secondary: 200 211 231;
+	--text-tertiary: 170 182 204;
+	--text-muted: 132 145 169;
 
 	/* ---- Borders ---- */
-	--border-default: 32 38 55;
-	--border-active: 52 58 83;
+	--border-default: 43 49 65;
+	--border-active: 68 77 99;
 
 	/* ---- Accent / Danger / Success ---- */
-	--accent: 68 150 255;
-	--accent-hover: 43 114 255;
-	--danger: 255 130 130;
-	--success: 74 222 128;
-	--success-hover: 34 197 94;
-	--warning: 250 204 21;
-	--favorite: 245 197 66;    /* gold star for a saved favorite combo */
-	--awake: 251 146 60;
-	--awake-hover: 249 115 22;
+	--accent: 69 150 254;
+	--accent-hover: 28 119 241;    /* accent fills: deeper, keeps white ink readable */
+	--accent-emphasis: 137 190 255; /* accent text/icons on hover: lifts on dark */
+	--danger: 255 137 135;
+	--success: 63 223 126;
+	--success-hover: 4 190 88;
+	--warning: 240 210 78;
+	--favorite: 249 182 61;    /* gold star for a saved favorite combo */
+	--awake: 244 148 86;
+	--awake-hover: 239 108 1;
 	--diff-search-highlight-from: 255 227 138;
 	--diff-search-highlight-to: 255 166 196;
 
@@ -78,9 +85,11 @@ html {
 	--chart-5: 244 114 182;
 	--chart-6: 45 212 191;
 
-	/* ---- Productivity stats flair: achievement gold + on-fire heat ---- */
-	--stat-gold: 212 175 55;   /* medals */
-	--stat-fire: 249 115 22;   /* above-your-norm "on fire" */
+	/* ---- Productivity stats flair: achievement gold + on-fire heat ----
+	   Warm family is hue-separated so it never reads as one colour:
+	   warning 96° → gold 78° → awake 52° → fire 42°. */
+	--stat-gold: 229 170 65;   /* medals */
+	--stat-fire: 251 109 44;   /* above-your-norm "on fire" */
 
 	/* ---- Vimium-style task hint badges ---- */
 	--hint-bg: 253 224 71;     /* amber-300 */
@@ -90,7 +99,7 @@ html {
 
 	/* ---- Background gradient ---- */
 	--bg-grad-angle: 115deg;
-	--bg-grad-from: #060915;
+	--bg-grad-from: #060916;
 	--bg-grad-mid: #0f1731;
 	--bg-grad-to: #180d29;
 
@@ -124,34 +133,40 @@ html {
 }
 
 [data-theme="light"] {
-	/* ---- Surfaces ---- */
-	--surface-base: 240 242 250;
-	--surface-raised: 255 255 255;
-	--surface-raised-hover: 240 241 248;
-	--surface-elevated: 237 239 247;
-	--surface-elevated-hover: 226 229 240;
-	--surface-overlay: 255 255 255;
+	/* ---- Surfaces (oklch hue 268) ----
+	   Same idea as dark, mirrored: nothing is pure white, every surface carries
+	   a little chroma so it reads as tinted paper rather than a lightbox.
+	   L 0.906 → 0.990, monotonic. */
+	--surface-base: 235 239 250;
+	--surface-raised: 251 252 254;
+	--surface-raised-hover: 242 245 253;
+	--surface-elevated: 231 236 248;
+	--surface-elevated-hover: 220 226 240;
+	--surface-overlay: 253 253 255;
 
-	/* ---- Text (slate-based, never pure black) ---- */
-	--text-primary: 15 23 42;
-	--text-secondary: 71 85 105;
-	--text-tertiary: 100 116 139;
-	--text-muted: 148 163 184;
+	/* ---- Text (slate-based, never pure black; APCA Lc ~91 / 75 / 60 / 44) ---- */
+	--text-primary: 17 26 47;
+	--text-secondary: 68 81 103;
+	--text-tertiary: 99 113 136;
+	--text-muted: 134 148 173;
 
 	/* ---- Borders (visible but refined) ---- */
-	--border-default: 203 213 225;
-	--border-active: 165 180 202;
+	--border-default: 202 210 224;
+	--border-active: 159 174 199;
 
-	/* ---- Accent / Danger / Success ---- */
-	--accent: 59 130 246;
-	--accent-hover: 37 99 235;
-	--danger: 220 38 38;
-	--success: 22 163 74;
-	--success-hover: 21 128 61;
-	--warning: 202 138 4;
-	--favorite: 202 152 20;    /* deeper gold reads on a light canvas */
-	--awake: 217 119 6;
-	--awake-hover: 180 83 9;
+	/* ---- Accent / Danger / Success ----
+	   Every one sits at the sRGB chroma ceiling for its lightness: as saturated
+	   as this gamut allows while still carrying text (Lc 58+). */
+	--accent: 12 117 230;
+	--accent-hover: 8 93 199;
+	--accent-emphasis: 5 84 181;
+	--danger: 214 17 51;
+	--success: 14 138 71;
+	--success-hover: 10 114 57;
+	--warning: 145 118 13;
+	--favorite: 162 113 15;    /* deeper gold reads on a light canvas */
+	--awake: 189 94 15;
+	--awake-hover: 161 72 8;
 	--diff-search-highlight-from: 250 204 21;
 	--diff-search-highlight-to: 236 72 153;
 
@@ -164,8 +179,8 @@ html {
 	--chart-6: 13 148 136;
 
 	/* ---- Productivity stats flair: achievement gold + on-fire heat ---- */
-	--stat-gold: 184 134 11;   /* deeper gold reads on a light canvas */
-	--stat-fire: 234 88 12;
+	--stat-gold: 157 110 12;   /* deeper gold reads on a light canvas */
+	--stat-fire: 194 74 11;
 
 	/* ---- Vimium-style task hint badges ---- */
 	--hint-bg: 252 211 77;     /* amber-300/400 — pops on a light canvas */
@@ -174,19 +189,23 @@ html {
 	--hint-typed: 185 28 28;
 
 	/* ---- Background gradient ---- */
+	/* Hue travels 256° → 291° → 293°, one direction. Sits at L 0.899 → 0.775:
+	   a tinted canvas, not a white one, without going heavy. */
 	--bg-grad-angle: 135deg;
-	--bg-grad-from: #dae3ee;
-	--bg-grad-mid: #e1e5d4;
-	--bg-grad-to: #b4b5c4;
+	--bg-grad-from: #d3dfef;
+	--bg-grad-mid: #e0def1;
+	--bg-grad-to: #b6b2cb;
 
-	/* ---- Glass surfaces (frosted white on colored canvas) ---- */
+	/* ---- Glass surfaces (frosted white on colored canvas) ----
+	   Thinner white veils than before so the column's own colour reaches the
+	   card instead of being bleached out of it. */
 	--glass-column-rgb: 255 255 255;
-	--glass-column-alpha: 0.52;
+	--glass-column-alpha: 0.49;
 	--glass-card-rgb: 255 255 255;
-	--glass-card-alpha: 0.72;
-	--glass-card-hover-alpha: 0.88;
+	--glass-card-alpha: 0.66;
+	--glass-card-hover-alpha: 0.81;
 	--glass-header-rgb: 255 255 255;
-	--glass-header-alpha: 0.6;
+	--glass-header-alpha: 0.58;
 
 	/* ---- Glass blur ---- */
 	--glass-blur-column: 18px;
@@ -198,10 +217,14 @@ html {
 	--glass-border-card-alpha: 0.06;
 	--glass-border-card-hover-alpha: 0.13;
 
-	/* ---- Column glow (vivid colors need stronger presence on white) ---- */
-	--glow-start-alpha: 0.20;
-	--glow-mid-alpha: 0.06;
-	--glow-line-alpha: 0.45;
+	/* ---- Column glow ----
+	   A colour laid over near-white glass keeps only a fraction of its chroma,
+	   which is why eight columns used to look like eight shades of white. These
+	   alphas are what makes them tell apart; 0.31 is the calm end of the range
+	   that still keeps the closest pair of columns 0.045 apart in OKLCH. */
+	--glow-start-alpha: 0.31;
+	--glow-mid-alpha: 0.1;
+	--glow-line-alpha: 0.62;
 
 	/* ---- Shadows (blue-tinted, layered for depth) ---- */
 	--shadow-column: 0 8px 30px -8px rgb(80 100 140 / 0.13), 0 2px 8px -2px rgb(80 100 140 / 0.06);
@@ -283,8 +306,8 @@ body, #root {
 /* Colored outer shadow for light theme columns */
 [data-theme="light"] .column-glow {
 	box-shadow:
-		0 4px 20px -4px rgb(var(--col-rgb) / 0.28),
-		0 2px 8px -2px rgb(var(--col-rgb) / 0.14);
+		0 4px 20px -4px rgb(var(--col-rgb) / 0.31),
+		0 2px 8px -2px rgb(var(--col-rgb) / 0.16);
 }
 
 /* ---- Streamer mode (privacy masking) ----

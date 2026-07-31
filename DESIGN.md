@@ -10,7 +10,12 @@ Two themes: **dark** (default) and **light**, toggled via `data-theme` attribute
 
 **Dark theme** — deep space-navy backgrounds with frosted glass surfaces. High contrast text on near-black. Kanban columns glow softly with their status color. The feel is focused, immersive, developer-oriented. Density is moderate — enough whitespace to breathe but no wasted space.
 
-**Light theme** — cool off-white backgrounds with white glass surfaces. Subtle colored shadows replace inner glows. Softer, calmer, but the same information density. Kanban status colors darken to maintain contrast on light surfaces.
+**Light theme** — the same concept mirrored, not a bleached copy. Nothing is pure
+white and nothing is pure black: every surface carries a little chroma so it reads
+as tinted paper, and contrast is deliberately short of the maximum. The colour
+intensity is calibrated by eye between "bleached" and "too much". Status colours
+go deep and fully saturated instead of pastel, because the glass veil eats most of
+their chroma on the way to the screen.
 
 Glass morphism is the defining visual pattern — every kanban column and card uses backdrop blur with semi-transparent backgrounds. This creates layered depth without heavy shadows.
 
@@ -18,70 +23,102 @@ Glass morphism is the defining visual pattern — every kanban column and card u
 
 ## 2. Color Palette & Roles
 
+Both palettes are authored in **OKLCH** and shipped as sRGB triplets. Three rules
+hold the system together:
+
+1. **One hue per family.** Surfaces sit on 268° in both themes, text on 262°.
+   No hue drift up or down a ramp.
+2. **The lightness ramp is monotonic**, so a hover never lands darker than the
+   surface it lifts from, and `--surface-overlay` sits *above* `--surface-elevated`.
+3. **The text ladder is spaced by measured contrast** (APCA), not by eye —
+   roughly `Lc 100 / 78 / 62 / 45` from primary to muted, in both themes.
+
 ### Surfaces
 
 | Role | CSS Variable | Dark | Light |
 |------|-------------|------|-------|
-| Base background | `--surface-base` | `rgb(6, 9, 21)` | `rgb(240, 242, 250)` |
-| Raised surface | `--surface-raised` | `rgb(14, 18, 30)` | `rgb(255, 255, 255)` |
-| Raised hover | `--surface-raised-hover` | `rgb(23, 28, 44)` | `rgb(240, 241, 248)` |
-| Elevated surface | `--surface-elevated` | `rgb(21, 26, 41)` | `rgb(237, 239, 247)` |
-| Elevated hover | `--surface-elevated-hover` | `rgb(35, 40, 58)` | `rgb(226, 229, 240)` |
-| Overlay (modals) | `--surface-overlay` | `rgb(17, 23, 37)` | `rgb(255, 255, 255)` |
+| Base background | `--surface-base` | `rgb(6, 9, 22)` | `rgb(235, 239, 250)` |
+| Raised surface | `--surface-raised` | `rgb(14, 19, 33)` | `rgb(251, 252, 254)` |
+| Raised hover | `--surface-raised-hover` | `rgb(19, 25, 41)` | `rgb(242, 245, 253)` |
+| Elevated surface | `--surface-elevated` | `rgb(21, 27, 43)` | `rgb(231, 236, 248)` |
+| Elevated hover | `--surface-elevated-hover` | `rgb(29, 36, 53)` | `rgb(220, 226, 240)` |
+| Overlay (modals) | `--surface-overlay` | `rgb(27, 33, 48)` | `rgb(253, 253, 255)` |
 
 ### Text
 
-| Role | CSS Variable | Dark | Light |
-|------|-------------|------|-------|
-| Primary | `--text-primary` | `rgb(250, 252, 255)` | `rgb(15, 23, 42)` |
-| Secondary | `--text-secondary` | `rgb(170, 187, 212)` | `rgb(71, 85, 105)` |
-| Tertiary | `--text-tertiary` | `rgb(115, 133, 160)` | `rgb(100, 116, 139)` |
-| Muted | `--text-muted` | `rgb(82, 98, 121)` | `rgb(148, 163, 184)` |
+`Lc` is the APCA contrast against a kanban card — the worst-case reading surface.
+`Lc 75` is the floor for body text, `Lc 60` for everything else; muted is for
+decoration and disabled state only, never for text that has to be read.
+
+| Role | CSS Variable | Dark | Light | Lc dark / light |
+|------|-------------|------|-------|-----------------|
+| Primary | `--text-primary` | `rgb(239, 244, 252)` | `rgb(17, 26, 47)` | 99 / 93 |
+| Secondary | `--text-secondary` | `rgb(200, 211, 231)` | `rgb(68, 81, 103)` | 78 / 76 |
+| Tertiary | `--text-tertiary` | `rgb(170, 182, 204)` | `rgb(99, 113, 136)` | 61 / 63 |
+| Muted | `--text-muted` | `rgb(132, 145, 169)` | `rgb(134, 148, 173)` | 41 / 46 |
 
 ### Borders
 
 | Role | CSS Variable | Dark | Light |
 |------|-------------|------|-------|
-| Default | `--border-default` | `rgb(32, 38, 55)` | `rgb(203, 213, 225)` |
-| Active | `--border-active` | `rgb(52, 58, 83)` | `rgb(165, 180, 202)` |
+| Default | `--border-default` | `rgb(43, 49, 65)` | `rgb(202, 210, 224)` |
+| Active | `--border-active` | `rgb(68, 77, 99)` | `rgb(159, 174, 199)` |
 
 ### Semantic / Interactive
 
+`--accent-hover` is for accent **fills** — it deepens in both themes so white ink
+on the button stays readable. `--accent-emphasis` is for accent **text and icons**
+on hover — it lifts on dark and deepens on light, so a link always gains contrast
+when you point at it. Never swap the two.
+
 | Role | CSS Variable | Dark | Light |
 |------|-------------|------|-------|
-| Accent (primary action) | `--accent` | `#4496ff` | `#3b82f6` |
-| Accent hover | `--accent-hover` | `#2b72ff` | `#2563eb` |
-| Danger | `--danger` | `#ff8282` | `#dc2626` |
-| Success | `--success` | `#4ade80` | `#16a34a` |
-| Success hover | `--success-hover` | `#22c55e` | `#15803d` |
-| Warning | `--warning` | `#facc15` | `#ca8a04` |
-| Favorite (saved star) | `--favorite` | `#f5c542` | `#ca9814` |
+| Accent (primary action) | `--accent` | `#4596fe` | `#0c75e6` |
+| Accent hover (fills) | `--accent-hover` | `#1c77f1` | `#085dc7` |
+| Accent emphasis (text hover) | `--accent-emphasis` | `#89beff` | `#0554b5` |
+| Danger | `--danger` | `#ff8987` | `#d61133` |
+| Success | `--success` | `#3fdf7e` | `#0e8a47` |
+| Success hover (fills) | `--success-hover` | `#04be58` | `#0a7239` |
+| Warning | `--warning` | `#f0d24e` | `#91760d` |
+| Favorite (saved star) | `--favorite` | `#f9b63d` | `#a2710f` |
+| Awake | `--awake` | `#f49456` | `#bd5e0f` |
+| Achievement gold | `--stat-gold` | `#e5aa41` | `#9d6e0c` |
+| On fire | `--stat-fire` | `#fb6d2c` | `#c24a0b` |
+
+The four warm roles are separated by **hue**, not just lightness, so they never
+read as one colour: warning 96° → gold 78° → awake 52° → fire 42°.
 
 ### Background Gradient
 
-The app background is a subtle three-stop gradient, not a flat color.
+The app background is a subtle three-stop gradient, not a flat color. Hue travels
+in one direction across the three stops; the light theme's mid stop used to be
+olive and fought both ends.
 
 | Property | Dark | Light |
 |----------|------|-------|
 | Angle | `115deg` | `135deg` |
-| From | `#060915` | `#dae3ee` |
-| Mid | `#0f1731` | `#e1e5d4` |
-| To | `#180d29` | `#b4b5c4` |
+| From | `#060916` | `#d3dfef` |
+| Mid | `#0f1731` | `#e0def1` |
+| To | `#180d29` | `#b6b2cb` |
 
 ### Task Status Colors (Kanban)
 
-Each kanban column has a unique color. Dark uses bright/pastel tones; light uses deeper saturated tones for contrast.
+Each kanban column has a unique color. Dark uses bright/pastel tones; light uses
+deep, fully saturated tones — a colour laid over near-white glass at 31% alpha
+keeps only a fraction of its chroma, so anything softer makes eight columns look
+like eight shades of white. Light hues are spaced 15° → 40° → 95° → 152° → 232° →
+272° → 318°, measured so no two rendered columns land closer than 0.045 in OKLCH.
 
 | Status | Dark | Light |
 |--------|------|-------|
-| Todo | `#70e3ff` (cyan) | `#0891b2` (dark cyan) |
-| In Progress | `#afbaff` (periwinkle) | `#6366f1` (indigo) |
-| User Questions | `#ffa353` (coral orange) | `#ea580c` (dark orange) |
-| Review by AI | `#a0aec0` (cool gray) | `#64748b` (slate) |
-| Review by User | `#ffe55f` (golden yellow) | `#ca8a04` (amber) |
-| Review by Colleague | `#c4a5ff` (light violet) | `#8b5cf6` (violet) |
-| Completed | `#3cf3b0` (mint green) | `#059669` (emerald) |
-| Cancelled | `#ff8282` (red) | `#dc2626` (red) |
+| Todo | `#70e3ff` (cyan) | `#0182b0` (dark cyan) |
+| In Progress | `#afbaff` (periwinkle) | `#4b59ff` (indigo) |
+| User Questions | `#ffa353` (coral orange) | `#d04801` (dark orange) |
+| Review by AI | `#a0aec0` (cool gray) | `#656971` (slate — deliberately the neutral one) |
+| Review by User | `#ffe55f` (golden yellow) | `#9e8401` (deep gold) |
+| Review by Colleague | `#c4a5ff` (light violet) | `#b702df` (magenta) |
+| Completed | `#3cf3b0` (mint green) | `#04944b` (emerald) |
+| Cancelled | `#ff8282` (red) | `#d20346` (crimson) |
 
 ### Label Colors (12-color palette)
 
@@ -285,12 +322,12 @@ This is the signature visual element of dev-3.0. Every kanban column and card us
 | Variable | Dark | Light |
 |----------|------|-------|
 | `--glass-column-rgb` | `12 16 23` | `255 255 255` |
-| `--glass-column-alpha` | `0.7` | `0.52` |
+| `--glass-column-alpha` | `0.7` | `0.49` |
 | `--glass-card-rgb` | `255 255 255` | `255 255 255` |
-| `--glass-card-alpha` | `0.04` | `0.72` |
-| `--glass-card-hover-alpha` | `0.09` | `0.88` |
+| `--glass-card-alpha` | `0.04` | `0.66` |
+| `--glass-card-hover-alpha` | `0.09` | `0.81` |
 | `--glass-header-rgb` | `12 15 23` | `255 255 255` |
-| `--glass-header-alpha` | `0.46` | `0.6` |
+| `--glass-header-alpha` | `0.46` | `0.58` |
 | `--glass-blur-column` | `12px` | `18px` |
 | `--glass-blur-header` | `16px` | `22px` |
 
@@ -321,14 +358,14 @@ Each column has a `::before` pseudo-element that creates a color glow using the 
 
 | Variable | Dark | Light |
 |----------|------|-------|
-| `--glow-start-alpha` | `0.17` | `0.20` |
-| `--glow-mid-alpha` | `0.04` | `0.06` |
-| `--glow-line-alpha` | `0.46` | `0.45` |
+| `--glow-start-alpha` | `0.17` | `0.31` |
+| `--glow-mid-alpha` | `0.04` | `0.1` |
+| `--glow-line-alpha` | `0.46` | `0.62` |
 
 **Light theme outer shadow (per column):**
 ```css
-box-shadow: 0 4px 20px -4px rgb(var(--col-rgb) / 0.28),
-            0 2px 8px -2px rgb(var(--col-rgb) / 0.14);
+box-shadow: 0 4px 20px -4px rgb(var(--col-rgb) / 0.31),
+            0 2px 8px -2px rgb(var(--col-rgb) / 0.16);
 ```
 
 ### Kanban Column Structure
