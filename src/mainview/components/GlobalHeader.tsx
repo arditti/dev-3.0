@@ -14,6 +14,7 @@ import GitPullButton from "./GitPullButton";
 import UpdateReadyPopover, { UpdateWhatsNew } from "./UpdateReadyPopover";
 import PreventSleepToggle from "./PreventSleepToggle";
 import RateLimitIndicator from "./RateLimitIndicator";
+import MemoryHeadroomIndicator from "./MemoryHeadroomIndicator";
 import BottomSheet from "./BottomSheet";
 import Tooltip from "./Tooltip";
 import { useNarrowViewport } from "../hooks/useNarrowViewport";
@@ -566,6 +567,15 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 				{/* Prevent-sleep toggle — keeps the machine awake while dev-3.0 runs.
 				    Folded into the kebab bottom sheet on narrow. */}
 				{!isNarrow && <PreventSleepToggle />}
+
+				{/* Memory headroom — the one ambient resource readout allowed in the
+				    header (PRODUCT_UX_BIBLE §12.6). Sits between the two other
+				    "how much is left" widgets. Unlike them it stays visible on narrow
+				    and is NOT duplicated in the kebab sheet: utilities fold because
+				    they are actions you go looking for, while a capacity readout
+				    matters most exactly when screen is scarce and load is high.
+				    There it opens a BottomSheet instead of a popover. */}
+				<MemoryHeadroomIndicator navigate={navigate} />
 
 				{/* Ambient agent rate-limit indicator — hidden until any limit data exists
 				    (folded into the kebab bottom sheet on narrow). */}
