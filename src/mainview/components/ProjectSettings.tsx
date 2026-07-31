@@ -3,6 +3,7 @@ import { toast } from "../toast";
 import { confirm } from "../confirm";
 import type { CodingAgent, ColumnAgentConfig, CustomColumn, Dev3RepoConfig, GitHubAccount, GitHubCliStatus, Label, Project, SetupScriptLaunchMode, Task } from "../../shared/types";
 import { ACTIVE_STATUSES, getTaskTitle } from "../../shared/types";
+import { hasEnvLineBreak, parseEnvText, serializeEnvText } from "../../shared/env-text";
 import { CUSTOM_COLUMN_INSTRUCTION_MAX_CHARS, DEFAULT_REVIEW_PROMPT } from "../../shared/types";
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
@@ -442,6 +443,133 @@ function CustomColumnRow({ column, saving, onUpdate, onDelete, availableAgents }
 	);
 }
 
+// ---- Env vars editor (dotenv-style textarea backed by config.env) ----
+
+type EnvStorageScope = "project" | "repo" | "local";
+
+function envWithoutLineBreaks(env: Record<string, string>): Record<string, string> {
+	return Object.fromEntries(Object.entries(env).filter(([, value]) => !hasEnvLineBreak(value)));
+}
+
+function EnvVarsEditor({ env, storageScope, onChange, onErrorChange }: {
+	env: Record<string, string> | undefined;
+	storageScope: EnvStorageScope;
+	onChange: (env: Record<string, string> | undefined) => void;
+	onErrorChange?: (hasError: boolean) => void;
+}) {
+	const t = useT();
+	const lineBreakEntries = Object.entries(env ?? {}).filter(([, value]) => hasEnvLineBreak(value));
+	const [text, setText] = useState(() => serializeEnvText(envWithoutLineBreaks(env ?? {})));
+	const [errorLines, setErrorLines] = useState<number[]>([]);
+	// Tracks the env value this editor last emitted (or was initialized from);
+	// an external change (tab switch, async config load) reinitializes the text.
+	const emittedRef = useRef(JSON.stringify(env ?? {}));
+
+	useEffect(() => {
+		const incoming = JSON.stringify(env ?? {});
+		if (incoming !== emittedRef.current) {
+			emittedRef.current = incoming;
+			setText(serializeEnvText(envWithoutLineBreaks(env ?? {})));
+			setErrorLines([]);
+		}
+	}, [env]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// The cleanup clears the parent's gate on unmount (config-layer switch): child
+	// effects run before parent ones, so a parent-side reset would overwrite the
+	// value this editor just reported for the layer it mounted with.
+	useEffect(() => {
+		onErrorChange?.(errorLines.length > 0 || lineBreakEntries.length > 0);
+		return () => onErrorChange?.(false);
+	}, [errorLines.length, lineBreakEntries.length, onErrorChange]);
+
+	function handleChange(next: string) {
+		setText(next);
+		const { env: parsed, errors } = parseEnvText(next);
+		setErrorLines(errors.map((e) => e.line));
+		if (errors.length === 0) {
+			// Always emit an object (never undefined): the save handlers skip
+			// undefined params, which would make a cleared env impossible to persist.
+			const preserved = Object.fromEntries(lineBreakEntries);
+			const updated = { ...preserved, ...parsed };
+			emittedRef.current = JSON.stringify(updated);
+			onChange(updated);
+		}
+	}
+
+	function removeLineBreakEntry(key: string) {
+		const updated = { ...(env ?? {}) };
+		delete updated[key];
+		emittedRef.current = JSON.stringify(updated);
+		onChange(updated);
+	}
+
+	return (
+		<div>
+			<label className="block text-fg text-sm font-semibold mb-2">
+				{t("projectSettings.envVars")}
+			</label>
+			<p className="text-fg-3 text-sm mb-3">
+				{t("projectSettings.envVarsDesc")}
+			</p>
+			{storageScope === "repo" ? (
+				<div role="note" className="mb-3 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2.5 text-danger-strong">
+					<span aria-hidden="true" className="shrink-0 text-sm leading-5">&#9888;</span>
+					<p className="text-xs leading-5">{t("projectSettings.envVarsRepoWarning")}</p>
+				</div>
+			) : (
+				<p className="mb-3 text-xs leading-5 text-fg-3">
+					{t(storageScope === "project"
+						? "projectSettings.envVarsProjectNotice"
+						: "projectSettings.envVarsLocalNotice")}
+				</p>
+			)}
+			<textarea
+				value={text}
+				onChange={(e) => handleChange(e.target.value)}
+				rows={4}
+				placeholder={t("projectSettings.envVarsPlaceholder")}
+				aria-label={t("projectSettings.envVars")}
+				autoCapitalize="off"
+				autoCorrect="off"
+				spellCheck={false}
+				className={`w-full px-4 py-3 bg-raised border rounded-xl text-fg text-sm font-mono placeholder-fg-muted outline-none transition-colors resize-y ${
+					errorLines.length > 0 ? "border-danger/60 focus:border-danger" : "border-edge focus:border-accent/40"
+				}`}
+			/>
+			{lineBreakEntries.length > 0 && (
+				<div role="note" className="mt-2 rounded-lg border border-edge bg-elevated/50 px-3 py-2.5">
+					<p className="text-xs font-medium text-fg-2">
+						{t("projectSettings.envVarsLineBreakTitle")}
+					</p>
+					<p className="mt-1 text-xs leading-5 text-fg-3">
+						{t("projectSettings.envVarsLineBreakDesc")}
+					</p>
+					<div className="mt-2 divide-y divide-edge/60">
+						{lineBreakEntries.map(([key]) => (
+							<div key={key} className="flex min-w-0 items-center justify-between gap-3 py-1.5">
+								<code className="min-w-0 break-all text-xs text-fg-2">{key}</code>
+								<button
+									type="button"
+									onClick={() => removeLineBreakEntry(key)}
+									aria-label={t("projectSettings.envVarsRemoveLineBreakAria", { key })}
+									className="shrink-0 rounded px-2 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10"
+								>
+									{t("projectSettings.envVarsRemoveLineBreak")}
+								</button>
+							</div>
+						))}
+					</div>
+				</div>
+			)}
+			{errorLines.length > 0 && (
+				<p className="text-danger text-sm mt-2">
+					{t("projectSettings.envVarsInvalidLines", { lines: errorLines.join(", ") })}
+				</p>
+			)}
+		</div>
+	);
+}
+
 // ---- Config form (shared between Repo and Local tabs) ----
 
 interface ConfigFormProps {
@@ -453,6 +581,10 @@ interface ConfigFormProps {
 	projectId: string;
 	/** Project path for "Open in Finder" on sparse checkout */
 	projectPath?: string;
+	/** Destination that owns env values, used for storage-specific safety copy. */
+	envStorageScope: EnvStorageScope;
+	/** Reports whether the env textarea currently holds unparseable lines. */
+	onEnvErrorChange?: (hasError: boolean) => void;
 }
 
 interface BranchInfo {
@@ -643,7 +775,7 @@ function normalizeLocalConfig(config: Dev3RepoConfig, inherited: Dev3RepoConfig)
 		: { ...config, defaultCompareRef };
 }
 
-function ConfigForm({ config, onChange, inherited, projectId, projectPath }: ConfigFormProps) {
+function ConfigForm({ config, onChange, inherited, projectId, projectPath, envStorageScope, onEnvErrorChange }: ConfigFormProps) {
 	const t = useT();
 	const [detecting, setDetecting] = useState(false);
 	const [detectFeedback, setDetectFeedback] = useState<string | null>(null);
@@ -782,6 +914,14 @@ function ConfigForm({ config, onChange, inherited, projectId, projectPath }: Con
 					className="w-full px-4 py-3 bg-raised border border-edge rounded-xl text-fg text-sm font-mono placeholder-fg-muted outline-none focus:border-accent/40 transition-colors resize-y"
 				/>
 			</Field>
+
+			{/* Environment Variables */}
+			<EnvVarsEditor
+				env={config.env}
+				storageScope={envStorageScope}
+				onChange={(env) => update("env", env)}
+				onErrorChange={onEnvErrorChange}
+			/>
 			</SettingsSection>
 
 			<SettingsSection
@@ -1059,6 +1199,7 @@ function ProjectSettings({
 		peerReviewEnabled: p.peerReviewEnabled,
 		sparseCheckoutEnabled: p.sparseCheckoutEnabled,
 		sparseCheckoutPaths: p.sparseCheckoutPaths,
+		env: p.env,
 	}), []);
 	const [projectConfig, setProjectConfig] = useState<ProjectConfigValues>(() => project ? projectConfigFromProject(project) : {});
 	const [savingProject, setSavingProject] = useState(false);
@@ -1086,6 +1227,11 @@ function ProjectSettings({
 	const [draggedLabelId, setDraggedLabelId] = useState<string | null>(null);
 	const [labelDropTarget, setLabelDropTarget] = useState<{ labelId: string; side: "before" | "after" } | null>(null);
 	const [githubStatus, setGitHubStatus] = useState<GitHubCliStatus | null>(null);
+
+	// A visible env textarea holding unparseable lines blocks saving that tab. The
+	// editor owns this flag for its own lifetime — it reports on mount and clears
+	// on unmount, so switching tabs or config layers needs no reset here.
+	const [envTextError, setEnvTextError] = useState(false);
 
 	// ---- Config file presence (for override warning on Project Config tab) ----
 	const [configFileOverride, setConfigFileOverride] = useState<string | null>(null);
@@ -1201,6 +1347,7 @@ function ProjectSettings({
 		const bcaB = JSON.stringify(b.builtinColumnAgents ?? {});
 		if (bcaA !== bcaB) return false;
 		if ((a.portCount ?? 0) !== (b.portCount ?? 0)) return false;
+		if (JSON.stringify(a.env ?? {}) !== JSON.stringify(b.env ?? {})) return false;
 		return true;
 	}, []);
 
@@ -1479,6 +1626,7 @@ function ProjectSettings({
 
 	// Keep the ref in sync for the navigation guard
 	handleSaveRef.current = async () => {
+		if (envTextError) return;
 		if (activeTab === "project") await handleSaveProjectConfig();
 		else if (activeTab === "worktree") {
 			if (worktreeSubTab === "repo") await handleSaveWtRepo();
@@ -1672,6 +1820,8 @@ function ProjectSettings({
 								onChange={setProjectConfig}
 								projectId={projectId}
 								projectPath={project.path}
+								envStorageScope="project"
+								onEnvErrorChange={setEnvTextError}
 							/>
 
 							<SettingsSection
@@ -1860,18 +2010,24 @@ function ProjectSettings({
 
 									{worktreeSubTab === "repo" ? (
 										<ConfigForm
+											key={worktreeSubTab}
 											config={wtRepoConfig}
 											onChange={setWtRepoConfig}
 											projectId={projectId}
 											projectPath={selectedTask?.worktreePath ?? project.path}
+											envStorageScope="repo"
+											onEnvErrorChange={setEnvTextError}
 										/>
 									) : (
 										<ConfigForm
+											key={worktreeSubTab}
 											config={wtLocalConfig}
 											onChange={setWtLocalConfig}
 											inherited={wtRepoConfig}
 											projectId={projectId}
 											projectPath={selectedTask?.worktreePath ?? project.path}
+											envStorageScope="local"
+											onEnvErrorChange={setEnvTextError}
 										/>
 									)}
 								</>
@@ -1896,7 +2052,7 @@ function ProjectSettings({
 							<button
 								type="button"
 								onClick={() => handleSaveRef.current()}
-								disabled={saving}
+								disabled={saving || envTextError}
 								className="px-5 py-2.5 bg-accent text-white text-sm font-semibold rounded-xl outline-none hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-base disabled:opacity-50 shadow-lg shadow-accent/20 transition-[background-color,opacity,transform] duration-150 ease-out active:scale-[0.96]"
 							>
 								{saving ? t("projectSettings.saving") : t("unsavedChanges.save")}

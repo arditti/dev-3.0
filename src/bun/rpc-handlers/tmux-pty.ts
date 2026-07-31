@@ -617,7 +617,11 @@ export async function launchTaskPty(
 	// below: a git-ignored hook (e.g. installed by the b44 CLI into
 	// .dev3/config.local.json) only exists at the project root, so the script
 	// command must be resolvable as "$DEV3_PROJECT_PATH/.dev3/<hook>.sh".
+	// Project env (Project Settings / .dev3 config) first — overridable by
+	// lifecycle DEV3_* vars and per-agent-config env.
+	const projectEnv = await repoConfig.resolveProjectEnv(project, worktreePath);
 	const env = {
+		...projectEnv,
 		...buildTaskLifecycleEnv(project, task, worktreePath, opts?.branchName),
 		...buildAgentEnv(extraEnv, task.id),
 		...artifactTemplateEnv,
@@ -859,6 +863,7 @@ export async function launchColumnAgent(
 	});
 
 	const env = {
+		...(await repoConfig.resolveProjectEnv(project, worktreePath)),
 		...buildAgentEnv(extraEnv, task.id),
 		...ensureArtifactTemplateEnv(project, task, worktreePath),
 	};
@@ -974,12 +979,16 @@ export async function runDevServer(params: { taskId: string; projectId: string }
 		const portExports = devPorts.length > 0
 			? buildEnvExports(portPool.buildPortEnv(devPorts)).join("\n") + "\n"
 			: "";
+		const projectEnvExports = Object.keys(resolved.env ?? {}).length > 0
+			? buildEnvExports(resolved.env ?? {}).join("\n") + "\n"
+			: "";
 		// Same workspace env the setup/cleanup hooks get, so a devScript can
 		// reference root-resolved hooks ("$DEV3_PROJECT_PATH/...") too.
 		const lifecycleExports = buildEnvExports(buildTaskLifecycleEnv(project, task, task.worktreePath)).join("\n") + "\n";
 
 		const wrappedScript = [
 			`#!/bin/bash`,
+			...(projectEnvExports ? [projectEnvExports] : []),
 			lifecycleExports,
 			...(portExports ? [portExports] : []),
 			`set -x`,
@@ -1570,7 +1579,8 @@ async function getProjectPtyUrl(params: { projectId: string }): Promise<string> 
 		if (!existsSync(project.path)) {
 			throw new Error(`Project path does not exist: ${project.path}`);
 		}
-		pty.createSession(sessionKey, params.projectId, project.path, getUserShell(), {}, DEFAULT_TMUX_SOCKET, "project");
+		const env = await repoConfig.resolveProjectEnv(project, project.path);
+		pty.createSession(sessionKey, params.projectId, project.path, getUserShell(), env, DEFAULT_TMUX_SOCKET, "project");
 	}
 
 	const url = `ws://localhost:${pty.getPtyPort()}?session=${sessionKey}`;
@@ -2343,6 +2353,7 @@ async function spawnAgentInTask(params: { taskId: string; projectId: string; age
 	});
 
 	const env: Record<string, string> = {
+		...(await repoConfig.resolveProjectEnv(project, task.worktreePath)),
 		...buildAgentEnv(extraEnv, task.id),
 		...ensureArtifactTemplateEnv(project, task, task.worktreePath),
 	};
@@ -2507,6 +2518,7 @@ async function spawnSingleBugHunterPane(opts: {
 	});
 
 	const env: Record<string, string> = {
+		...(await repoConfig.resolveProjectEnv(opts.project, opts.worktreePath)),
 		...buildAgentEnv(extraEnv, opts.task.id),
 		...ensureArtifactTemplateEnv(opts.project, opts.task, opts.worktreePath),
 	};

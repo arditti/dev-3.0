@@ -16,6 +16,10 @@ function formatConfigValue(field: string, value: unknown): string {
 	if (typeof value === "string") return value || "(empty)";
 	if (value !== null && typeof value === "object") {
 		const keys = Object.keys(value as Record<string, unknown>);
+		// Env values may be secrets — print key names only.
+		if (field === "env") {
+			return keys.length > 0 ? `${keys.join(", ")} (${keys.length} ${keys.length === 1 ? "var" : "vars"})` : "(empty)";
+		}
 		if (field === "builtinColumnAgents") {
 			return keys.length === 1 ? "1 column" : `${keys.length} columns`;
 		}

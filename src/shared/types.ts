@@ -998,6 +998,9 @@ export interface Dev3RepoConfig {
 	builtinColumnAgents?: Record<string, ColumnAgentConfig>;
 	/** Number of ports to allocate per task/worktree (injected as DEV3_PORT0..N). Default: 0. */
 	portCount?: number;
+	/** Env vars exported into every task session (agent terminals, setup/dev/cleanup
+	 *  scripts, column agents). Merged PER KEY across config layers (decision 179). */
+	env?: Record<string, string>;
 }
 
 /** Keys of Dev3RepoConfig â used for merge logic. */
@@ -1016,6 +1019,7 @@ export const DEV3_REPO_CONFIG_KEYS: (keyof Dev3RepoConfig)[] = [
 	"sparseCheckoutPaths",
 	"builtinColumnAgents",
 	"portCount",
+	"env",
 ];
 
 export type ConfigSource = "repo" | "local";
@@ -1058,6 +1062,7 @@ export interface Project {
 	githubAuthHost?: string | null;
 	githubAuthLogin?: string | null;
 	clonePaths?: string[];
+	env?: Record<string, string>;
 	createdAt: string;
 	deleted?: boolean;
 	labels?: Label[];

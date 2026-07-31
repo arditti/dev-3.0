@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -326,7 +326,7 @@ describe("setActiveClaudeAccount / getActiveClaudeConfigDir", () => {
 		mkdirSync(join(paths.claudeHome, "output-styles"), { recursive: true });
 		const account = await importCurrentClaudeAccount(paths);
 		const dir = claudeAccountDir(account.id, paths);
-		rmSync(join(dir, "output-styles")); // simulate the pre-fix on-disk state
+		unlinkSync(join(dir, "output-styles")); // simulate the pre-fix on-disk state
 
 		expect(await getActiveClaudeConfigDir(account.id, paths)).toBe(dir);
 		expect(lstatSync(join(dir, "output-styles")).isSymbolicLink()).toBe(true);

@@ -27,6 +27,7 @@ import {
 	resolveProjectConfig,
 	resolveOperationalProjectConfig,
 	migrateProjectConfig,
+	resolveProjectEnv,
 	hasRepoConfig,
 	hasLocalConfig,
 } from "../repo-config";
@@ -407,6 +408,7 @@ describe("migrateProjectConfig", () => {
 			setupScript: "bun install",
 			cleanupScript: "rm -rf dist",
 			defaultBaseBranch: "develop",
+			env: { PERSONAL_VALUE: "local" },
 		});
 
 		await migrateProjectConfig(project);
@@ -417,6 +419,7 @@ describe("migrateProjectConfig", () => {
 		expect(written.setupScript).toBe("bun install");
 		expect(written.cleanupScript).toBe("rm -rf dist");
 		expect(written.defaultBaseBranch).toBe("develop");
+		expect(written.env).toBeUndefined();
 	});
 
 	it("skips if config.json already exists", async () => {
@@ -451,6 +454,22 @@ describe("migrateProjectConfig", () => {
 			clonePaths: [],
 			defaultBaseBranch: "main",
 			peerReviewEnabled: true,
+		});
+
+		await migrateProjectConfig(project);
+
+		expect(existsSync(join(TEST_DIR, ".dev3", "config.json"))).toBe(false);
+	});
+
+	it("does not create config.json when env is the only non-default setting", async () => {
+		const project = makeProject({
+			setupScript: "",
+			devScript: "",
+			cleanupScript: "",
+			clonePaths: [],
+			defaultBaseBranch: "main",
+			peerReviewEnabled: true,
+			env: { PERSONAL_VALUE: "local" },
 		});
 
 		await migrateProjectConfig(project);
@@ -887,5 +906,63 @@ describe("resolveOperationalProjectConfig — worktree + main cascade", () => {
 		const resolved = await resolveOperationalProjectConfig(makeProject({ defaultCompareRef: undefined }), WT_DIR);
 		expect(resolved.defaultCompareRef).toBe("origin/main");
 		expect(detectDefaultCompareRef).toHaveBeenCalledWith(WT_DIR, "main");
+	});
+});
+
+describe("env config cascade (per-key merge)", () => {
+	const WT_DIR = join(tmpdir(), `dev3-env-wt-${process.pid}`);
+
+	function writeConfig(dir: string, file: string, content: object) {
+		mkdirSync(join(dir, ".dev3"), { recursive: true });
+		writeFileSync(join(dir, ".dev3", file), JSON.stringify(content));
+	}
+
+	beforeEach(() => { mkdirSync(WT_DIR, { recursive: true }); });
+	afterEach(() => { rmSync(WT_DIR, { recursive: true, force: true }); });
+
+	it("merges env per key across layers instead of whole-field", async () => {
+		const project = makeProject({ env: { A: "project", B: "project" } });
+		writeConfig(TEST_DIR, "config.json", { env: { B: "repo", C: "repo" } });
+		writeConfig(TEST_DIR, "config.local.json", { env: { C: "local" } });
+
+		const resolved = await resolveProjectConfig(project);
+		expect(resolved.env).toEqual({ A: "project", B: "repo", C: "local" });
+	});
+
+	it("worktree layers outrank main-checkout layers per key", async () => {
+		const project = makeProject();
+		writeConfig(TEST_DIR, "config.json", { env: { X: "main", Y: "main" } });
+		writeConfig(WT_DIR, "config.json", { env: { X: "wt" } });
+
+		const resolved = await resolveOperationalProjectConfig(project, WT_DIR);
+		expect(resolved.env).toEqual({ X: "wt", Y: "main" });
+	});
+
+	it("drops malformed env entries from files without failing resolution", async () => {
+		const project = makeProject();
+		writeConfig(TEST_DIR, "config.json", {
+			setupScript: "bun install",
+			env: { GOOD: "1", BAD: 42, "2BAD": "x" },
+		});
+
+		const resolved = await resolveProjectConfig(project);
+		expect(resolved.env).toEqual({ GOOD: "1" });
+		expect(resolved.setupScript).toBe("bun install");
+	});
+
+	it("leaves env undefined when nothing sets it", async () => {
+		const resolved = await resolveProjectConfig(makeProject());
+		expect(resolved.env).toBeUndefined();
+	});
+
+	it("resolveProjectEnv returns {} for a project with no env", async () => {
+		expect(await resolveProjectEnv(makeProject())).toEqual({});
+	});
+
+	it("resolveProjectEnv returns the merged map for a worktree", async () => {
+		const project = makeProject({ env: { A: "project" } });
+		writeConfig(WT_DIR, "config.local.json", { env: { B: "wt-local" } });
+
+		expect(await resolveProjectEnv(project, WT_DIR)).toEqual({ A: "project", B: "wt-local" });
 	});
 });

@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import type { Project, Dev3RepoConfig, ConfigSourceEntry, ResolvedConfigSource } from "../shared/types";
 import { DEV3_REPO_CONFIG_KEYS } from "../shared/types";
+import { sanitizeEnvMap } from "../shared/env-text";
 import { createLogger } from "./logger";
 import * as git from "./git";
 
@@ -219,6 +220,14 @@ async function applyConfigCascade(
 		if (val !== undefined) (resolved as any)[key] = val;
 	}
 
+	// `env` merges PER KEY across layers, unlike every other field: a repo file
+	// that sets one var must not erase UI- or local-configured vars (decision 179).
+	const envMerged = sanitizeEnvMap(project.env, (m) => log.warn(m));
+	for (let i = layers.length - 1; i >= 0; i--) {
+		Object.assign(envMerged, sanitizeEnvMap(layers[i]?.env, (m) => log.warn(m)));
+	}
+	resolved.env = Object.keys(envMerged).length > 0 ? envMerged : undefined;
+
 	// defaultCompareRef: explicit value wins; else derive from mode + base branch;
 	// else auto-detect from git (resilient to a missing/broken folder). Merge raw
 	// layer values low→high so the highest-priority layer wins, matching the cascade.
@@ -297,6 +306,13 @@ export async function resolveOperationalProjectConfig(project: Project, worktree
 	return applyConfigCascade(project, layers, worktreePath);
 }
 
+/** Per-key-merged project env for a terminal or task session, re-read at launch
+ *  time so config-file edits apply on the next launch. Never throws. */
+export async function resolveProjectEnv(project: Project, worktreePath?: string | null): Promise<Record<string, string>> {
+	const resolved = await resolveOperationalProjectConfig(project, worktreePath ?? undefined);
+	return resolved.env ?? {};
+}
+
 /**
  * One-time migration: if no .dev3/config.json exists, create it from
  * settings stored in projects.json. Runs automatically on project load.
@@ -318,6 +334,7 @@ export async function migrateProjectConfig(project: Project, configPath?: string
 	const config: Dev3RepoConfig = {};
 	let hasSettings = false;
 	for (const key of DEV3_REPO_CONFIG_KEYS) {
+		if (key === "env") continue;
 		const val = (project as any)[key];
 		if (val !== undefined && val !== DEFAULTS[key]) {
 			// For arrays, check if non-empty

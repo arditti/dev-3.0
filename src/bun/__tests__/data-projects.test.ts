@@ -3,14 +3,15 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Project } from "../../shared/types";
 
 const TEST_HOME = vi.hoisted(() => `${process.env.DEV3_TEST_ROOT}/data-projects`);
+const log = vi.hoisted(() => ({
+	debug: vi.fn(),
+	info: vi.fn(),
+	warn: vi.fn(),
+	error: vi.fn(),
+}));
 
 vi.mock("../logger", () => ({
-	createLogger: () => ({
-		debug: vi.fn(),
-		info: vi.fn(),
-		warn: vi.fn(),
-		error: vi.fn(),
-	}),
+	createLogger: () => log,
 }));
 
 vi.mock("../paths", () => ({
@@ -28,6 +29,7 @@ vi.mock("../file-lock", () => ({
 beforeEach(() => {
 	rmSync(TEST_HOME, { recursive: true, force: true });
 	mkdirSync(TEST_HOME, { recursive: true });
+	log.info.mockClear();
 });
 
 import { addProject, loadProjects, updateProject } from "../data";
@@ -104,6 +106,19 @@ describe("updateProject", () => {
 
 		const all = await loadProjects();
 		expect(all[0].autoReviewEnabled).toBe(true);
+	});
+
+	it("logs env key names without logging their values", async () => {
+		const project = await addProject("/tmp/env-repo", "Env Repo");
+
+		await updateProject(project.id, { env: { SECRET_TOKEN: "sensitive-value" } });
+
+		const updateLog = log.info.mock.calls.find(([message]) => message === "Updating project");
+		expect(updateLog).toEqual([
+			"Updating project",
+			{ projectId: project.id, updates: {}, envKeys: ["SECRET_TOKEN"] },
+		]);
+		expect(JSON.stringify(log.info.mock.calls)).not.toContain("sensitive-value");
 	});
 });
 

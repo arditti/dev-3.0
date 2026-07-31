@@ -197,6 +197,7 @@ vi.mock("../repo-config", () => {
 		getConfigSources: vi.fn(() => []),
 		hasRepoConfig: vi.fn(() => false),
 		hasLocalConfig: vi.fn(() => false),
+		resolveProjectEnv: vi.fn(async (project: any) => project.env ?? {}),
 	};
 });
 
@@ -8085,7 +8086,10 @@ describe("handlers.getProjectPtyUrl", () => {
 	beforeEach(() => vi.clearAllMocks());
 
 	it("creates a project PTY session and returns ws URL", async () => {
-		const project = makeProject({ path: "/tmp/test-project" });
+		const project = makeProject({
+			path: "/tmp/test-project",
+			env: { API_URLS: "https://api.example.com,http://api.example.com" },
+		});
 		(data.getProject as any).mockResolvedValue(project);
 		vi.mocked(pty.hasSession).mockReturnValue(false);
 		vi.mocked(pty.hasDeadSession).mockReturnValue(false);
@@ -8093,12 +8097,13 @@ describe("handlers.getProjectPtyUrl", () => {
 
 		const url = await handlers.getProjectPtyUrl({ projectId: project.id });
 
+		expect(repoConfig.resolveProjectEnv).toHaveBeenCalledWith(project, project.path);
 		expect(pty.createSession).toHaveBeenCalledWith(
 			`project-${project.id}`,
 			project.id,
 			"/tmp/test-project",
 			process.env.SHELL || "/bin/zsh",
-			{},
+			{ API_URLS: "https://api.example.com,http://api.example.com" },
 			"dev3",
 			"project",
 		);

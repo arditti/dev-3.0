@@ -23,6 +23,14 @@ function tempDir(): string {
 	return dir;
 }
 
+function socketTempDir(): string {
+	// Unix-domain socket paths are capped around 104 bytes on macOS.
+	const root = process.platform === "win32" ? process.env.DEV3_TEST_ROOT as string : "/tmp";
+	const dir = mkdtempSync(join(root, "dev3-cli-socket-"));
+	dirs.push(dir);
+	return dir;
+}
+
 /**
  * A loopback server that answers with whatever `reply` builds. `node:net` is the
  * same client `socket-client` uses, so this exercises the real TCP path end to
@@ -93,7 +101,7 @@ describe("sendRequest over a loopback endpoint record", () => {
 	});
 
 	it("never attaches a token when the handle is a Unix socket path", async () => {
-		const dir = tempDir();
+		const dir = socketTempDir();
 		const socketPath = join(dir, "unix.sock");
 		const received: CliRequest[] = [];
 		await new Promise<void>((resolve) => {
