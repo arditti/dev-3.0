@@ -316,6 +316,72 @@ describe("TaskTerminal", () => {
 			expect(mockedApi.request.resumeTask).toHaveBeenCalledWith({ taskId: "t1" });
 		});
 
+		it("shows the wake screen instead of auto-restoring a hibernated task", async () => {
+			mockedApi.request.getPtyUrl.mockResolvedValue({
+				recoverable: true,
+				hibernated: true,
+				sessionState: { panes: [{ agentCmd: "claude", sessionId: "sid-1", agentId: "builtin-claude", configId: "cfg-1" }] },
+			});
+
+			await act(async () => {
+				renderTerminal();
+			});
+
+			await waitFor(() => {
+				expect(screen.getByTestId("terminal-wake-screen")).toBeInTheDocument();
+				expect(screen.getByText("This task is hibernated")).toBeInTheDocument();
+				expect(screen.getByText("Wake and resume agent")).toBeInTheDocument();
+				expect(screen.getByText("Wake with a plain shell")).toBeInTheDocument();
+			});
+			expect(screen.queryByText("Previous agent session found")).toBeNull();
+		});
+
+		it("offers only the plain shell when a hibernated task has no stored panes", async () => {
+			mockedApi.request.getPtyUrl.mockResolvedValue({
+				recoverable: true,
+				hibernated: true,
+				sessionState: { panes: [] },
+			});
+
+			await act(async () => {
+				renderTerminal();
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText("Wake with a plain shell")).toBeInTheDocument();
+			});
+			expect(screen.queryByText("Wake and resume agent")).toBeNull();
+		});
+
+		it("drops an open terminal to the wake screen when the task is hibernated live", async () => {
+			mockedApi.request.getPtyUrl.mockResolvedValue({ url: "ws://localhost:9999?session=t1" });
+
+			let view: ReturnType<typeof renderTerminal>;
+			await act(async () => {
+				view = renderTerminal();
+			});
+			await waitFor(() => expect(screen.queryByTestId("terminal-wake-screen")).toBeNull());
+
+			await act(async () => {
+				view!.rerender(
+					<I18nProvider>
+						<TaskTerminal
+							projectId="p1"
+							taskId="t1"
+							tasks={[{ ...makeTask(), hibernated: true }]}
+							projects={[project]}
+							navigate={vi.fn()}
+							dispatch={vi.fn()}
+						/>
+					</I18nProvider>,
+				);
+			});
+
+			await waitFor(() => {
+				expect(screen.getByTestId("terminal-wake-screen")).toBeInTheDocument();
+			});
+		});
+
 		it("calls restartTask when clicking Start Fresh", async () => {
 			const user = userEvent.setup();
 			mockedApi.request.getPtyUrl.mockResolvedValue({
