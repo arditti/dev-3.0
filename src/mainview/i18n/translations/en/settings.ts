@@ -225,6 +225,22 @@ const settings = {
 	"projectSettings.cleanupScript": "Cleanup Script",
 	"projectSettings.cleanupScriptDesc":
 		"Runs before the worktree is removed — when a task is marked Completed or Cancelled, an active task is deleted, or its preparation is cancelled",
+	"projectSettings.envVars": "Environment Variables",
+	"projectSettings.envVarsDesc":
+		"KEY=value per line, # for comments. Exported into every agent terminal, setup/dev/cleanup script, and column agent for this project's tasks. Applies on next launch.",
+	"projectSettings.envVarsPlaceholder": "API_URL=https://api.example.com\n# FEATURE_FLAG=enabled",
+	"projectSettings.envVarsProjectNotice":
+		"Stored in dev3's local project settings. These values are never written to the repository.",
+	"projectSettings.envVarsRepoWarning":
+		"Do not store secrets here. Save writes these values to .dev3/config.json and commits the file immediately to this branch.",
+	"projectSettings.envVarsLocalNotice":
+		"Stored in .dev3/config.local.json. This gitignored file is never committed to the repository.",
+	"projectSettings.envVarsInvalidLines": "Invalid lines: {lines}",
+	"projectSettings.envVarsLineBreakTitle": "Values with line breaks cannot be edited here.",
+	"projectSettings.envVarsLineBreakDesc":
+		"Remove each listed key to continue saving, or edit its JSON source directly.",
+	"projectSettings.envVarsRemoveLineBreak": "Remove",
+	"projectSettings.envVarsRemoveLineBreakAria": "Remove {key}",
 	"projectSettings.clonePaths": "Clone Paths (Copy-on-Write)",
 	"projectSettings.clonePathsDesc": "Directories and files to clone from the root project into each worktree using Copy-on-Write (instant, no disk space duplication on APFS/btrfs). Falls back to regular copy on unsupported filesystems.",
 	"projectSettings.addClonePath": "Add Path",

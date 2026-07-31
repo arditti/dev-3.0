@@ -122,7 +122,7 @@ vi.mock("../temp-paths", () => ({
 	dev3TaskTempPath: vi.fn((taskId: string, name?: string) => (name ? `/tmp/dev3/${taskId}/${name}` : `/tmp/dev3/${taskId}`)),
 }));
 
-vi.mock("../repo-config", () => ({}));
+vi.mock("../repo-config", () => ({ resolveProjectEnv: vi.fn(async () => ({})) }));
 
 vi.mock("../port-pool", () => ({
 	getPortAssignments: vi.fn(() => []),

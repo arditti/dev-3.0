@@ -26,7 +26,7 @@ const PROJECTS_BACKUP_FILE_PATTERN = /^projects-\d{4}-\d{2}-\d{2}\.json\.bak$/;
 const TASK_BACKUPS_DIR = "tasks-backups";
 const TASK_BACKUP_RETENTION_HOURS = 72;
 const TASK_BACKUP_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}Z\.json$/;
-type ProjectUpdates = Partial<Pick<Project, "setupScript" | "setupScriptLaunchMode" | "devScript" | "cleanupScript" | "defaultBaseBranch" | "githubAuthHost" | "githubAuthLogin" | "clonePaths" | "labels" | "customColumns" | "columnOrder" | "autoReviewEnabled" | "peerReviewEnabled" | "sparseCheckoutEnabled" | "sparseCheckoutPaths" | "builtinColumnAgents" | "customStatusLabels">>;
+type ProjectUpdates = Partial<Pick<Project, "setupScript" | "setupScriptLaunchMode" | "devScript" | "cleanupScript" | "defaultBaseBranch" | "githubAuthHost" | "githubAuthLogin" | "clonePaths" | "labels" | "customColumns" | "columnOrder" | "autoReviewEnabled" | "peerReviewEnabled" | "sparseCheckoutEnabled" | "sparseCheckoutPaths" | "builtinColumnAgents" | "customStatusLabels" | "env">>;
 
 export class DataFileReadError extends Error {
 	override name = "DataFileReadError";
@@ -533,9 +533,15 @@ export async function updateProject(
 	projectId: string,
 	updates: ProjectUpdates,
 ): Promise<Project> {
+	const { env, ...loggedUpdates } = updates;
+	const logFields = {
+		projectId,
+		updates: loggedUpdates,
+		envKeys: Object.keys(env ?? {}),
+	};
 	if (await isVirtualProjectId(projectId)) {
 		return withFileLock(VIRTUAL_PROJECTS_FILE, async () => {
-			log.info("Updating virtual project", { projectId, updates });
+			log.info("Updating virtual project", logFields);
 			const projects = await rawLoadAllVirtualProjects({ strict: true });
 			const idx = projects.findIndex((p) => p.id === projectId);
 			if (idx === -1) throw new Error(`Project not found: ${projectId}`);
@@ -545,7 +551,7 @@ export async function updateProject(
 		});
 	}
 	return withFileLock(PROJECTS_FILE, async () => {
-		log.info("Updating project", { projectId, updates });
+		log.info("Updating project", logFields);
 		const projects = await rawLoadAllProjects({ strict: true, persistMigrations: true });
 		const idx = projects.findIndex((p) => p.id === projectId);
 		if (idx === -1) throw new Error(`Project not found: ${projectId}`);

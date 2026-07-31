@@ -326,6 +326,12 @@ describe("dev3-project-config skill content", () => {
 			"If `portCount > 0`, also smoke-test the mapping:",
 		);
 	});
+
+	it("documents project environment variables and their secret-storage boundary", () => {
+		const skill = getProjectConfigSkillContent();
+		expect(skill).toContain("| `env` | Record<string, string> |");
+		expect(skill).toContain("This field is not for secrets; `.dev3/config.json` is committed.");
+	});
 });
 
 describe("dev3 Bug Hunter skill content", () => {

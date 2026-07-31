@@ -225,6 +225,22 @@ const settings = {
 	"projectSettings.cleanupScript": "Script de limpieza",
 	"projectSettings.cleanupScriptDesc":
 		"Se ejecuta antes de eliminar el worktree — cuando una tarea se marca como Completed o Cancelled, se elimina una tarea activa o se cancela su preparación",
+	"projectSettings.envVars": "Variables de entorno",
+	"projectSettings.envVarsDesc":
+		"KEY=value por línea, # para comentarios. Se exportan a cada terminal de agente, scripts de setup/dev/cleanup y agentes de columna de las tareas de este proyecto. Se aplican en el próximo lanzamiento.",
+	"projectSettings.envVarsPlaceholder": "API_URL=https://api.example.com\n# FEATURE_FLAG=enabled",
+	"projectSettings.envVarsProjectNotice":
+		"Se guardan en la configuración local del proyecto de dev3. Estos valores nunca se escriben en el repositorio.",
+	"projectSettings.envVarsRepoWarning":
+		"No guardes secretos aquí. Guardar escribe estos valores en .dev3/config.json y confirma el archivo inmediatamente en esta rama.",
+	"projectSettings.envVarsLocalNotice":
+		"Se guardan en .dev3/config.local.json. Este archivo ignorado por git nunca se confirma en el repositorio.",
+	"projectSettings.envVarsInvalidLines": "Líneas inválidas: {lines}",
+	"projectSettings.envVarsLineBreakTitle": "Los valores con saltos de línea no se pueden editar aquí.",
+	"projectSettings.envVarsLineBreakDesc":
+		"Elimina cada clave de la lista para poder guardar o edita directamente su origen JSON.",
+	"projectSettings.envVarsRemoveLineBreak": "Eliminar",
+	"projectSettings.envVarsRemoveLineBreakAria": "Eliminar {key}",
 	"projectSettings.clonePaths": "Rutas de clonación (Copy-on-Write)",
 	"projectSettings.clonePathsDesc": "Directorios y archivos que se clonan del proyecto raíz a cada worktree usando Copy-on-Write (instantáneo, sin duplicar espacio en APFS/btrfs). En sistemas de archivos no compatibles se hace una copia normal.",
 	"projectSettings.addClonePath": "Agregar ruta",

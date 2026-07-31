@@ -836,3 +836,122 @@ describe("ProjectSettings", () => {
 		});
 	});
 });
+
+describe("environment variables editor", () => {
+	it("explains where each environment variable configuration is stored", async () => {
+		(api.request.getProjectConfigs as ReturnType<typeof vi.fn>).mockResolvedValue({ repo: {}, local: {} });
+		const user = userEvent.setup();
+		await renderProjectSettings(mockProject, {}, [mockTaskWithWorktree]);
+
+		await goToProjectTab();
+		expect(screen.getByText(
+			"Stored in dev3's local project settings. These values are never written to the repository.",
+		)).toBeInTheDocument();
+
+		await user.click(screen.getByText("Worktree Config"));
+		expect(await screen.findByText(
+			"Do not store secrets here. Save writes these values to .dev3/config.json and commits the file immediately to this branch.",
+		)).toHaveClass("text-xs");
+
+		await user.click(screen.getByText("Local Overrides"));
+		expect(screen.getByText(
+			"Stored in .dev3/config.local.json. This gitignored file is never committed to the repository.",
+		)).toBeInTheDocument();
+	});
+
+	it("clears invalid editor text when switching worktree config layers", async () => {
+		(api.request.getProjectConfigs as ReturnType<typeof vi.fn>).mockResolvedValue({ repo: {}, local: {} });
+		const user = userEvent.setup();
+		await renderProjectSettings(mockProject, {}, [mockTaskWithWorktree]);
+
+		await user.click(screen.getByText("Worktree Config"));
+		const repoEditor = await screen.findByLabelText("Environment Variables");
+		await user.type(repoEditor, "not a var");
+		expect(screen.getByText("Invalid lines: 1")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Local Overrides"));
+		expect(screen.getByLabelText("Environment Variables")).toHaveValue("");
+		expect(screen.queryByText("Invalid lines: 1")).not.toBeInTheDocument();
+	});
+
+	it("renders line-break values read-only and lets the user remove them", async () => {
+		const mockSave = api.request.updateProjectSettings as ReturnType<typeof vi.fn>;
+		mockSave.mockClear();
+		const user = userEvent.setup();
+		await renderProjectSettings(mockProject, { env: { GOOD: "ok", MULTI: "a\nb" } });
+		await goToProjectTab();
+
+		expect(screen.getByLabelText("Environment Variables")).toHaveValue("GOOD=ok");
+		expect(screen.getByText("Values with line breaks cannot be edited here.")).toBeInTheDocument();
+		expect(screen.getByText("MULTI")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Remove MULTI" }));
+		const save = screen.getByText("Save");
+		expect(save).toBeEnabled();
+		await user.click(save);
+
+		await vi.waitFor(() => {
+			expect(mockSave).toHaveBeenCalledWith(
+				expect.objectContaining({ projectId: "proj-1", env: { GOOD: "ok" } }),
+			);
+		});
+	});
+
+	it("shows the env editor and round-trips text into config.env on save", async () => {
+		const { api } = await import("../../rpc");
+		const mockSave = api.request.updateProjectSettings as ReturnType<typeof vi.fn>;
+		mockSave.mockClear();
+
+		const user = userEvent.setup();
+		await renderProjectSettings();
+		await goToProjectTab();
+
+		const textarea = screen.getByLabelText("Environment Variables");
+		await user.type(textarea, "FOO=bar{Enter}BAZ=qux");
+		await user.click(screen.getByText("Save"));
+
+		await vi.waitFor(() => {
+			expect(mockSave).toHaveBeenCalledWith(
+				expect.objectContaining({ projectId: "proj-1", env: { FOO: "bar", BAZ: "qux" } }),
+			);
+		});
+	});
+
+	it("shows an inline error and disables Save for an invalid line", async () => {
+		const { api } = await import("../../rpc");
+		const mockSave = api.request.updateProjectSettings as ReturnType<typeof vi.fn>;
+		mockSave.mockClear();
+
+		const user = userEvent.setup();
+		await renderProjectSettings();
+		await goToProjectTab();
+
+		const textarea = screen.getByLabelText("Environment Variables");
+		await user.type(textarea, "FOO=bar{Enter}not a var");
+
+		expect(screen.getByText(/Invalid lines: 2/)).toBeInTheDocument();
+		expect(screen.getByText("Save")).toBeDisabled();
+		expect(mockSave).not.toHaveBeenCalled();
+	});
+
+	it("clearing the textarea saves an empty env object (removal persists)", async () => {
+		const { api } = await import("../../rpc");
+		const mockSave = api.request.updateProjectSettings as ReturnType<typeof vi.fn>;
+		mockSave.mockClear();
+
+		const user = userEvent.setup();
+		await renderProjectSettings(mockProject, { env: { FOO: "bar" } });
+		await goToProjectTab();
+
+		const textarea = screen.getByLabelText("Environment Variables");
+		expect(textarea).toHaveValue("FOO=bar");
+		await user.clear(textarea);
+		await user.click(screen.getByText("Save"));
+
+		await vi.waitFor(() => {
+			expect(mockSave).toHaveBeenCalledWith(
+				expect.objectContaining({ projectId: "proj-1", env: {} }),
+			);
+		});
+	});
+});

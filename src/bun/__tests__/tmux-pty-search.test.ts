@@ -73,7 +73,7 @@ vi.mock("../tmux", () => {
 });
 
 vi.mock("../agents", () => ({}));
-vi.mock("../repo-config", () => ({}));
+vi.mock("../repo-config", () => ({ resolveProjectEnv: vi.fn(async () => ({})) }));
 vi.mock("../port-pool", () => ({}));
 vi.mock("../port-scanner", () => ({
 	clearPortDataForTask: vi.fn(),

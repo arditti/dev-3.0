@@ -346,7 +346,10 @@ export async function runCleanupScript(
 	const script = resolved.cleanupScript?.trim() || 'echo "Task finished"';
 	const dialect = launchDialect();
 	const scriptPath = dev3TaskTempPath(task.id, `cleanup${dialect.scriptExtension}`);
-	const cleanupEnv = buildCleanupScriptEnv(task, project, transition);
+	const cleanupEnv = {
+		...(resolved.env ?? {}),
+		...buildCleanupScriptEnv(task, project, transition),
+	};
 	await Bun.write(scriptPath, `${[...dialect.header(), script].join("\n")}\n`);
 	// The cleanup script is shown in a throwaway tmux session — POSIX-only.
 	assertPosixLaunchDialect("the cleanup-script tmux session");

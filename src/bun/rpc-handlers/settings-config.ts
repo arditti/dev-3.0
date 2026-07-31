@@ -20,6 +20,14 @@ import { setCurrentUiTheme } from "../theme-state";
 import { extractConfigFromParams, getPushMessage, getSystemRequirements, log, resolveBinaryPath, setFocusMode } from "./shared";
 import { binaryCandidatesOnPath, hasModelProviderSection, tmuxSearchPaths } from "./shared-pure";
 import { isExecutableFile } from "../executable";
+import { validateEnvMap } from "../../shared/env-text";
+
+/** Reject malformed env maps at the RPC boundary — the UI validates too, but
+ *  saves must not depend on the client being well-behaved. */
+function assertValidEnvParam(env: unknown): void {
+	const problems = validateEnvMap(env);
+	if (problems.length > 0) throw new Error(`Invalid env config: ${problems.join("; ")}`);
+}
 
 // `resolveOperationalProjectConfig` moved to ../repo-config (it depends only on
 // resolveProjectConfig, so it belongs next to the config resolver and stays
@@ -55,6 +63,7 @@ async function getProjectConfigFiles(params: { projectId: string }): Promise<{ h
 
 async function updateProjectSettings(params: { projectId: string } & ProjectSettingsUpdate): Promise<Project> {
 	log.info("→ updateProjectSettings", { projectId: params.projectId });
+	assertValidEnvParam(params.env);
 	const updates = {
 		...extractConfigFromParams(params),
 		...(params.githubAuthHost !== undefined ? { githubAuthHost: params.githubAuthHost } : {}),
@@ -68,6 +77,7 @@ async function updateProjectSettings(params: { projectId: string } & ProjectSett
 
 async function saveRepoConfig(params: { projectId: string; worktreePath?: string; autoCommit?: boolean } & Dev3RepoConfig): Promise<void> {
 	log.info("→ saveRepoConfig", { projectId: params.projectId, worktreePath: params.worktreePath, autoCommit: params.autoCommit });
+	assertValidEnvParam(params.env);
 	const project = await data.getProject(params.projectId);
 	const configPath = params.worktreePath || project.path;
 	const config = extractConfigFromParams(params) as Dev3RepoConfig;
@@ -90,6 +100,7 @@ async function saveRepoConfig(params: { projectId: string; worktreePath?: string
 
 async function saveLocalConfig(params: { projectId: string; worktreePath?: string } & Dev3RepoConfig): Promise<void> {
 	log.info("→ saveLocalConfig", { projectId: params.projectId, worktreePath: params.worktreePath });
+	assertValidEnvParam(params.env);
 	const project = await data.getProject(params.projectId);
 	const configPath = params.worktreePath || project.path;
 	const config = extractConfigFromParams(params) as Dev3RepoConfig;

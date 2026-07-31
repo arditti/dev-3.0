@@ -229,6 +229,7 @@ EOF
 | \`sparseCheckoutEnabled\` | boolean | Enable sparse checkout for worktrees (default: \`false\`) |
 | \`sparseCheckoutPaths\` | string[] | Paths to include in sparse checkout |
 | \`portCount\` | number | Ports to allocate per task (injected as \`DEV3_PORT0\`..N env vars). Default: \`0\`. **You must map these to the project's own port env vars in \`devScript\` — see step 3a.** |
+| \`env\` | Record<string, string> | Environment variables exported into task sessions. This field is not for secrets; \`.dev3/config.json\` is committed. |
 
 **Only include these fields.** Unknown keys are silently ignored. Do NOT include project metadata (id, name, path).
 

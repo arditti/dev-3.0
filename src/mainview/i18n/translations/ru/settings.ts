@@ -225,6 +225,22 @@ const settings = {
 	"projectSettings.cleanupScript": "Скрипт очистки",
 	"projectSettings.cleanupScriptDesc":
 		"Запускается перед удалением worktree — когда задача помечена как Completed или Cancelled, активная задача удалена или её подготовка отменена",
+	"projectSettings.envVars": "Переменные окружения",
+	"projectSettings.envVarsDesc":
+		"KEY=value на строку, # — комментарий. Экспортируются в каждый терминал агента, setup/dev/cleanup-скрипты и колоночных агентов задач этого проекта. Применяются при следующем запуске.",
+	"projectSettings.envVarsPlaceholder": "API_URL=https://api.example.com\n# FEATURE_FLAG=enabled",
+	"projectSettings.envVarsProjectNotice":
+		"Хранятся в локальных настройках проекта dev3. Эти значения никогда не записываются в репозиторий.",
+	"projectSettings.envVarsRepoWarning":
+		"Не храните здесь секреты. При сохранении значения записываются в .dev3/config.json, а файл сразу коммитится в эту ветку.",
+	"projectSettings.envVarsLocalNotice":
+		"Хранятся в .dev3/config.local.json. Этот игнорируемый git файл никогда не коммитится в репозиторий.",
+	"projectSettings.envVarsInvalidLines": "Некорректные строки: {lines}",
+	"projectSettings.envVarsLineBreakTitle": "Значения с переносами строк нельзя редактировать здесь.",
+	"projectSettings.envVarsLineBreakDesc":
+		"Удалите каждую указанную переменную, чтобы продолжить сохранение, или отредактируйте её JSON-источник напрямую.",
+	"projectSettings.envVarsRemoveLineBreak": "Удалить",
+	"projectSettings.envVarsRemoveLineBreakAria": "Удалить {key}",
 	"projectSettings.clonePaths": "Clone-пути (Copy-on-Write)",
 	"projectSettings.clonePathsDesc": "Директории и файлы, которые клонируются из корневого проекта в каждый worktree через Copy-on-Write (мгновенно, без дублирования на APFS/btrfs). На неподдерживаемых ФС делается обычная копия.",
 	"projectSettings.addClonePath": "Добавить путь",
