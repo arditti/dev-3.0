@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
 	getSessionSocket: vi.fn(),
 	getSessionTmuxName: vi.fn(),
 	getTmuxLayout: vi.fn(),
+	getPtyPort: vi.fn(() => 9999),
+	ensureNativePanePtySession: vi.fn(),
 	// tmux singleton methods
 	tmuxSelectPane: vi.fn(),
 	tmuxSelectPaneDirection: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock("../../pty-server", () => ({
 	getSessionSocket: mocks.getSessionSocket,
 	getSessionTmuxName: mocks.getSessionTmuxName,
 	getTmuxLayout: mocks.getTmuxLayout,
+	getPtyPort: mocks.getPtyPort,
+	ensureNativePanePtySession: mocks.ensureNativePanePtySession,
 }));
 
 vi.mock("../../tmux", () => ({
@@ -100,7 +104,7 @@ import { taskPanesHandlers } from "../task-panes";
 
 const TASK_ID = "aaaaaaaa-0000-0000-0000-000000000001";
 const tmuxTask = { id: TASK_ID, terminalBackend: undefined } as any;
-const nativeTask = { id: TASK_ID, terminalBackend: "native" } as any;
+const nativeTask = { id: TASK_ID, terminalBackend: "native", worktreePath: "/tmp/wt", title: "T", branchName: "b" } as any;
 
 /** Minimal TmuxLayout for two panes in one 100×40-cell window. */
 const twoPane80TmuxLayout = {
@@ -178,6 +182,7 @@ beforeEach(() => {
 	mocks.tmuxNextLayout.mockResolvedValue(undefined);
 	mocks.tmuxResizePaneDirection.mockResolvedValue(undefined);
 	mocks.tmuxNewWindow.mockResolvedValue(undefined);
+	mocks.ensureNativePanePtySession.mockResolvedValue(undefined);
 	mocks.nativeTaskPanesState.mockResolvedValue(makeTwoPaneNativeState());
 	mocks.splitNativeTaskPane.mockImplementation(async () => {
 		const state = makeTwoPaneNativeState();
@@ -411,12 +416,19 @@ describe("taskPaneAction (native)", () => {
 			TASK_ID,
 			"pane-1", // active pane id from makeTwoPaneNativeState
 			"vertical",
+			// cwd/env come from the task record, so a split survives an app restart.
+			{ cwd: "/tmp/wt", env: expect.objectContaining({ DEV3_WORKTREE_PATH: "/tmp/wt" }) },
 		);
 	});
 
 	it("splitV calls splitNativeTaskPane with orientation 'horizontal'", async () => {
 		await taskPanesHandlers.taskPaneAction({ taskId: TASK_ID, action: { kind: "splitV" } });
-		expect(mocks.splitNativeTaskPane).toHaveBeenCalledWith(TASK_ID, expect.any(String), "horizontal");
+		expect(mocks.splitNativeTaskPane).toHaveBeenCalledWith(
+			TASK_ID,
+			expect.any(String),
+			"horizontal",
+			expect.objectContaining({ cwd: "/tmp/wt" }),
+		);
 	});
 
 	it("focus calls focusNativeTaskPane", async () => {
@@ -669,5 +681,56 @@ describe("tmuxNewWindow", () => {
 		mocks.taskTerminalBackendIdentity.mockReturnValue("native");
 		await taskPanesHandlers.tmuxNewWindow({ taskId: TASK_ID });
 		expect(mocks.tmuxNewWindow).not.toHaveBeenCalled();
+	});
+});
+
+// ── getPanePtyUrl ─────────────────────────────────────────────────────────────
+
+const nativeTaskWithWorktree = { id: TASK_ID, terminalBackend: "native", worktreePath: "/tmp/wt" } as any;
+
+describe("getPanePtyUrl", () => {
+	beforeEach(() => {
+		mocks.taskTerminalBackendIdentity.mockReturnValue("native");
+		mocks.getTask.mockImplementation((_proj: any, taskId: string) => {
+			if (taskId === TASK_ID) return Promise.resolve(nativeTaskWithWorktree);
+			throw new Error("not found");
+		});
+		mocks.nativeTaskPanesState.mockResolvedValue(makeTwoPaneNativeState());
+	});
+
+	it("returns a ws:// URL for the first pane using the bare taskId", async () => {
+		const result = await taskPanesHandlers.getPanePtyUrl({ taskId: TASK_ID, paneId: "pane-1" });
+		expect(result.url).toBe(`ws://localhost:9999?session=${TASK_ID}`);
+		expect(mocks.ensureNativePanePtySession).not.toHaveBeenCalled();
+	});
+
+	it("returns a composite-key URL for a non-first pane", async () => {
+		const result = await taskPanesHandlers.getPanePtyUrl({ taskId: TASK_ID, paneId: "pane-2" });
+		expect(result.url).toBe(`ws://localhost:9999?session=${TASK_ID}~pane-2`);
+	});
+
+	it("calls ensureNativePanePtySession for non-first panes", async () => {
+		await taskPanesHandlers.getPanePtyUrl({ taskId: TASK_ID, paneId: "pane-2" });
+		expect(mocks.ensureNativePanePtySession).toHaveBeenCalledWith(
+			TASK_ID,
+			"pane-2",
+			"sess-2",
+			"proj-1",
+			"/tmp/wt",
+		);
+	});
+
+	it("throws for a tmux task", async () => {
+		mocks.taskTerminalBackendIdentity.mockReturnValue("tmux");
+		mocks.getTask.mockResolvedValue(tmuxTask);
+		await expect(
+			taskPanesHandlers.getPanePtyUrl({ taskId: TASK_ID, paneId: "pane-1" }),
+		).rejects.toThrow(/only available for native/);
+	});
+
+	it("throws when the pane does not exist in the native state", async () => {
+		await expect(
+			taskPanesHandlers.getPanePtyUrl({ taskId: TASK_ID, paneId: "pane-99" }),
+		).rejects.toThrow(/Pane pane-99 not found/);
 	});
 });
