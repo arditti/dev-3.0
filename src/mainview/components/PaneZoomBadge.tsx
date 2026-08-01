@@ -12,7 +12,7 @@ import Tooltip from "./Tooltip";
  * leaves no obvious way back. This badge surfaces the zoomed state and offers a
  * one-tap un-zoom.
  *
- * It only ever READS zoom (a read-only `tmuxPaneNavigate` poll) — it never
+ * It only ever READS zoom (a read-only `taskPaneState` poll) — it never
  * mutates the shared view unless the user taps it. We deliberately do NOT
  * auto-un-zoom on entry: that would fight a deliberate desktop `⌃B z` and break
  * a phone client attached to the same session (see decision 091).
@@ -30,9 +30,15 @@ function PaneZoomBadge({ taskId }: { taskId: string }) {
 			if (busyRef.current) return;
 			busyRef.current = true;
 			try {
-				const res = await api.request.tmuxPaneNavigate(zoom === undefined ? { taskId } : { taskId, zoom });
-				setZoomed(res.zoomed);
-				setMulti(res.count > 1);
+				if (typeof zoom === "boolean") {
+					await api.request.taskPaneAction({
+						taskId,
+						action: { kind: "zoom", mode: zoom ? "on" : "off" },
+					});
+				}
+				const state = await api.request.taskPaneState({ taskId });
+				setZoomed(!!state.zoomedPaneId);
+				setMulti(state.panes.length > 1);
 			} catch {
 				// Transient (session not ready / restarting) — the next poll retries.
 			} finally {
