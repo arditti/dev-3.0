@@ -33,11 +33,15 @@ vi.mock("node:fs", async (importOriginal) => {
 
 vi.mock("../spawn", () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 
+vi.mock("../native-task-panes", () => ({
+	startNativeTaskPanes: vi.fn(),
+	recoverNativeTaskPanes: vi.fn(async () => null),
+	stopNativeTaskPanes: vi.fn(async () => undefined),
+	nativeTaskPanesAlive: vi.fn(async () => true),
+}));
+
 vi.mock("../native-task-terminal", () => ({
-	startNativeTaskTerminal: vi.fn(),
-	attachNativeTaskTerminal: vi.fn(async () => null),
-	nativeTaskTerminalAlive: vi.fn(async () => true),
-	stopNativeTaskTerminal: vi.fn(async () => undefined),
+	bindNativeTaskPane: vi.fn(async () => null),
 }));
 
 import {
@@ -47,8 +51,10 @@ import {
 	type NativeStreamAttachHeader,
 	type NativeStreamHeader,
 } from "../../shared/native-terminal-stream";
+import { paneSessionKey } from "../../shared/pane-session-key";
 import { encodeResizeSequence } from "../../shared/resize-protocol";
-import { startNativeTaskTerminal } from "../native-task-terminal";
+import { bindNativeTaskPane } from "../native-task-terminal";
+import { startNativeTaskPanes } from "../native-task-panes";
 import { tmux } from "../tmux";
 
 // The PTY server's WebSocket handlers are the unit under test; `Bun.serve` is a
@@ -68,6 +74,7 @@ bun.Bun.serve = (config: unknown) => {
 };
 
 const pty = await import("../pty-server");
+const { ensureNativePanePtySession } = pty;
 
 const TASK_ID = "aabbccdd-1111-2222-3333-444444444444";
 const SESSION_ID = `dev3-task-${TASK_ID}`;
@@ -145,6 +152,8 @@ interface FakeShell {
 	emit: (data: string) => void;
 }
 
+const FIRST_PANE_SESSION_ID = `${SESSION_ID}-pane-1`;
+
 function fakeShell(): FakeShell {
 	let emit: (data: string) => void = () => {};
 	const shell: FakeShell = {
@@ -153,17 +162,23 @@ function fakeShell(): FakeShell {
 		detach: vi.fn(),
 		emit: (data) => emit(data),
 	};
-	vi.mocked(startNativeTaskTerminal).mockImplementation(async (spec) => {
-		emit = (data) => spec.onOutput(new TextEncoder().encode(data));
+	vi.mocked(startNativeTaskPanes).mockResolvedValue({
+		taskId: TASK_ID,
+		panes: [{ paneId: "pane-1", sessionId: FIRST_PANE_SESSION_ID, hostPid: 4242, shellPid: 4243, cols: 80, rows: 24, alive: true }],
+		layout: "{}",
+		activePaneId: "pane-1",
+	} as never);
+	vi.mocked(bindNativeTaskPane).mockImplementation(async (_sessionId, hooks) => {
+		emit = (data) => hooks.onOutput(new TextEncoder().encode(data));
 		return {
-			sessionId: SESSION_ID,
-			paneId: `${SESSION_ID}:0`,
+			sessionId: FIRST_PANE_SESSION_ID,
+			paneId: "pane-1",
 			hostPid: 4242,
 			shellPid: 4243,
 			write: shell.write,
 			resize: shell.resize,
 			detach: shell.detach,
-		} as unknown as Awaited<ReturnType<typeof startNativeTaskTerminal>>;
+		} as unknown as Awaited<ReturnType<typeof bindNativeTaskPane>>;
 	});
 	return shell;
 }
@@ -207,7 +222,7 @@ describe("attaching a native viewer", () => {
 			resumed: false,
 			reset: "fresh",
 			sessionId: SESSION_ID,
-			paneId: `${SESSION_ID}:0`,
+			paneId: "pane-1",
 			hostPid: 4242,
 			shellPid: 4243,
 		});
@@ -303,7 +318,7 @@ describe("reconnecting a native viewer", () => {
 		expect(second.attach.paneId).toBe(first.attach.paneId);
 		expect(second.attach.hostPid).toBe(first.attach.hostPid);
 		expect(second.attach.shellPid).toBe(first.attach.shellPid);
-		expect(startNativeTaskTerminal).toHaveBeenCalledTimes(1);
+		expect(startNativeTaskPanes).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -393,6 +408,60 @@ describe("writer and observer", () => {
 		await delay(FLUSH_MS);
 
 		expect(connect().screen()).toBe("still alive\r\n");
+	});
+});
+
+/**
+ * Regression guard for the attach frame identity fix (seq 1311).
+ *
+ * sessionId MUST be the bare task coordinator id (nativeTaskSessionId(taskId))
+ * for EVERY pane — never the pane registry id (which has a -pane-N suffix).
+ * paneId distinguishes panes on the same session.
+ */
+describe("attach frame identity — pane-1 and composite pane-2", () => {
+	const SECOND_PANE_ID = "pane-2";
+	const SECOND_PANE_SESSION_ID = `${SESSION_ID}-${SECOND_PANE_ID}`;
+
+	function connectForPane(paneId: string, since?: number): Viewer {
+		const key = paneId === "pane-1" ? TASK_ID : paneSessionKey(TASK_ID, paneId);
+		const query = `session=${key}${since === undefined ? "" : `&since=${since}`}`;
+		const viewer = new Viewer();
+		// Override the URL so the WS handler looks up the right composite key.
+		(viewer.data as { url: URL }).url = new URL(`http://localhost/?${query}`);
+		handlers.open(viewer);
+		attached.push(viewer);
+		return viewer;
+	}
+
+	it("pane-1: sessionId is the coordinator id (no -pane-N suffix), paneId is pane-1", () => {
+		const viewer = connectForPane("pane-1");
+		expect(viewer.attach.sessionId).toBe(SESSION_ID);
+		expect(viewer.attach.paneId).toBe("pane-1");
+		expect(viewer.attach.hostPid).toBe(4242);
+		expect(viewer.attach.shellPid).toBe(4243);
+	});
+
+	it("pane-2 (composite key): sessionId is still the coordinator id, paneId is pane-2", async () => {
+		const SECOND_PANE_HOST_PID = 5050;
+		const SECOND_PANE_SHELL_PID = 5051;
+
+		vi.mocked(bindNativeTaskPane).mockImplementationOnce(async (_sid, _hooks, pId) => ({
+			sessionId: SECOND_PANE_SESSION_ID,
+			paneId: pId || SECOND_PANE_ID,
+			hostPid: SECOND_PANE_HOST_PID,
+			shellPid: SECOND_PANE_SHELL_PID,
+			write: vi.fn(),
+			resize: vi.fn(),
+			detach: vi.fn(),
+		} as unknown as Awaited<ReturnType<typeof bindNativeTaskPane>>));
+
+		await ensureNativePanePtySession(TASK_ID, SECOND_PANE_ID, SECOND_PANE_SESSION_ID, "proj-1", "/tmp/wt");
+
+		const viewer = connectForPane(SECOND_PANE_ID);
+		expect(viewer.attach.sessionId).toBe(SESSION_ID);
+		expect(viewer.attach.paneId).toBe(SECOND_PANE_ID);
+		expect(viewer.attach.hostPid).toBe(SECOND_PANE_HOST_PID);
+		expect(viewer.attach.shellPid).toBe(SECOND_PANE_SHELL_PID);
 	});
 });
 
