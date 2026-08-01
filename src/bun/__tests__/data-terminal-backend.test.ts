@@ -146,6 +146,96 @@ describe("newTaskTerminalBackend", () => {
 		expect(newTaskTerminalBackend("darwin")).toBeNull();
 		expect(newTaskTerminalBackend("linux")).toBeNull();
 	});
+
+	it("stamps native on POSIX only when the machine-local preference opts in", () => {
+		expect(newTaskTerminalBackend("darwin", "native")).toBe("native");
+		expect(newTaskTerminalBackend("linux", "native")).toBe("native");
+	});
+
+	// An explicit tmux preference must stay byte-identical to the legacy write —
+	// an unmarked record is what older builds can still read.
+	it("leaves POSIX records unmarked for a tmux preference and for no preference", () => {
+		expect(newTaskTerminalBackend("darwin", "tmux")).toBeNull();
+		expect(newTaskTerminalBackend("linux", "tmux")).toBeNull();
+		expect(newTaskTerminalBackend("darwin", null)).toBeNull();
+		expect(newTaskTerminalBackend("darwin", undefined)).toBeNull();
+	});
+
+	// Windows has no tmux runtime at all, so the preference cannot select it.
+	it("keeps win32 native regardless of the preference", () => {
+		expect(newTaskTerminalBackend("win32", "tmux")).toBe("native");
+		expect(newTaskTerminalBackend("win32", null)).toBe("native");
+	});
+});
+
+// ============================================================
+// The machine-local new-task preference, through the creation seam
+// ============================================================
+
+describe("the new-task terminal backend preference", () => {
+	/**
+	 * Seed the SIDECAR, not settings.json — the preference deliberately lives
+	 * outside the whitelisted settings file (see terminal-backend-preference.ts).
+	 */
+	function writePreference(value: unknown): void {
+		mkdirSync(TEST_HOME, { recursive: true });
+		writeFileSync(
+			`${TEST_HOME}/terminal-backend.json`,
+			JSON.stringify({ version: 1, newTaskBackend: value }),
+			"utf-8",
+		);
+	}
+
+	it("stamps native on every creation path once opted in", async () => {
+		writePreference("native");
+		const plain = await addTask(testProject, "Fresh task");
+		const scratch = await addTask(testProject, "Scratch — 01:08", "todo", { scratch: true });
+		const variant = await addTask(testProject, "Variant", "todo", { groupId: "g", autoVariantIndex: true });
+		for (const task of [plain, scratch, variant]) {
+			expect(task.terminalBackend).toBe("native");
+		}
+		expect(readSavedTasks().every((task) => task.terminalBackend === "native")).toBe(true);
+	});
+
+	it("leaves new tasks unmarked with no sidecar, a tmux preference, or a garbage one", async () => {
+		const cases: Array<[label: string, seed: () => void]> = [
+			["no sidecar file", () => rmSync(`${TEST_HOME}/terminal-backend.json`, { force: true })],
+			["tmux", () => writePreference("tmux")],
+			["unknown identity", () => writePreference("screen")],
+			["wrong type", () => writePreference(7)],
+			["missing value", () => writePreference(undefined)],
+			["future schema version", () => {
+				mkdirSync(TEST_HOME, { recursive: true });
+				writeFileSync(
+					`${TEST_HOME}/terminal-backend.json`,
+					JSON.stringify({ version: 99, newTaskBackend: "native" }),
+					"utf-8",
+				);
+			}],
+			["corrupt json", () => {
+				mkdirSync(TEST_HOME, { recursive: true });
+				writeFileSync(`${TEST_HOME}/terminal-backend.json`, "{not json", "utf-8");
+			}],
+		];
+		for (const [label, seed] of cases) {
+			rmSync(`${TEST_HOME}/data`, { recursive: true, force: true });
+			_resetDataCaches();
+			seed();
+			const created = await addTask(testProject, "Fresh task");
+			expect(created, `preference: ${label}`).not.toHaveProperty("terminalBackend");
+		}
+	});
+
+	it("never rewrites tasks that already exist when the preference flips", async () => {
+		writePreference("tmux");
+		const before = await addTask(testProject, "Existing");
+		writePreference("native");
+		await addTask(testProject, "Later");
+
+		const saved = readSavedTasks();
+		expect(saved.find((task) => task.id === before.id)).not.toHaveProperty("terminalBackend");
+		expect(saved.find((task) => task.title === "Later")?.terminalBackend).toBe("native");
+	});
 });
 
 describe("task creation on Windows", () => {

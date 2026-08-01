@@ -745,6 +745,32 @@ export interface FavoriteAgentConfig {
 	lastUsedAt: number;
 }
 
+/**
+ * What the GUI needs to render (and gate) a task's terminal-backend override:
+ * the effective identity, whether the record carries it explicitly, and which
+ * backend — if any — still owns a live session for the task.
+ */
+export interface TaskTerminalBackendInfo {
+	backend: TerminalBackendIdentity;
+	explicit: boolean;
+	liveBackend: TerminalBackendIdentity | null;
+}
+
+/** Which terminal backends THIS machine's build can actually launch. */
+export interface NativeTerminalAvailability {
+	available: boolean;
+	/**
+	 * Whether tmux is a usable choice at all on the HOST platform. False on
+	 * Windows, which ships no tmux runtime — the renderer must not offer it there,
+	 * and browser-side platform sniffing would answer for the wrong machine.
+	 */
+	tmuxSupported: boolean;
+	/** Provenance of the resolved host runtime; absent when unavailable. */
+	origin?: string;
+	/** Actionable reasons it could not be resolved; empty when available. */
+	diagnostics: string[];
+}
+
 export interface GlobalSettings {
 	defaultAgentId: string;
 	defaultConfigId: string;
@@ -3052,6 +3078,38 @@ export type AppRPCSchema = {
 				// so the toast can quote roughly how much memory came back.
 				params: { taskId: string; projectId: string };
 				response: { task: Task; freedRssBytes: number | null };
+			};
+			/** Effective terminal backend for one task, plus the live-session gate. */
+			getTaskTerminalBackend: {
+				params: { taskId: string; projectId: string };
+				response: TaskTerminalBackendInfo;
+			};
+			/**
+			 * Per-task override for the NEXT launch. Refused (throws) while either
+			 * backend still owns a live session — dev3 never migrates live terminal
+			 * state, and a refusal writes nothing on either side.
+			 */
+			setTaskTerminalBackend: {
+				params: { taskId: string; projectId: string; backend: TerminalBackendIdentity };
+				response: Task;
+			};
+			/** Non-throwing probe of this build's native terminal host. */
+			getNativeTerminalAvailability: {
+				params: void;
+				response: NativeTerminalAvailability;
+			};
+			/**
+			 * Machine-local backend for NEW tasks, from its own versioned sidecar
+			 * (never settings.json — an older side-by-side build would delete an
+			 * unknown key there). Null means no preference ⇒ platform default.
+			 */
+			getNewTaskTerminalBackend: {
+				params: void;
+				response: { backend: TerminalBackendIdentity | null };
+			};
+			setNewTaskTerminalBackend: {
+				params: { backend: TerminalBackendIdentity };
+				response: { backend: TerminalBackendIdentity };
 			};
 			setTaskPriority: {
 				// Writes the priority to the whole variant group; returns every task

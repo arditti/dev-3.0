@@ -12,6 +12,7 @@ import { createLogger } from "./logger";
 import { DEV3_HOME, OPS_DIR } from "./paths";
 import { detectClonePaths } from "./cow-clone";
 import { withFileLock } from "./file-lock";
+import { readNewTaskTerminalBackendPreference } from "./terminal-backend-preference";
 import { projectSlug } from "./git";
 
 const log = createLogger("data");
@@ -811,11 +812,18 @@ export async function saveTasks(
  * absent still means tmux everywhere — so the marker is written at creation
  * time instead, and only for new tasks. Existing unmarked tasks are never
  * backfilled, reinterpreted, or migrated: that is Seq 1296's call.
+ *
+ * `preference` is the machine-local `GlobalSettings.newTaskTerminalBackend`
+ * opt-in. Only `native` produces a marker: choosing tmux — or leaving the
+ * preference unset — keeps the record field-less, which is byte-identical to
+ * what every previous build wrote and stays readable by them.
  */
 export function newTaskTerminalBackend(
 	platform: NodeJS.Platform = process.platform,
+	preference?: TerminalBackendIdentity | null,
 ): TerminalBackendIdentity | null {
-	return platform === "win32" ? "native" : null;
+	if (platform === "win32") return "native";
+	return preference === "native" ? "native" : null;
 }
 
 export async function addTask(
@@ -880,7 +888,7 @@ export async function addTask(
 			}
 			variantIndex = maxVariantIndex + 1;
 		}
-		const newBackend = newTaskTerminalBackend();
+		const newBackend = newTaskTerminalBackend(process.platform, readNewTaskTerminalBackendPreference());
 		const task: Task = {
 			id: crypto.randomUUID(),
 			seq: extras?.seq ?? nextSeq(tasks),
