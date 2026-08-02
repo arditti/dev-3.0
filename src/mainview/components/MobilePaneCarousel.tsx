@@ -5,6 +5,7 @@ import { confirm } from "../confirm";
 import BottomSheet from "./BottomSheet";
 import PaneMapSheet from "./PaneMapSheet";
 import { ClosePaneIcon, ManagePanesIcon, NewWindowIcon, SplitHIcon, SplitVIcon } from "./TmuxIcons";
+import { fetchPaneState, runPaneAction } from "../pane-state-bus";
 
 type ManageAction = "splitH" | "splitV" | "newWindow" | "close";
 
@@ -55,6 +56,11 @@ function MobilePaneCarousel({ taskId, refreshKey, children }: { taskId: string; 
 	// Keep the live count available to the touch/wheel handlers without re-binding.
 	const countRef = useRef(0);
 	countRef.current = info.count;
+	// Same for the pane ids `navigate` resolves an index against. Reading them from
+	// state would rebuild `navigate` on every poll — and the poll effect depends on
+	// `navigate`, so that turned a 2.5s poll into a ~30 Hz read loop (seq 1382).
+	const paneIdsRef = useRef<string[]>([]);
+	paneIdsRef.current = info.paneIds;
 
 	/** Read current pane info and update state; optionally navigate and/or enforce zoom. */
 	const navigate = useCallback(
@@ -63,32 +69,20 @@ function MobilePaneCarousel({ taskId, refreshKey, children }: { taskId: string; 
 			busyRef.current = true;
 			try {
 				if (opts?.step) {
-					await api.request.taskPaneAction({
-						taskId,
-						action: { kind: "focusStep", step: opts.step },
-					});
+					await runPaneAction(taskId, { kind: "focusStep", step: opts.step });
 				} else if (typeof opts?.index === "number") {
 					// Resolve index to paneId from current info (best-effort)
-					const targetPaneId = info.paneIds[opts.index];
+					const targetPaneId = paneIdsRef.current[opts.index];
 					if (targetPaneId) {
-						await api.request.taskPaneAction({
-							taskId,
-							action: { kind: "focus", paneId: targetPaneId },
-						});
+						await runPaneAction(taskId, { kind: "focus", paneId: targetPaneId });
 					}
 				} else if (opts?.paneId) {
-					await api.request.taskPaneAction({
-						taskId,
-						action: { kind: "focus", paneId: opts.paneId },
-					});
+					await runPaneAction(taskId, { kind: "focus", paneId: opts.paneId });
 				}
 				if (typeof opts?.zoom === "boolean") {
-					await api.request.taskPaneAction({
-						taskId,
-						action: { kind: "zoom", mode: opts.zoom ? "on" : "off" },
-					});
+					await runPaneAction(taskId, { kind: "zoom", mode: opts.zoom ? "on" : "off" });
 				}
-				const state = await api.request.taskPaneState({ taskId });
+				const state = await fetchPaneState(taskId);
 				const activeIdx = state.panes.findIndex((p) => p.active);
 				const res: PaneInfo = {
 					count: state.panes.length,
@@ -105,7 +99,7 @@ function MobilePaneCarousel({ taskId, refreshKey, children }: { taskId: string; 
 				busyRef.current = false;
 			}
 		},
-		[taskId, info.paneIds],
+		[taskId],
 	);
 
 	// Create / close panes and windows from the sheet. The ⌃B prefix is the only
@@ -122,7 +116,7 @@ function MobilePaneCarousel({ taskId, refreshKey, children }: { taskId: string; 
 				// Closing the only pane tears down the session — confirm first.
 				let count = 0;
 				try {
-					const state = await api.request.taskPaneState({ taskId });
+					const state = await fetchPaneState(taskId);
 					count = state.panes.length;
 				} catch {
 					count = 0;
@@ -139,12 +133,12 @@ function MobilePaneCarousel({ taskId, refreshKey, children }: { taskId: string; 
 						confirmed = false;
 					}
 					if (!confirmed) return;
-					await api.request.taskPaneAction({ taskId, action: { kind: "close", force: true } }).catch(() => {});
+					await runPaneAction(taskId, { kind: "close", force: true }).catch(() => {});
 				} else {
-					await api.request.taskPaneAction({ taskId, action: { kind: "close" } }).catch(() => {});
+					await runPaneAction(taskId, { kind: "close" }).catch(() => {});
 				}
 			} else {
-				await api.request.taskPaneAction({ taskId, action: { kind: action } }).catch(() => {});
+				await runPaneAction(taskId, { kind: action }).catch(() => {});
 			}
 			await navigate({ zoom: true });
 		},
