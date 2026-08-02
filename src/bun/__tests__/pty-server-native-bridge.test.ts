@@ -136,6 +136,13 @@ class Viewer {
 		return lastCall(this.roles());
 	}
 
+	/** The whole role frame, including the PTY geometry an observer renders at. */
+	get lastRoleHeader(): { role: string; cols?: number; rows?: number } | undefined {
+		return lastCall(
+			this.frames.filter((f) => f.header.t === "role").map((f) => f.header),
+		) as { role: string; cols?: number; rows?: number } | undefined;
+	}
+
 	get watermark(): number {
 		for (let i = this.frames.length - 1; i >= 0; i--) {
 			const header = this.frames[i].header as { seq?: number };
@@ -150,6 +157,13 @@ interface FakeShell {
 	resize: ReturnType<typeof vi.fn>;
 	detach: ReturnType<typeof vi.fn>;
 	emit: (data: string) => void;
+	/** What the HOST granted this app process — another dev3 instance may own it. */
+	hostRole: "writer" | "observer";
+	/** Whether a cross-process claim succeeds; false = the other process keeps it. */
+	grantClaim: boolean;
+	/** Whether ANY process holds the lease, as the host reports it. */
+	writerAttached: boolean;
+	claimHostWriter: ReturnType<typeof vi.fn>;
 }
 
 const FIRST_PANE_SESSION_ID = `${SESSION_ID}-pane-1`;
@@ -161,6 +175,13 @@ function fakeShell(): FakeShell {
 		resize: vi.fn(),
 		detach: vi.fn(),
 		emit: (data) => emit(data),
+		hostRole: "writer",
+		grantClaim: true,
+		writerAttached: true,
+		claimHostWriter: vi.fn(async () => {
+			if (shell.grantClaim) shell.hostRole = "writer";
+			return shell.hostRole;
+		}),
 	};
 	vi.mocked(startNativeTaskPanes).mockResolvedValue({
 		taskId: TASK_ID,
@@ -178,6 +199,10 @@ function fakeShell(): FakeShell {
 			write: shell.write,
 			resize: shell.resize,
 			detach: shell.detach,
+			hostRole: () => shell.hostRole,
+			hostWriterAttached: () => shell.writerAttached,
+			claimHostWriter: shell.claimHostWriter,
+			writerPid: async () => (shell.hostRole === "writer" ? process.pid : 4711),
 		} as unknown as Awaited<ReturnType<typeof bindNativeTaskPane>>;
 	});
 	return shell;
@@ -377,6 +402,91 @@ describe("writer and observer", () => {
 		expect(lastCall(shell.resize.mock.calls)).toEqual([80, 24]);
 	});
 
+	// An observer that reflows the stream to its own width wraps every long line in
+	// the wrong place, which is what a second window actually looked like.
+	it("tells a viewer the PTY's geometry so an observer can render at the writer's shape", () => {
+		const desktop = connect();
+		handlers.message(desktop, encodeResizeSequence(200, 50));
+
+		const browser = connect();
+
+		expect(browser.attach).toMatchObject({ role: "observer", cols: 200, rows: 50 });
+	});
+
+	it("republishes the geometry to observers when the writer reshapes the PTY", () => {
+		const desktop = connect();
+		const browser = connect();
+		handlers.message(desktop, encodeResizeSequence(180, 44));
+
+		expect(browser.lastRoleHeader).toMatchObject({ role: "observer", cols: 180, rows: 44 });
+	});
+
+	it("tells its own viewers they are read-only when ANOTHER app process holds the host lease", () => {
+		shell.hostRole = "observer";
+
+		const desktop = connect();
+
+		expect(desktop.attach.role).toBe("observer");
+	});
+
+	it("never writes to the shell from a process the host made an observer", () => {
+		shell.hostRole = "observer";
+		const desktop = connect();
+
+		handlers.message(desktop, "would vanish\r");
+
+		expect(shell.write).not.toHaveBeenCalled();
+		expect(desktop.lastRole).toEqual({ role: "observer", refused: true });
+	});
+
+	// The exact strand: a second dev3 window took the free lease, then quit. The
+	// remaining window was left saying "another viewer is typing" with nobody
+	// there, and neither resize nor take control did anything.
+	it("says the lease is free once nobody holds it, instead of blaming a phantom viewer", () => {
+		shell.hostRole = "observer";
+		shell.writerAttached = false;
+
+		const desktop = connect();
+
+		expect(desktop.attach).toMatchObject({ role: "observer", writerAttached: false });
+	});
+
+	it("still reports a real writer as attached", () => {
+		shell.hostRole = "observer";
+		shell.writerAttached = true;
+
+		const desktop = connect();
+
+		expect(desktop.attach).toMatchObject({ role: "observer", writerAttached: true });
+	});
+
+	it("take control asks the HOST first and reports a refusal without moving anything", async () => {
+		shell.hostRole = "observer";
+		shell.grantClaim = false; // the other process keeps typing
+		const desktop = connect();
+
+		handlers.message(desktop, claimMessage());
+		await delay(FLUSH_MS);
+
+		expect(shell.claimHostWriter).toHaveBeenCalledTimes(1);
+		expect(desktop.lastRole).toEqual({ role: "observer", refused: true });
+		handlers.message(desktop, "still refused\r");
+		expect(shell.write).not.toHaveBeenCalled();
+	});
+
+	it("take control promotes the viewer once the host hands the lease over", async () => {
+		shell.hostRole = "observer";
+		shell.grantClaim = true; // the other process had already released it
+		const desktop = connect();
+
+		handlers.message(desktop, claimMessage());
+		await delay(FLUSH_MS);
+
+		expect(desktop.lastRole).toEqual({ role: "writer", refused: false });
+		handlers.message(desktop, "mine now\r");
+		expect(shell.write).toHaveBeenCalledWith("mine now\r");
+	});
+
 	it("hands the lease back on an explicit release", () => {
 		const desktop = connect();
 		const browser = connect();
@@ -462,6 +572,28 @@ describe("attach frame identity — pane-1 and composite pane-2", () => {
 		expect(viewer.attach.paneId).toBe(SECOND_PANE_ID);
 		expect(viewer.attach.hostPid).toBe(SECOND_PANE_HOST_PID);
 		expect(viewer.attach.shellPid).toBe(SECOND_PANE_SHELL_PID);
+	});
+});
+
+// The lookup owner routing starts from: a caller resolves a binding here, then
+// asks the HOST who may write before delivering anything through it.
+describe("nativePaneTerminal", () => {
+	it("finds the first pane under the bare task key", () => {
+		expect(pty.nativePaneTerminal(TASK_ID)?.paneId).toBe("pane-1");
+		expect(pty.nativePaneTerminal(TASK_ID, "pane-1")?.paneId).toBe("pane-1");
+	});
+
+	it("refuses to pass off pane-1 as another pane", () => {
+		expect(pty.nativePaneTerminal(TASK_ID, "pane-2")).toBeNull();
+	});
+
+	it("has nothing for a task this process never bound", () => {
+		expect(pty.nativePaneTerminal("11111111-2222-3333-4444-555555555555")).toBeNull();
+	});
+
+	it("hands back a binding whose host role can be interrogated", () => {
+		shell.hostRole = "observer";
+		expect(pty.nativePaneTerminal(TASK_ID)?.hostRole()).toBe("observer");
 	});
 });
 

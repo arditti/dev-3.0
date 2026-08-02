@@ -48,6 +48,15 @@ export interface NativeStreamAttachHeader {
 	resumed: boolean;
 	/** Set only when `resumed` is false, so the client can clear before writing. */
 	reset?: NativeStreamResetReason;
+	/**
+	 * The PTY's own size. An observer must render at THIS geometry, not at its
+	 * container's: the bytes were laid out for the writer's width, so a viewer
+	 * that reflows them to its own width wraps every long line wrongly.
+	 */
+	cols?: number;
+	rows?: number;
+	/** Whether ANY client holds the write lease; false = the slot is free. */
+	writerAttached?: boolean;
 }
 
 /** One batch of live output; the payload is the raw terminal bytes. */
@@ -64,6 +73,15 @@ export interface NativeStreamRoleHeader {
 	role: NativeStreamRole;
 	/** Set when the server refused this client's input or resize. */
 	refused?: boolean;
+	/** The PTY's size, so an observer keeps following the writer's geometry. */
+	cols?: number;
+	rows?: number;
+	/**
+	 * Whether ANY client holds the write lease. False means the slot is free and
+	 * taking control will succeed, which is a different sentence from "someone
+	 * else is typing" and must not be shown as the same one.
+	 */
+	writerAttached?: boolean;
 }
 
 export type NativeStreamServerHeader =
@@ -155,12 +173,18 @@ export function outputMessage(seq: number, payload: string): string {
 	return encodeNativeStreamMessage({ t: "o", v: NATIVE_STREAM_PROTOCOL_VERSION, seq }, payload);
 }
 
-export function roleMessage(role: NativeStreamRole, refused = false): string {
+export function roleMessage(
+	role: NativeStreamRole,
+	refused = false,
+	extra?: { cols?: number; rows?: number; writerAttached?: boolean } | null,
+): string {
 	return encodeNativeStreamMessage({
 		t: "role",
 		v: NATIVE_STREAM_PROTOCOL_VERSION,
 		role,
 		...(refused ? { refused: true } : {}),
+		...(extra?.cols && extra.rows ? { cols: extra.cols, rows: extra.rows } : {}),
+		...(typeof extra?.writerAttached === "boolean" ? { writerAttached: extra.writerAttached } : {}),
 	});
 }
 

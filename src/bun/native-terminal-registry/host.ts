@@ -198,7 +198,7 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 	const windowsJob = await createWindowsJobContainment(token);
 	mkdirSync(sessionDir(sessionId), { recursive: true, mode: 0o700 });
 
-	type ClientData = { helloDone: boolean };
+	type ClientData = { helloDone: boolean; clientPid?: number };
 	type HostClient = Bun.ServerWebSocket<ClientData>;
 	const clients = new Set<HostClient>();
 	const writerOwnership = new WriterOwnership<HostClient>();
@@ -310,7 +310,14 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 			},
 			close(ws) {
 				clients.delete(ws);
-				writerOwnership.detach(ws);
+				// Unsolicited (id 0): the writer left, so the lease is free. The role
+				// itself does not move — a survivor still has to claim — but it has to
+				// LEARN the slot opened, or it stays read-only forever with nobody typing.
+				for (const survivor of writerOwnership.detach(ws)) {
+					try {
+						survivor.send(encodeControl(ownershipReply(0, writerOwnership.roleOf(survivor) ?? "observer", false)));
+					} catch { /* that survivor died too */ }
+				}
 				// Detach boundary: make the reconstructable state current on disk.
 				pipeline?.flush();
 			},
@@ -343,6 +350,7 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 					return;
 				}
 				ws.data.helloDone = true;
+				ws.data.clientPid = verdict.clientPid;
 				const role = writerOwnership.attach(ws);
 				ws.send(encodeControl(welcomeMessage(verdict.id, sessionId, role)));
 				// Same synchronous turn: replay ends before later PTY callbacks fan out live bytes.
@@ -408,6 +416,10 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 	}
 
 	function currentStatus(ws: HostClient, id: number): StatusReply {
+		const writer = writerOwnership.writerClient();
+		// Absent (not null) when the writer's client predates `clientPid`: callers
+		// must read that as "unknown owner", never as "the slot is free".
+		const writerPid = writer ? writer.data.clientPid : null;
 		return {
 			v: NATIVE_SESSION_PROTOCOL_VERSION,
 			type: "status",
@@ -422,6 +434,7 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 			startedAt,
 			clientRole: writerOwnership.roleOf(ws) ?? "observer",
 			writerAttached: writerOwnership.hasWriter(),
+			...(writerPid !== undefined ? { writerPid } : {}),
 		};
 	}
 

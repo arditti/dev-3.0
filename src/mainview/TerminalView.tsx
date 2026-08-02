@@ -227,7 +227,14 @@ interface TerminalViewProps {
 	 * Native backend only: this viewer's write role, and whether the server just
 	 * refused something it typed. Never fires for a tmux session.
 	 */
-	onNativeStatus?: (status: { role: NativeStreamRole; refused: boolean }) => void;
+	onNativeStatus?: (status: { role: NativeStreamRole; refused: boolean; writerAttached?: boolean }) => void;
+	/**
+	 * The app refused this socket outright (missing/unknown session). Supplying it
+	 * hands recovery to the owner, which renders one shared exited state; without
+	 * it the terminal keeps printing the refusal into the canvas, which is what
+	 * every tmux session still does.
+	 */
+	onSessionLost?: (reason: string) => void;
 	/**
 	 * Touch compose mode (mobile/tablet in browser mode): the terminal must NOT
 	 * summon the on-screen keyboard — taps neither focus the hidden textarea nor
@@ -237,7 +244,7 @@ interface TerminalViewProps {
 	touchComposeMode?: boolean;
 }
 
-function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, touchComposeMode }: TerminalViewProps) {
+function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSessionLost, touchComposeMode }: TerminalViewProps) {
 	const t = useT();
 	// Mirror t in a ref so the long-lived terminal-setup effect's closures
 	// (e.g. the select-to-copy hint) always read the latest translator.
@@ -263,8 +270,14 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, touc
 	// must survive the socket — a tmux session never sets either of these.
 	const nativeSeqRef = useRef<number | null>(null);
 	const nativeRoleRef = useRef<NativeStreamRole | null>(null);
+	/** The PTY's size, which an observer renders at instead of its container's. */
+	const ptyGeometryRef = useRef<{ cols: number; rows: number } | null>(null);
+	/** Set by the terminal-setup effect; re-runs the fit after geometry or role changes. */
+	const refitRef = useRef<(() => void) | null>(null);
 	const onNativeStatusRef = useRef(onNativeStatus);
 	onNativeStatusRef.current = onNativeStatus;
+	const onSessionLostRef = useRef(onSessionLost);
+	onSessionLostRef.current = onSessionLost;
 	// Mouse-copy keeps tmux copy mode alive so the scrollback viewport does not
 	// jump to live output. Remember when that mode may be active so the next
 	// plain click can return to live input without requiring Escape.
@@ -718,12 +731,24 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, touc
 			// until a remount (re-opening the task). We drive the fit ourselves
 			// and call term.resize directly, which carries no such drop window.
 			function refitToContainer() {
-				if (disposed || !fitAddon) return;
+				if (disposed) return;
+				// An observer does not own the PTY, so it must not reflow the stream to
+				// its own width: those bytes were laid out for the writer's geometry and
+				// every line reaching the right edge would wrap in the wrong place.
+				// Adopt the PTY's shape instead and letterbox inside the container.
+				const pty = ptyGeometryRef.current;
+				if (pty && nativeRoleRef.current === "observer") {
+					try { term.resize(pty.cols, pty.rows); } catch { /* disposed */ }
+					return;
+				}
+				if (!fitAddon) return;
 				let dims: { cols: number; rows: number } | undefined;
 				try { dims = fitAddon.proposeDimensions(); } catch { return; /* disposed */ }
 				if (!dims) return;
 				try { term.resize(dims.cols, dims.rows); } catch { /* disposed */ }
 			}
+
+			refitRef.current = refitToContainer;
 			let refitScheduled = false;
 			function scheduleRefit() {
 				if (refitScheduled) return;
@@ -1176,9 +1201,22 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, touc
 		}
 
 		/** Publish the writer/observer role, and whether the server just refused input. */
-		function reportNativeRole(role: NativeStreamRole, refused: boolean): void {
+		function reportNativeRole(role: NativeStreamRole, refused: boolean, writerAttached?: boolean): void {
+			const changed = nativeRoleRef.current !== role;
 			nativeRoleRef.current = role;
-			onNativeStatusRef.current?.({ role, refused });
+			onNativeStatusRef.current?.({ role, refused, writerAttached });
+			// Becoming an observer means following the PTY's shape; becoming the writer
+			// means going back to fitting our own container.
+			if (changed) refitRef.current?.();
+		}
+
+		/** Follow the writer's PTY shape; a writer keeps fitting its own container. */
+		function adoptPtyGeometry(cols?: number, rows?: number): void {
+			if (!cols || !rows) return;
+			const previous = ptyGeometryRef.current;
+			if (previous?.cols === cols && previous.rows === rows) return;
+			ptyGeometryRef.current = { cols, rows };
+			refitRef.current?.();
 		}
 
 		/**
@@ -1189,13 +1227,15 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, touc
 		 */
 		function handleNativeFrame(header: NativeStreamHeader, payload: string): void {
 			if (header.t === "role") {
-				reportNativeRole(header.role, header.refused === true);
+				reportNativeRole(header.role, header.refused === true, header.writerAttached);
+				adoptPtyGeometry(header.cols, header.rows);
 				return;
 			}
 			let reset = "";
 			if (header.t === "attach") {
 				nativeSeqRef.current = header.seq;
-				reportNativeRole(header.role, false);
+				reportNativeRole(header.role, false, header.writerAttached);
+				adoptPtyGeometry(header.cols, header.rows);
 				// RIS in the SAME batch as the replay, so the screen is replaced in one
 				// write instead of briefly showing an empty terminal.
 				if (!header.resumed) reset = "\x1bc";
@@ -1290,7 +1330,13 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, touc
 					return;
 				}
 				if (isFinalPtyCloseCode(event.code)) {
-					try { term.writeln(`\r\n\x1b[2m[no terminal session — ${event.reason || "rejected by the app"}]\x1b[0m`); } catch { /* disposed */ }
+					const reason = event.reason || "rejected by the app";
+					const owner = onSessionLostRef.current;
+					if (owner) {
+						owner(reason);
+						return;
+					}
+					try { term.writeln(`\r\n\x1b[2m[no terminal session — ${reason}]\x1b[0m`); } catch { /* disposed */ }
 					return;
 				}
 				schedulePtyReconnect(term, fit);
