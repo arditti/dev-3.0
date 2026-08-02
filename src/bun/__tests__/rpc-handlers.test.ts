@@ -3,6 +3,18 @@ import { mkdir, rm } from "node:fs/promises";
 import type { GlobalSettings, Project, Task, TaskDiffResponse } from "../../shared/types";
 import { buildTaskDialogSubject, getPreparingStageProgress, resolveTaskCompareBaseBranch } from "../../shared/types";
 import { ENV_UNSET } from "../../shared/agent-accounts";
+import {
+	activatePane,
+	closePane,
+	createSplitTree,
+	getPaneRects,
+	listPaneIds,
+	serializeSplitTree,
+	setSplitRatio,
+	splitPane,
+	type SplitOrientation,
+	type SplitTree,
+} from "../../shared/split-tree";
 
 // ---- Mocks ----
 
@@ -137,6 +149,32 @@ vi.mock("../tmux", async (importOriginal) => {
 
 vi.mock("../system-clipboard", () => ({
 	writeSystemClipboard: vi.fn(() => "pbcopy"),
+}));
+
+// The native pane runtime spawns real host processes, so it is mocked wholesale.
+// Unmarked tasks are tmux and never reach it; the native suites drive these
+// doubles directly.
+const mockNativePanes = {
+	nativeTaskPanesState: vi.fn(async () => null as any),
+	nativeTaskPaneLayout: vi.fn(async (..._args: any[]) => null as any),
+	nativeTaskPanesAlive: vi.fn(async () => false),
+	nativeTaskPaneCommands: vi.fn(async () => [] as any[]),
+	nativeTaskPaneCommandsOf: vi.fn(() => [] as any[]),
+	splitNativeTaskPane: vi.fn(async (..._args: any[]) => null as any),
+	closeNativeTaskPane: vi.fn(async (..._args: any[]) => ({ sessionTornDown: false, state: null }) as any),
+	focusNativeTaskPane: vi.fn(async (..._args: any[]) => null as any),
+	setNativeTaskPaneLayout: vi.fn(async (..._args: any[]) => null as any),
+};
+vi.mock("../native-task-panes", () => mockNativePanes);
+
+const mockSendPromptToNativePane = vi.fn(async () => true);
+vi.mock("../agent-prompt-native", () => ({
+	sendPromptToNativePane: (...args: any[]) => mockSendPromptToNativePane(...(args as [])),
+	sendPromptToNativeAgentPane: vi.fn(async () => true),
+	resolveNativeAgentPane: vi.fn(async () => null),
+	deliverNativePromptAsOwner: vi.fn(async () => true),
+	NATIVE_AGENT_PANE_ID: "pane-1",
+	NATIVE_PROMPT_DELIVERY_METHOD: "_native.deliverPrompt",
 }));
 
 vi.mock("../agents", () => ({
@@ -343,6 +381,7 @@ const {
 	portableReadKey,
 } = await import("../rpc-handlers");
 const {
+	nativeHunterColumnRatios,
 	tmuxAction,
 	tmuxKillPane,
 	tmuxPaneCount,
@@ -8602,6 +8641,315 @@ describe("handlers.spawnBugHuntersInTask", () => {
 		await expect(
 			handlers.spawnBugHuntersInTask({ taskId: "task-1", projectId: "proj-1", agentId: null, configId: null, count: 3 }),
 		).rejects.toThrow("no worktree");
+	});
+});
+// ================================================================
+// handlers.spawnBugHuntersInTask on a NATIVE task (seq 1394)
+//
+// Same entry point the Find bugs dialog calls, on a task whose terminal is
+// native rather than tmux.
+// ================================================================
+
+describe("handlers.spawnBugHuntersInTask on a native task", () => {
+	const TASK_ID = "abcd1234-full-id";
+	const READINESS_DELAY_MS = 5100;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		(globalThis as any).Bun.write = vi.fn().mockResolvedValue(undefined);
+		mockSendPromptToNativePane.mockResolvedValue(true);
+		mockNativePanes.focusNativeTaskPane.mockResolvedValue(null as any);
+		mockNativePanes.closeNativeTaskPane.mockResolvedValue({ sessionTornDown: false, state: null } as any);
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/**
+	 * A pane set that starts with the agent's pane and grows on every split. The
+	 * layout is a REAL SplitTree driven by the shared split-tree functions, so the
+	 * geometry assertions measure what the app would draw.
+	 */
+	function arrangeNativePaneSet(opts: {
+		failAtSplit?: number;
+		closeAlwaysFails?: boolean;
+		/** A pane set the task already had before Find bugs was clicked. */
+		seed?: SplitTree;
+		/** The layout read-back returns nothing, as if the coordinator vanished. */
+		layoutUnreadable?: boolean;
+		/** Publishing the evened-out column fails. */
+		publishFails?: boolean;
+	} = {}) {
+		let tree = opts.seed ?? createSplitTree();
+		const state = () => ({
+			taskId: TASK_ID,
+			panes: listPaneIds(tree).map((paneId) => ({ paneId, sessionId: `${paneId}-s`, hostPid: 1, shellPid: 2, cols: 80, rows: 24, alive: true })),
+			layout: serializeSplitTree(tree),
+			activePaneId: tree.activePaneId,
+		});
+		mockNativePanes.nativeTaskPanesState.mockImplementation(async () => state() as any);
+		mockNativePanes.nativeTaskPaneLayout.mockImplementation(async () => (opts.layoutUnreadable ? null : (tree as any)));
+		mockNativePanes.setNativeTaskPaneLayout.mockImplementation(async (_taskId: string, next: SplitTree) => {
+			if (opts.publishFails) throw new Error("coordinator refused the geometry");
+			tree = next;
+			return state() as any;
+		});
+		mockNativePanes.focusNativeTaskPane.mockImplementation(async (_taskId: string, paneId: string) => {
+			tree = activatePane(tree, paneId);
+			return state() as any;
+		});
+		mockNativePanes.closeNativeTaskPane.mockImplementation(async (_taskId: string, paneId: string) => {
+			// A close that "fails" leaves the pane in the set — how a host that refuses
+			// to die looks to the caller.
+			if (!opts.closeAlwaysFails) tree = closePane(tree, paneId);
+			const next = state();
+			return { sessionTornDown: next.panes.length === 0, state: next } as any;
+		});
+		let splitCount = 0;
+		mockNativePanes.splitNativeTaskPane.mockImplementation(async (_taskId: string, fromPaneId: string, orientation: SplitOrientation) => {
+			splitCount += 1;
+			if (opts.failAtSplit === splitCount) throw new Error("host would not start");
+			const paneId = `pane-${tree.nextPaneOrdinal}`;
+			tree = splitPane(tree, fromPaneId, orientation);
+			return { paneId, state: state() } as any;
+		});
+		return {
+			paneIds: () => listPaneIds(tree),
+			activePaneId: () => tree.activePaneId,
+			rects: () => getPaneRects(tree),
+			tree: () => tree,
+		};
+	}
+
+	/** Pane heights in whole percent, so a third reads as 33 rather than 0.3333…. */
+	function heightPercents(rects: Map<string, { height: number }>): Record<string, number> {
+		const out: Record<string, number> = {};
+		for (const [paneId, rect] of rects) out[paneId] = Math.round(rect.height * 100);
+		return out;
+	}
+
+	function arrangeNativeTask() {
+		const project = makeProject();
+		const task = makeTask({ id: TASK_ID, worktreePath: "/tmp/wt", terminalBackend: "native" } as any);
+		(data.getProject as any).mockResolvedValue(project);
+		(data.getTask as any).mockResolvedValue(task);
+		(agents.resolveCommandForAgent as any).mockResolvedValue({ command: "claude", extraEnv: {}, agent: { baseCommand: "claude" } });
+		return { project, task };
+	}
+
+	/** Launch and let the readiness delay elapse — native delivery is awaited. */
+	function launchHunters(count: number): Promise<{ spawned: number }> {
+		const launch = handlers.spawnBugHuntersInTask({
+			taskId: TASK_ID, projectId: "proj-1", agentId: "builtin-claude", configId: "claude-default", count,
+		});
+		const settled = launch.catch(() => undefined);
+		return vi.advanceTimersByTimeAsync(READINESS_DELAY_MS).then(() => settled).then(() => launch);
+	}
+
+	it("opens the requested number of native panes and never calls tmux", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet();
+
+		const result = await launchHunters(3);
+
+		expect(result).toEqual({ spawned: 3 });
+		expect(mockNativePanes.splitNativeTaskPane).toHaveBeenCalledTimes(3);
+		// Zero tmux process spawns — no split-window, and no probe of the default socket.
+		expect(mockSpawn).not.toHaveBeenCalled();
+
+		// First hunter splits off the agent's pane to the right; each later hunter
+		// splits the previous hunter's pane downwards, so the right column stacks.
+		const anchors = mockNativePanes.splitNativeTaskPane.mock.calls.map((c: any[]) => [c[1], c[2]]);
+		expect(anchors).toEqual([
+			["pane-1", "horizontal"],
+			["pane-2", "vertical"],
+			["pane-3", "vertical"],
+		]);
+		expect(set.paneIds()).toEqual(["pane-1", "pane-2", "pane-3", "pane-4"]);
+		// The agent keeps the keyboard: the last split made a hunter pane active.
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	// A bare chain of SplitTree splits lands at 50/25/25, while tmux deliberately
+	// produces equal thirds. The launch re-publishes the ratios of its own splits.
+	it("leaves the hunter column in equal parts, like the tmux path, and does not move the agent's pane", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet();
+
+		await launchHunters(3);
+
+		const rects = set.rects();
+		expect(rects.get("pane-1")).toEqual({ x: 0, y: 0, width: 0.5, height: 1 });
+		expect(heightPercents(rects)).toEqual({ "pane-1": 100, "pane-2": 33, "pane-3": 33, "pane-4": 33 });
+		expect([...rects].filter(([id]) => id !== "pane-1").map(([id, r]) => [id, Math.round(r.y * 100), Math.round(r.x * 100)])).toEqual([
+			["pane-2", 0, 50],
+			["pane-3", 33, 50],
+			["pane-4", 67, 50],
+		]);
+	});
+
+	it("evens out a full column of six hunters too", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet();
+
+		const result = await launchHunters(6);
+
+		expect(result).toEqual({ spawned: 6 });
+		const rects = set.rects();
+		expect(rects.get("pane-1")).toEqual({ x: 0, y: 0, width: 0.5, height: 1 });
+		expect(heightPercents(rects)).toEqual({
+			"pane-1": 100, "pane-2": 17, "pane-3": 17, "pane-4": 17, "pane-5": 17, "pane-6": 17, "pane-7": 17,
+		});
+	});
+
+	it("computes the column ratios that make each hunter equal", () => {
+		expect(nativeHunterColumnRatios(1)).toEqual([]);
+		expect(nativeHunterColumnRatios(3)).toEqual([1 / 3, 1 / 2]);
+		expect(nativeHunterColumnRatios(6)).toEqual([1 / 6, 1 / 5, 1 / 4, 1 / 3, 1 / 2]);
+	});
+
+	it("delivers the hunter prompt through the native pane, not through send-keys", async () => {
+		arrangeNativeTask();
+		arrangeNativePaneSet();
+
+		await launchHunters(2);
+
+		expect(mockSendPromptToNativePane).toHaveBeenCalledTimes(2);
+		const [, paneId, prompt] = mockSendPromptToNativePane.mock.calls[0] as any[];
+		expect(paneId).toBe("pane-2");
+		expect(prompt).toContain("/dev3-bug-hunter");
+		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+
+	it("fails the launch when a prompt is reported undelivered", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet();
+		mockSendPromptToNativePane.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+		// Not "only 2 of 2 could be started" — the panes DID open, the prompt did not land.
+		await expect(launchHunters(2)).rejects.toThrow(
+			"All 2 hunter panes opened, but the hunt prompt never reached pane-3; launch rolled back.",
+		);
+
+		expect(set.paneIds()).toEqual(["pane-1"]);
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	it("fails the launch when a prompt delivery throws", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet();
+		mockSendPromptToNativePane.mockRejectedValue(new Error("writer lease is gone"));
+
+		await expect(launchHunters(2)).rejects.toThrow(/writer lease is gone/);
+
+		expect(set.paneIds()).toEqual(["pane-1"]);
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	it("rolls the whole launch back when a later split fails, instead of leaving a partial set", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet({ failAtSplit: 3 });
+
+		await expect(launchHunters(4)).rejects.toThrow("Only 2 of 4 bug hunters could be started");
+
+		// Both panes that did open were closed again; the agent's pane is untouched.
+		expect(mockNativePanes.closeNativeTaskPane.mock.calls.map((c: any[]) => c[1])).toEqual(["pane-2", "pane-3"]);
+		expect(set.paneIds()).toEqual(["pane-1"]);
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	// "Rolled back" must never be printed over panes that are still on screen.
+	it("names the panes it could not close when the rollback itself fails", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet({ failAtSplit: 3, closeAlwaysFails: true });
+
+		await expect(launchHunters(4)).rejects.toThrow(
+			/the rollback could not close pane-2, pane-3 — those panes are still open, close them by hand\./,
+		);
+
+		expect(set.paneIds()).toEqual(["pane-1", "pane-2", "pane-3"]);
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	// Geometry is part of the result, not a nice-to-have: reporting a launched
+	// column that is actually drawn 50/25/25 is the silent wrong answer.
+	it("fails the launch when the layout cannot be read back", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet({ layoutUnreadable: true });
+
+		await expect(launchHunters(3)).rejects.toThrow(
+			"All 3 hunter panes opened, but the column could not be laid out evenly " +
+				"(Error: the task's native pane layout could not be read back); launch rolled back.",
+		);
+
+		expect(set.paneIds()).toEqual(["pane-1"]);
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	it("fails the launch when the evened-out column cannot be published", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet({ publishFails: true });
+
+		await expect(launchHunters(3)).rejects.toThrow(
+			/the column could not be laid out evenly \(Error: coordinator refused the geometry\); launch rolled back\./,
+		);
+
+		expect(set.paneIds()).toEqual(["pane-1"]);
+		expect(set.activePaneId()).toBe("pane-1");
+	});
+
+	it("fails the launch when a split it made is gone from the layout", async () => {
+		arrangeNativeTask();
+		const set = arrangeNativePaneSet();
+		// The layout read-back no longer contains the hunter panes at all.
+		mockNativePanes.nativeTaskPaneLayout.mockResolvedValue(createSplitTree() as any);
+
+		await expect(launchHunters(3)).rejects.toThrow(/the split opened off pane-2 is no longer in the layout/);
+
+		expect(set.paneIds()).toEqual(["pane-1"]);
+	});
+
+	it("evens out its own column without moving a pane the task already had", async () => {
+		arrangeNativeTask();
+		// The task already runs a dev-server pane below the agent, at a ratio the user
+		// dragged to 70/30 — nothing about this launch may touch it.
+		let seed = splitPane(createSplitTree(), "pane-1", "vertical");
+		const existingSplit = (seed.root as { id: string }).id;
+		seed = setSplitRatio(seed, existingSplit, 0.7);
+		seed = activatePane(seed, "pane-1");
+		const before = getPaneRects(seed).get("pane-2");
+		const set = arrangeNativePaneSet({ seed });
+
+		await launchHunters(3);
+
+		const rects = set.rects();
+		// The pre-existing pane and its split ratio are byte-identical.
+		expect(rects.get("pane-2")).toEqual(before);
+		expect((set.tree().root as { ratio: number }).ratio).toBe(0.7);
+		// …while the hunter column this launch opened is exactly equal.
+		const hunterHeights = ["pane-3", "pane-4", "pane-5"].map((id) => rects.get(id)!.height);
+		expect(hunterHeights[0]).toBeCloseTo(hunterHeights[1], 10);
+		expect(hunterHeights[1]).toBeCloseTo(hunterHeights[2], 10);
+		expect(hunterHeights[0] * 3).toBeCloseTo(0.7, 10);
+	});
+
+	it("reports honestly when the native terminal is not running", async () => {
+		arrangeNativeTask();
+		mockNativePanes.nativeTaskPanesState.mockResolvedValue(null as any);
+
+		await expect(launchHunters(3)).rejects.toThrow("the task terminal is not running");
+		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+
+	it("writes no tmux pane entry into sessionState", async () => {
+		arrangeNativeTask();
+		arrangeNativePaneSet();
+
+		await launchHunters(2);
+
+		const sessionStateWrites = (data.updateTask as any).mock.calls.filter((c: any[]) => c[2]?.sessionState);
+		expect(sessionStateWrites).toHaveLength(0);
 	});
 });
 

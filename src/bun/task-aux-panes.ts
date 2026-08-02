@@ -1,5 +1,10 @@
 /**
- * Backend-neutral ownership of AUXILIARY task panes (seq 1376).
+ * Backend-neutral splitting and ownership of extra task panes (seq 1376, 1394).
+ *
+ * Two layers live here. {@link splitTaskPane} is the primitive: one new pane in
+ * the task's own terminal, on whichever backend that task runs. On top of it sits
+ * the auxiliary-pane layer — a pane one ACTION owns while it runs, deduped by
+ * purpose.
  *
  * An auxiliary pane is a visible pane in the task's own terminal that one action
  * owns while it runs: the dev-server output, a git operation. Before this module
@@ -53,9 +58,9 @@ export interface AuxPaneHandle {
 	paneId: string;
 }
 
-export interface OpenAuxPaneSpec {
+/** What a new pane runs and where — shared by every way of opening one. */
+export interface TaskPaneLaunch {
 	task: Task;
-	purpose: AuxPanePurpose;
 	placement: AuxPanePlacement;
 	/** tmux-only pane size (e.g. "50%"); the native SplitTree always splits evenly. */
 	size: string;
@@ -67,6 +72,10 @@ export interface OpenAuxPaneSpec {
 	/** What each backend runs. Often the same script, but not always. */
 	tmuxCommand: string;
 	nativeLaunch: TerminalLaunchSpec;
+}
+
+export interface OpenAuxPaneSpec extends TaskPaneLaunch {
+	purpose: AuxPanePurpose;
 }
 
 /**
@@ -198,17 +207,48 @@ export async function closeAuxPane(task: Task, purpose: AuxPanePurpose, socket: 
  * because a dev server started.
  */
 export async function openAuxPane(spec: OpenAuxPaneSpec): Promise<AuxPaneHandle> {
-	const { task, purpose, placement, size, cwd, socket, title } = spec;
-	// Every purpose's pane gets the task number, so a native auxiliary host is as
-	// readable in a process viewer as the agent's own (seq 1383). Set here rather
-	// than at each call site: a future purpose inherits it by construction.
-	const env = { [TASK_SEQ_ENV]: taskSeqLabel(task), ...spec.env };
+	const { task, purpose, socket } = spec;
 	await closeAuxPane(task, purpose, socket);
+	const handle = await splitTaskPane({ ...spec, restoreFocus: true });
+	log.info("Opened auxiliary pane", {
+		taskId: task.id.slice(0, 8),
+		purpose,
+		backend: handle.backend,
+		paneId: handle.paneId,
+	});
+	return handle;
+}
+
+// ── The backend-neutral primitive ─────────────────────────────────────────────
+
+export interface SplitTaskPaneSpec extends TaskPaneLaunch {
+	/** tmux split target — a session name or a pane id. Defaults to the task session. */
+	tmuxTarget?: string;
+	/** Native pane to split off. Defaults to the pane that currently has focus. */
+	nativeAnchor?: string;
+	/** Native only: hand focus back to the pane that had it before the split. */
+	restoreFocus?: boolean;
+}
+
+/**
+ * Open ONE new pane in the task's terminal, on whichever backend that task runs.
+ *
+ * The native path never calls tmux and never probes a tmux socket; the tmux path
+ * is byte-identical to the raw `split-window` it replaces. A backend that has no
+ * pane to split off throws {@link AuxPaneUnavailableError} — never a silent no-op
+ * and never a tmux fallback.
+ */
+export async function splitTaskPane(spec: SplitTaskPaneSpec): Promise<AuxPaneHandle> {
+	const { task, placement, size, cwd, socket, title } = spec;
+	// Every extra pane gets the task number, so a native auxiliary host is as
+	// readable in a process viewer as the agent's own (seq 1383). Set here rather
+	// than at each call site: a future caller inherits it by construction.
+	const env = { [TASK_SEQ_ENV]: taskSeqLabel(task), ...spec.env };
 
 	if (backendOf(task) === "native") {
 		const state = await nativeTaskPanesState(task.id);
 		if (!state || state.panes.length === 0) throw new AuxPaneUnavailableError("terminal-not-running");
-		const anchor = state.activePaneId || state.panes[0].paneId;
+		const anchor = spec.nativeAnchor || state.activePaneId || state.panes[0].paneId;
 		const previouslyActive = state.activePaneId || null;
 
 		const { paneId } = await splitNativeTaskPane(task.id, anchor, orientationFor(placement), {
@@ -217,22 +257,22 @@ export async function openAuxPane(spec: OpenAuxPaneSpec): Promise<AuxPaneHandle>
 			launch: spec.nativeLaunch,
 		});
 
-		if (previouslyActive && previouslyActive !== paneId) {
+		if (spec.restoreFocus && previouslyActive && previouslyActive !== paneId) {
 			await focusNativeTaskPane(task.id, previouslyActive).catch((err) =>
-				log.warn("openAuxPane: could not restore focus to the previous pane", {
+				log.warn("splitTaskPane: could not restore focus to the previous pane", {
 					taskId: task.id.slice(0, 8),
 					previouslyActive,
 					error: String(err),
 				}),
 			);
 		}
-		log.info("Opened native auxiliary pane", { taskId: task.id.slice(0, 8), purpose, paneId, anchor });
+		log.info("Split a native task pane", { taskId: task.id.slice(0, 8), paneId, anchor });
 		return { backend: "native", paneId };
 	}
 
 	try {
 		const { paneId, stderr } = await tmux.splitWindow({
-			target: taskSessionName(task.id),
+			target: spec.tmuxTarget || taskSessionName(task.id),
 			orientation: orientationFor(placement),
 			size,
 			printPaneId: true,
@@ -241,15 +281,33 @@ export async function openAuxPane(spec: OpenAuxPaneSpec): Promise<AuxPaneHandle>
 			command: spec.tmuxCommand,
 			socket,
 		});
-		if (stderr.trim()) log.warn("openAuxPane tmux stderr", { stderr: stderr.trim() });
+		if (stderr.trim()) log.warn("splitTaskPane tmux stderr", { stderr: stderr.trim() });
 		if (paneId && title) {
 			tmux.selectPane(paneId, { socket, title }).catch(() => {});
 		}
-		log.info("Opened tmux auxiliary pane", { taskId: task.id.slice(0, 8), purpose, paneId });
+		log.info("Split a tmux task pane", { taskId: task.id.slice(0, 8), paneId });
 		return { backend: "tmux", paneId: paneId ?? "" };
 	} catch (err) {
 		if (!(err instanceof TmuxError)) throw err;
-		if (err.stderr) log.warn("openAuxPane tmux stderr", { stderr: err.stderr });
+		if (err.stderr) log.warn("splitTaskPane tmux stderr", { stderr: err.stderr });
 		throw new Error(`tmux split-window failed (exit ${err.exitCode}): ${err.stderr || "unknown error"}`);
 	}
+}
+
+/**
+ * Close one pane the caller opened, on whichever backend it lives, and PROVE it
+ * is gone. Deliberately not best-effort: the caller undoing a half-finished
+ * launch has to be able to say whether the panes really went away, and a
+ * swallowed failure there turns into a user-facing lie ("none were kept" while
+ * two panes are still on screen).
+ */
+export async function closeTaskPane(task: Task, handle: AuxPaneHandle, socket: string): Promise<void> {
+	if (handle.backend === "native") {
+		const { state } = await closeNativeTaskPane(task.id, handle.paneId);
+		if (state?.panes.some((pane) => pane.paneId === handle.paneId)) {
+			throw new Error(`native pane ${handle.paneId} is still in the pane set after closing it`);
+		}
+		return;
+	}
+	await tmux.killPane(handle.paneId, { socket });
 }
