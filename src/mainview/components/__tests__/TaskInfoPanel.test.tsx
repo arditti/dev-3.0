@@ -180,6 +180,7 @@ const defaultDevServerStatus: DevServerStatus = {
 	hasDevScript: true,
 	worktreePath: "/tmp/wt/t1",
 	tmuxSocket: "dev3",
+	backend: "tmux",
 	taskSessionName: "dev3-t1",
 	devSessionName: "dev3-dev-t1",
 	viewerPaneId: "%17",
@@ -1067,6 +1068,28 @@ describe("TaskInfoPanel", () => {
 				taskId: "t1",
 				projectId: "p1",
 			});
+		});
+
+		it("renders the running state for a native-backend dev server", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			mockedApi.request.checkDevServer.mockResolvedValue({ running: false });
+			mockedApi.request.runDevServer.mockResolvedValue({
+				...defaultDevServerStatus,
+				backend: "native",
+				taskSessionName: "",
+				devSessionName: "",
+				viewerPaneId: "pane-3",
+			});
+
+			await act(async () => {
+				renderPanel(makeTask(), { project: { ...project, devScript: "bun run dev" } });
+			});
+
+			await user.click(screen.getAllByText("Dev Server")[0].closest("button")!);
+
+			await waitFor(() =>
+				expect(screen.getByLabelText("Dev server running — click for options")).toBeInTheDocument(),
+			);
 		});
 
 		it("shows running menu when dev server is already running", async () => {
