@@ -122,6 +122,28 @@ const project3Deleted: Project = {
 	deleted: true,
 };
 
+/** The one breadcrumb-task fixture: inline rename and the backend marker share it. */
+function makeBreadcrumbTask(overrides?: Partial<Task>): Task {
+	return {
+		id: "t1",
+		seq: 42,
+		projectId: "p1",
+		title: "My Task Title",
+		description: "",
+		status: "in-progress",
+		baseBranch: "main",
+		worktreePath: "/tmp/wt",
+		branchName: "feat/test",
+		groupId: null,
+		variantIndex: null,
+		agentId: null,
+		configId: null,
+		createdAt: "2025-01-01T00:00:00Z",
+		updatedAt: "2025-01-01T00:00:00Z",
+		...overrides,
+	};
+}
+
 function renderHeader(
 	route: Route,
 	projects: Project[] = [project1, project2],
@@ -495,30 +517,12 @@ describe("GlobalHeader — breadcrumb inline rename", () => {
 		mockedApi.request.getTasks.mockResolvedValue([]);
 	});
 
-	const taskForRename: Task = {
-		id: "t1",
-		seq: 42,
-		projectId: "p1",
-		title: "My Task Title",
-		description: "",
-		status: "in-progress",
-		baseBranch: "main",
-		worktreePath: "/tmp/wt",
-		branchName: "feat/test",
-		groupId: null,
-		variantIndex: null,
-		agentId: null,
-		configId: null,
-		createdAt: "2025-01-01T00:00:00Z",
-		updatedAt: "2025-01-01T00:00:00Z",
-	};
-
 	it("shows pencil icon on hover for task segment in full-page view", () => {
 		renderHeader(
 			{ screen: "task", projectId: "p1", taskId: "t1" },
 			[project1],
 			vi.fn(),
-			[taskForRename],
+			[makeBreadcrumbTask()],
 		);
 		expect(screen.getByText("My Task Title")).toBeInTheDocument();
 		expect(screen.getByTitle("Edit title")).toBeInTheDocument();
@@ -529,7 +533,7 @@ describe("GlobalHeader — breadcrumb inline rename", () => {
 			{ screen: "project", projectId: "p1", activeTaskId: "t1" },
 			[project1],
 			vi.fn(),
-			[taskForRename],
+			[makeBreadcrumbTask()],
 		);
 		expect(screen.getByText("My Task Title")).toBeInTheDocument();
 		expect(screen.getByTitle("Edit title")).toBeInTheDocument();
@@ -541,7 +545,7 @@ describe("GlobalHeader — breadcrumb inline rename", () => {
 			{ screen: "task", projectId: "p1", taskId: "t1" },
 			[project1],
 			vi.fn(),
-			[taskForRename],
+			[makeBreadcrumbTask()],
 		);
 		await user.click(screen.getByTitle("Edit title"));
 		expect(screen.getByDisplayValue("My Task Title")).toBeInTheDocument();
@@ -549,14 +553,14 @@ describe("GlobalHeader — breadcrumb inline rename", () => {
 
 	it("saves new title on Enter", async () => {
 		const user = userEvent.setup();
-		const updatedTask = { ...taskForRename, customTitle: "New Name" };
+		const updatedTask = makeBreadcrumbTask({ customTitle: "New Name" });
 		mockedApi.request.renameTask.mockResolvedValue(updatedTask);
 
 		renderHeader(
 			{ screen: "task", projectId: "p1", taskId: "t1" },
 			[project1],
 			vi.fn(),
-			[taskForRename],
+			[makeBreadcrumbTask()],
 		);
 		await user.click(screen.getByTitle("Edit title"));
 		const input = screen.getByDisplayValue("My Task Title");
@@ -576,7 +580,7 @@ describe("GlobalHeader — breadcrumb inline rename", () => {
 			{ screen: "task", projectId: "p1", taskId: "t1" },
 			[project1],
 			vi.fn(),
-			[taskForRename],
+			[makeBreadcrumbTask()],
 		);
 		await user.click(screen.getByTitle("Edit title"));
 		expect(screen.getByDisplayValue("My Task Title")).toBeInTheDocument();
@@ -592,7 +596,7 @@ describe("GlobalHeader — breadcrumb inline rename", () => {
 			{ screen: "task", projectId: "p1", taskId: "t1" },
 			[project1],
 			vi.fn(),
-			[taskForRename],
+			[makeBreadcrumbTask()],
 		);
 		await user.click(screen.getByTitle("Edit title"));
 		await user.keyboard("{Enter}");
@@ -1111,5 +1115,39 @@ describe("GlobalHeader — remote access button", () => {
 		} finally {
 			window.removeEventListener("rpc:showRemoteAccessQR", listener);
 		}
+	});
+});
+
+describe("GlobalHeader — native terminal backend mark", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockedApi.request.getTasks.mockResolvedValue([]);
+	});
+
+	it("marks a native-backed task in the breadcrumb", () => {
+		renderHeader({ screen: "task", projectId: "p1", taskId: "t1" }, [project1], vi.fn(), [
+			makeBreadcrumbTask({ terminalBackend: "native" }),
+		]);
+
+		expect(screen.getByTestId("breadcrumb-native-backend")).toHaveAttribute(
+			"aria-label",
+			"Native terminal backend",
+		);
+	});
+
+	it("stays quiet for an explicit tmux task and for a legacy unmarked one", () => {
+		const { unmount } = renderHeader(
+			{ screen: "task", projectId: "p1", taskId: "t1" },
+			[project1],
+			vi.fn(),
+			[makeBreadcrumbTask({ terminalBackend: "tmux" })],
+		);
+		expect(screen.queryByTestId("breadcrumb-native-backend")).toBeNull();
+		unmount();
+
+		renderHeader({ screen: "task", projectId: "p1", taskId: "t1" }, [project1], vi.fn(), [
+			makeBreadcrumbTask(),
+		]);
+		expect(screen.queryByTestId("breadcrumb-native-backend")).toBeNull();
 	});
 });

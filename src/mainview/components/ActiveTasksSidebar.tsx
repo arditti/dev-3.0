@@ -21,6 +21,7 @@ import { useTipRotation } from "../hooks/useTipRotation";
 import TerminalPreviewPopover from "./TerminalPreviewPopover";
 import AgentLauncherBadge from "./AgentLauncherBadge";
 import VariantDots from "./VariantDots";
+import NativeBackendMark, { isNativeBackendTask } from "./NativeBackendMark";
 import { getTaskAgentMeta } from "../utils/taskAgentMeta";
 import TaskShutdownOverlay from "./TaskShutdownOverlay";
 import Tooltip from "./Tooltip";
@@ -652,7 +653,13 @@ function ActiveTasksSidebar({
 											role="button"
 											tabIndex={task.shuttingDown ? -1 : 0}
 											aria-disabled={task.shuttingDown || undefined}
-											aria-label={displayTitle}
+											// The row's explicit name overrides its descendants, so the
+											// native marker only reaches assistive tech from here.
+											aria-label={
+												isNativeBackendTask(task)
+													? `${displayTitle} — ${t("task.nativeBackendMark")}`
+													: displayTitle
+											}
 											onClick={() => handleTaskClick(task)}
 											onKeyDown={(e) => {
 												// Card is a div (so the nested PriorityBadge button is valid
@@ -778,6 +785,7 @@ function ActiveTasksSidebar({
 												<div className={`text-xs leading-snug break-words ${
 													isActive ? "text-fg font-medium" : "text-fg-2"
 												}`}>
+													<NativeBackendMark task={task} className="w-3 h-3 mr-1" testId={`sidebar-native-backend-${task.id}`} />
 													{displayTitle}
 												</div>
 
