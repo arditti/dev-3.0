@@ -3,9 +3,11 @@ import { useAppState, routeTaskId, projectIdForRoute, routeAfterTaskClosed, getT
 import { api, isElectrobun, getRpcConnectionState } from "./rpc";
 import { setWebNotificationsSuppressed, showWebNotificationOrToast, type WebNotificationDetail } from "./utils/webNotification";
 import { useT, useLocale } from "./i18n";
+import { statusKey } from "./i18n/status";
+import { columnAgentFailureCopy } from "./utils/columnAgentFailureToast";
 import { handleMenuAction } from "./menuRouter";
 import { trackPageView, trackEvent, registerAgents } from "./analytics";
-import type { AgentLaunchRequest, CodingAgent, GlobalSettings as GlobalSettingsType, Project, RemoteNetInterface, RequirementCheckResult, RosettaWarningInfo, SharedArtifact, SharedImage, Task, TaskDialogSubject, TaskStatus, UpdateChangelog } from "../shared/types";
+import type { AgentLaunchRequest, AppRPCSchema, CodingAgent, GlobalSettings as GlobalSettingsType, Project, RemoteNetInterface, RequirementCheckResult, RosettaWarningInfo, SharedArtifact, SharedImage, Task, TaskDialogSubject, TaskStatus, UpdateChangelog } from "../shared/types";
 import { orderProjectsForDisplay, taskSeqLabel } from "../shared/types";
 import { useGlobalShortcut } from "./hooks/useGlobalShortcut";
 import { hasAppModifier, isRemote } from "./utils/platform";
@@ -1720,18 +1722,17 @@ function App() {
 		void api.request.setActiveContext?.({ projectId, taskId })?.catch?.(() => { /* best-effort */ });
 	}, [state.route]);
 
-	// Notify user when a column-agent launch fails (custom columns have no automatic fallback)
+	// Notify user when a column-agent launch fails. Built-in AI Review also parks the
+	// task in Your Review; a custom column leaves it where it is.
 	useEffect(() => {
 		function onColumnAgentFailed(e: Event) {
-			const { taskId, columnName, error } = (e as CustomEvent).detail as {
-				taskId: string;
-				projectId: string;
-				columnName: string;
-				error: string;
-			};
-			// The task is parked in the target column with no running agent; surface the
-			// failure so the user can relaunch (move out and back in) or fix the column config.
-			toast.error(t("kanban.columnAgentFailed", { columnName, error }), { taskId });
+			const payload = (e as CustomEvent).detail as AppRPCSchema["bun"]["messages"]["columnAgentFailed"];
+			// Copy is chosen from the failure's structural `reason` and whether the task
+			// was moved — never by reading the backend's English error string. Saying
+			// where the task ended up is what stops a card moving on its own from
+			// reading as "the action did nothing".
+			const copy = columnAgentFailureCopy(payload, (status) => t(statusKey(status)));
+			toast.error(t(copy.key, copy.params), { taskId: payload.taskId });
 		}
 		window.addEventListener("rpc:columnAgentFailed", onColumnAgentFailed);
 		return () => window.removeEventListener("rpc:columnAgentFailed", onColumnAgentFailed);

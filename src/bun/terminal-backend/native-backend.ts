@@ -239,18 +239,39 @@ export class NativeTerminalBackend implements TerminalBackend {
 	 * Returns `null` on the same condition as `describeSession`: no pane survives.
 	 */
 	async readPaneSet(id: TerminalSessionId): Promise<{ panes: PaneSnapshot[]; layout: SplitTree } | null> {
-		if (!isTerminalSessionId(id)) return null;
 		try {
-			const recovered = await NativeMultipaneCoordinator.recoverPaneSet(id, this.deps);
-			if (!recovered) {
-				this.coordinators.delete(id);
-				return null;
-			}
-			this.coordinators.set(id, recovered.coordinator);
-			return { panes: recovered.panes, layout: recovered.coordinator.layout };
+			// Tolerant about the READ, not about ownership: a failed read reports "no pane
+			// set" rather than throwing, while recovery still keeps a pane it cannot
+			// identify — hidden from the snapshot, untouched on disk.
+			return await this.recoverPaneSetInto(id, false);
 		} catch {
 			return null;
 		}
+	}
+
+	/**
+	 * {@link readPaneSet} for a caller that is about to replace a pane. One thing
+	 * changes: nothing is swallowed. An unreadable record or a pane whose owner cannot
+	 * be established throws, instead of being reported as an empty set — the answer a
+	 * replacement must never act on. `null` still means recovery RAN and no pane
+	 * survived, which is a real answer.
+	 */
+	async readPaneSetStrict(id: TerminalSessionId): Promise<{ panes: PaneSnapshot[]; layout: SplitTree } | null> {
+		return this.recoverPaneSetInto(id, true);
+	}
+
+	private async recoverPaneSetInto(
+		id: TerminalSessionId,
+		strict: boolean,
+	): Promise<{ panes: PaneSnapshot[]; layout: SplitTree } | null> {
+		if (!isTerminalSessionId(id)) return null;
+		const recovered = await NativeMultipaneCoordinator.recoverPaneSet(id, this.deps, { strict });
+		if (!recovered) {
+			this.coordinators.delete(id);
+			return null;
+		}
+		this.coordinators.set(id, recovered.coordinator);
+		return { panes: recovered.panes, layout: recovered.coordinator.layout };
 	}
 
 	/** Per-pane host/shell pids, size, and liveness — not expressible via the contract. */

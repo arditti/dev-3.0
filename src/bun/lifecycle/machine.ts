@@ -210,6 +210,19 @@ function moveTransition(
 					? [effect({ type: "setPrPromoted", promoted: true })]
 					: []),
 				effect({ type: "push", message: "taskUpdated", view: "current" }),
+				// AFTER the column write, which stops the effect run when it is rejected
+				// or fails. Only then is "moved to <column>" true.
+				...(event.columnAgentFailure
+					? [effect({
+						type: "push",
+						message: "columnAgentFailed",
+						payload: {
+							...event.columnAgentFailure,
+							type: "columnAgentFailed" as const,
+							movedTo: target.status,
+						},
+					})]
+					: []),
 			],
 		};
 	}
@@ -746,6 +759,12 @@ export function transition(state: LifecycleState, event: LifecycleEvent): Transi
 		}
 		case "columnAgentFailed":
 			if (state.column.status === "review-by-ai" && state.column.customColumnId === null) {
+				// A card that hops back to Your Review on its own with no message reads as
+				// "AI Review does nothing", so the failure must be reported. It rides ON
+				// the fallback move instead of being pushed here, because the move's own
+				// column write can be rejected or fail — and a toast claiming the task
+				// moved when it did not is a worse bug than silence.
+				const { type: _type, ...failure } = event;
 				return {
 					next: state,
 					effects: [
@@ -756,6 +775,7 @@ export function transition(state: LifecycleState, event: LifecycleEvent): Transi
 								target: { status: "review-by-user", customColumnId: null },
 								cause: "column-agent-fallback",
 								guards: { ifStatus: "review-by-ai" },
+								columnAgentFailure: failure,
 							},
 						}),
 					],

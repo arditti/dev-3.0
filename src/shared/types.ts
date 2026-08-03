@@ -313,6 +313,23 @@ export function getPrimaryStopTarget(autoReviewEnabled?: boolean): TaskStatus {
 	return autoReviewEnabled ? "review-by-ai" : "review-by-user";
 }
 
+/**
+ * A column-agent launch failure the app recognises and can explain in the user's
+ * own language. Carried as a stable code so the renderer never has to read the
+ * English `error` string; anything unrecognised has no reason and falls back to
+ * showing that string as diagnostics.
+ */
+export type ColumnAgentFailureReason = "terminal-not-running";
+
+/**
+ * Which column's agent this is, in a form the UI can name in the user's language.
+ * A built-in column travels as its status (the renderer localizes it); only a
+ * custom column, whose name the user typed, travels as a literal string.
+ */
+export type ColumnAgentIdentity =
+	| { kind: "builtin"; status: TaskStatus }
+	| { kind: "custom"; name: string };
+
 // ---- Coding Agents ----
 
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk" | "plan" | "auto";
@@ -3913,8 +3930,19 @@ export type AppRPCSchema = {
 			 * by the `progressId` the renderer passed to `cloneAndAddProject`.
 			 */
 			cloneProgress: { progressId: string; lines: string[] };
-			/** Emitted when a column-agent launch fails (custom columns have no automatic fallback). */
-			columnAgentFailed: { taskId: string; projectId: string; columnName: string; error: string };
+			/**
+			 * Emitted when a column-agent launch fails. `movedTo` is the column the task
+			 * was parked in as a fallback (built-in AI Review only); absent means the task
+			 * stayed put, which is what a custom column does.
+			 */
+			columnAgentFailed: {
+				taskId: string;
+				projectId: string;
+				column: ColumnAgentIdentity;
+				error: string;
+				movedTo?: TaskStatus;
+				reason?: ColumnAgentFailureReason;
+			};
 			/**
 			 * Emitted when background worktree/PTY preparation for a task fails (e.g.
 			 * empty repo, missing base branch). The task is reverted to todo so it is

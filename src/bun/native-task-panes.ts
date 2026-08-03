@@ -96,7 +96,21 @@ function coordinatorId(taskId: string): string {
  * `null` means no pane survived — the same verdict `describeSession` returns.
  */
 async function buildState(taskId: string): Promise<NativeTaskPanesState | null> {
-	const paneSet = await getBackend().readPaneSet(coordinatorId(taskId));
+	return shapeState(taskId, await getBackend().readPaneSet(coordinatorId(taskId)));
+}
+
+/**
+ * {@link buildState} that does not hide an undecidable read: `null` means recovery
+ * ran and no pane survived, while a throw means the pane set could not be read.
+ */
+async function buildStateStrict(taskId: string): Promise<NativeTaskPanesState | null> {
+	return shapeState(taskId, await getBackend().readPaneSetStrict(coordinatorId(taskId)));
+}
+
+/** Derived from the backend method so this module keeps its single import seam. */
+type ReadPaneSet = Awaited<ReturnType<NativeTerminalBackend["readPaneSet"]>>;
+
+function shapeState(taskId: string, paneSet: ReadPaneSet): NativeTaskPanesState | null {
 	if (!paneSet) return null;
 	return {
 		taskId,
@@ -341,6 +355,44 @@ export function nativeTaskPaneCommandsOf(state: NativeTaskPanesState): NativeTas
 export async function nativeTaskPaneCommands(taskId: string): Promise<NativeTaskPaneCommand[]> {
 	const state = await nativeTaskPanesState(taskId);
 	return state ? nativeTaskPaneCommandsOf(state) : [];
+}
+
+/**
+ * What a caller learns when "I could not tell" must not be reported as "there is
+ * nothing". Exactly two outcomes, both of which a caller has to handle: `absent`
+ * means recovery ran and this task owns no pane set, `read` means every pane in the
+ * set was identified. Anything else — an unreadable coordinator record, or a pane
+ * whose own record is missing or corrupt — throws, so it cannot be ignored by
+ * forgetting to check a field.
+ */
+export type NativeTaskPaneCommandsRead =
+	| { kind: "absent" }
+	| { kind: "read"; panes: NativeTaskPaneCommand[] };
+
+/**
+ * A pane in the set could not be identified, so no caller may claim it is not the
+ * pane they are looking for. Distinct from the coordinator-level failure the strict
+ * read propagates from recovery.
+ */
+export class NativePaneIdentityUnknownError extends Error {
+	constructor(readonly taskId: string, readonly paneIds: string[]) {
+		super(
+			`the launch command of pane ${paneIds.join(", ")} cannot be read, `
+			+ "so it cannot be told apart from the pane being replaced",
+		);
+		this.name = "NativePaneIdentityUnknownError";
+	}
+}
+
+export async function nativeTaskPaneCommandsStrict(taskId: string): Promise<NativeTaskPaneCommandsRead> {
+	const state = await buildStateStrict(taskId);
+	if (!state) return { kind: "absent" };
+	const panes = nativeTaskPaneCommandsOf(state);
+	// Strict recovery already refuses an unreadable pane record, so reaching this
+	// with an empty command means the record was lost between the two reads.
+	const unknown = panes.filter((pane) => pane.command.length === 0).map((pane) => pane.paneId);
+	if (unknown.length > 0) throw new NativePaneIdentityUnknownError(taskId, unknown);
+	return { kind: "read", panes };
 }
 
 /**

@@ -7,7 +7,8 @@
  * purpose.
  *
  * An auxiliary pane is a visible pane in the task's own terminal that one action
- * owns while it runs: the dev-server output, a git operation. Before this module
+ * owns while it runs: the dev-server output, a git operation, a column agent such
+ * as the built-in AI Review. Before this module
  * every such pane was a raw `tmux split-window` against `dev3-task-<id>`, so on a
  * native task the split hit a session that does not exist — the git panes threw,
  * and the dev-server pane failed inside a best-effort catch, leaving the dev
@@ -38,8 +39,10 @@ import {
 	closeNativeTaskPane,
 	focusNativeTaskPane,
 	nativeTaskPaneCommands,
+	nativeTaskPaneCommandsStrict,
 	nativeTaskPanesState,
 	splitNativeTaskPane,
+	type NativeTaskPaneCommand,
 } from "./native-task-panes";
 import { TASK_SEQ_ENV } from "./native-terminal-registry/process-naming";
 import { dev3TaskTempPath } from "./temp-paths";
@@ -48,7 +51,7 @@ import { createLogger } from "./logger";
 const log = createLogger("task-aux-panes");
 
 /** Which action owns the pane. One live pane per purpose per task, at most. */
-export type AuxPanePurpose = "devServer" | "gitOp";
+export type AuxPanePurpose = "devServer" | "gitOp" | "columnAgent";
 
 /** Where the new pane lands relative to the pane it splits off. */
 export type AuxPanePlacement = "right" | "below";
@@ -94,20 +97,38 @@ function backendOf(task: Task): TaskPaneBackendKind {
 	return taskTerminalBackendIdentity(task);
 }
 
-/**
- * The substring that identifies a purpose's pane in a launch command. Both
- * backends launch a script under the task's temp prefix, so the prefix alone is
- * a stable, per-task, per-purpose marker.
- */
+interface AuxPanePurposeMeta {
+	/**
+	 * The temp-file suffix whose path identifies this purpose's pane in a launch
+	 * command. Both backends launch a script under the task's temp prefix, so the
+	 * prefix alone is a stable, per-task, per-purpose marker.
+	 */
+	scriptSuffix: string;
+	/** English label shown for the pane in the pager and pane picker. */
+	title: string;
+	/**
+	 * Whether replacing this purpose's pane must be PROVEN before a new one opens.
+	 * A dev server or a git operation is idempotent enough that a stubborn old pane
+	 * is cosmetic; two agents editing one worktree is not, so a column agent
+	 * refuses to launch rather than risk a second one.
+	 */
+	provenReplace: boolean;
+}
+
+const AUX_PANE_PURPOSES: Record<AuxPanePurpose, AuxPanePurposeMeta> = {
+	devServer: { scriptSuffix: "dev.sh", title: "Dev Server", provenReplace: false },
+	gitOp: { scriptSuffix: "git-", title: "Git", provenReplace: false },
+	columnAgent: { scriptSuffix: "col-agent.sh", title: "Column Agent", provenReplace: true },
+};
+
+/** The substring that identifies a purpose's pane in a launch command. */
 export function auxPaneMarker(taskId: string, purpose: AuxPanePurpose): string {
-	return purpose === "devServer"
-		? dev3TaskTempPath(taskId, "dev.sh")
-		: `${dev3TaskTempPath(taskId, "git-")}`;
+	return dev3TaskTempPath(taskId, AUX_PANE_PURPOSES[purpose].scriptSuffix);
 }
 
 /** The English label shown for an auxiliary pane in the pager and pane picker. */
 export function auxPaneTitle(purpose: AuxPanePurpose): string {
-	return purpose === "devServer" ? "Dev Server" : "Git";
+	return AUX_PANE_PURPOSES[purpose].title;
 }
 
 /**
@@ -116,9 +137,8 @@ export function auxPaneTitle(purpose: AuxPanePurpose): string {
  */
 export function auxPurposeOfCommand(taskId: string, command: string[]): AuxPanePurpose | null {
 	const joined = command.join(" ");
-	if (joined.includes(auxPaneMarker(taskId, "devServer"))) return "devServer";
-	if (joined.includes(auxPaneMarker(taskId, "gitOp"))) return "gitOp";
-	return null;
+	const purposes = Object.keys(AUX_PANE_PURPOSES) as AuxPanePurpose[];
+	return purposes.find((purpose) => joined.includes(auxPaneMarker(taskId, purpose))) ?? null;
 }
 
 /**
@@ -131,32 +151,82 @@ function orientationFor(placement: AuxPanePlacement): SplitOrientation {
 
 // ── Finding an existing pane ──────────────────────────────────────────────────
 
-async function findTmuxAuxPane(task: Task, purpose: AuxPanePurpose, socket: string): Promise<string | null> {
+/**
+ * `strict` decides what a FAILED lookup means. Best-effort callers read a tmux
+ * error as "no session, so no pane" — a task whose tmux session is gone genuinely
+ * owns nothing. A caller that is about to open a replacement cannot afford that
+ * reading: "I could not look" is not "there is nothing there", and treating it as
+ * such is how a second review agent gets to run beside the first.
+ */
+async function findTmuxAuxPanes(
+	task: Task,
+	purpose: AuxPanePurpose,
+	socket: string,
+	strict = false,
+): Promise<string[]> {
 	const marker = auxPaneMarker(task.id, purpose);
 	try {
 		const rows = await tmux.listPanes(PANE_START_COMMAND_FORMAT, { target: taskSessionName(task.id), socket });
-		return rows.find((row) => row.startCommand.includes(marker))?.paneId ?? null;
+		return rows.filter((row) => row.startCommand.includes(marker)).map((row) => row.paneId);
 	} catch (err) {
-		if (err instanceof TmuxError) return null;
+		if (err instanceof TmuxError && !strict) return [];
 		throw err;
 	}
 }
 
-async function findNativeAuxPane(task: Task, purpose: AuxPanePurpose): Promise<{ paneId: string; shellPid: number; alive: boolean } | null> {
+async function findNativeAuxPanes(
+	task: Task,
+	purpose: AuxPanePurpose,
+	strict = false,
+): Promise<{ paneId: string; shellPid: number; alive: boolean }[]> {
 	const marker = auxPaneMarker(task.id, purpose);
-	const panes = await nativeTaskPaneCommands(task.id);
-	const found = panes.find((pane) => pane.command.join(" ").includes(marker));
-	return found ? { paneId: found.paneId, shellPid: found.shellPid, alive: found.alive } : null;
+	const panes = strict
+		? await readNativePanesStrictly(task)
+		: await nativeTaskPaneCommands(task.id);
+	return panes
+		.filter((pane) => pane.command.join(" ").includes(marker))
+		.map((pane) => ({ paneId: pane.paneId, shellPid: pane.shellPid, alive: pane.alive }));
 }
 
-/** The pane this purpose currently owns, or null. */
-export async function findAuxPane(task: Task, purpose: AuxPanePurpose, socket: string): Promise<AuxPaneHandle | null> {
-	if (backendOf(task) === "native") {
-		const found = await findNativeAuxPane(task, purpose);
-		return found ? { backend: "native", paneId: found.paneId } : null;
+/**
+ * The pane list for a decision that must not guess. The tolerant path collapses
+ * three outcomes into an empty list; here only one of them yields one — a pane set
+ * that is genuinely absent. An unreadable set, or a pane whose own ownership cannot
+ * be established, throws out of the strict read instead.
+ */
+async function readNativePanesStrictly(task: Task): Promise<NativeTaskPaneCommand[]> {
+	const read = await nativeTaskPaneCommandsStrict(task.id);
+	switch (read.kind) {
+		case "absent":
+			return [];
+		case "read":
+			return read.panes;
 	}
-	const paneId = await findTmuxAuxPane(task, purpose, socket);
-	return paneId ? { backend: "tmux", paneId } : null;
+}
+
+/**
+ * EVERY pane this purpose currently owns. Normally one, but a crash, a second app
+ * instance, or a close that quietly failed can leave more, and a caller that only
+ * looked at the first would keep replacing one of them forever.
+ */
+export async function findAuxPanes(
+	task: Task,
+	purpose: AuxPanePurpose,
+	socket: string,
+	/** Fail instead of reporting an empty list when the lookup itself cannot run. */
+	options?: { strict?: boolean },
+): Promise<AuxPaneHandle[]> {
+	if (backendOf(task) === "native") {
+		const found = await findNativeAuxPanes(task, purpose, options?.strict === true);
+		return found.map(({ paneId }) => ({ backend: "native" as const, paneId }));
+	}
+	const paneIds = await findTmuxAuxPanes(task, purpose, socket, options?.strict === true);
+	return paneIds.map((paneId) => ({ backend: "tmux" as const, paneId }));
+}
+
+/** The first pane this purpose owns, or null. */
+export async function findAuxPane(task: Task, purpose: AuxPanePurpose, socket: string): Promise<AuxPaneHandle | null> {
+	return (await findAuxPanes(task, purpose, socket))[0] ?? null;
 }
 
 /**
@@ -166,35 +236,105 @@ export async function findAuxPane(task: Task, purpose: AuxPanePurpose, socket: s
  */
 export async function auxPaneAlive(task: Task, purpose: AuxPanePurpose, socket: string): Promise<boolean> {
 	if (backendOf(task) === "native") {
-		const found = await findNativeAuxPane(task, purpose);
-		return found?.alive === true;
+		return (await findNativeAuxPanes(task, purpose)).some((pane) => pane.alive);
 	}
-	return (await findTmuxAuxPane(task, purpose, socket)) !== null;
+	return (await findTmuxAuxPanes(task, purpose, socket)).length > 0;
 }
 
 /** The pid of the process running in the purpose's native pane, or null. */
 export async function nativeAuxPaneShellPid(task: Task, purpose: AuxPanePurpose): Promise<number | null> {
-	const found = await findNativeAuxPane(task, purpose);
-	return found && found.alive ? found.shellPid : null;
+	const found = await findNativeAuxPanes(task, purpose);
+	return found.find((pane) => pane.alive)?.shellPid ?? null;
 }
 
 // ── Opening and closing ───────────────────────────────────────────────────────
 
 /**
- * Close whatever pane this purpose owns. Idempotent, and best-effort by design:
+ * Close every pane this purpose owns. Idempotent, and best-effort by design:
  * a pane that is already gone is the desired end state, not an error.
  */
 export async function closeAuxPane(task: Task, purpose: AuxPanePurpose, socket: string): Promise<void> {
-	const handle = await findAuxPane(task, purpose, socket);
-	if (!handle) return;
-	if (handle.backend === "native") {
-		await closeNativeTaskPane(task.id, handle.paneId).catch((err) =>
-			log.warn("closeAuxPane: native pane close failed", { taskId: task.id.slice(0, 8), purpose, error: String(err) }),
-		);
-	} else {
-		await tmux.killPane(handle.paneId, { socket, bestEffort: true });
+	for (const handle of await findAuxPanes(task, purpose, socket)) {
+		if (handle.backend === "native") {
+			await closeNativeTaskPane(task.id, handle.paneId).catch((err) =>
+				log.warn("closeAuxPane: native pane close failed", { taskId: task.id.slice(0, 8), purpose, error: String(err) }),
+			);
+		} else {
+			await tmux.killPane(handle.paneId, { socket, bestEffort: true });
+		}
+		log.info("Closed auxiliary pane", { taskId: task.id.slice(0, 8), purpose, backend: handle.backend, paneId: handle.paneId });
 	}
-	log.info("Closed auxiliary pane", { taskId: task.id.slice(0, 8), purpose, backend: handle.backend, paneId: handle.paneId });
+}
+
+/**
+ * The pane set could not be read, so whether this purpose already owns a pane is
+ * unknown. Refusing is the only safe answer: assuming "none" is what lets a second
+ * agent run beside the first.
+ */
+export class AuxPaneUndecidableError extends Error {
+	constructor(readonly purpose: AuxPanePurpose, cause: unknown) {
+		super(
+			`could not check whether this task already has a ${purpose} pane, so the launch was refused: ` +
+				`${cause instanceof Error ? cause.message : String(cause)}`,
+			{ cause },
+		);
+		this.name = "AuxPaneUndecidableError";
+	}
+}
+
+/**
+ * A purpose whose replacement must be proven could not clear the panes it already
+ * owns, so opening another one would leave two of them running. The launch is
+ * refused instead.
+ */
+export class AuxPaneReplaceError extends Error {
+	constructor(readonly purpose: AuxPanePurpose, readonly remaining: string[], cause?: unknown) {
+		super(
+			`could not close the ${purpose} pane${remaining.length === 1 ? "" : "s"} a previous run left behind` +
+				`${remaining.length ? ` (${remaining.join(", ")} still present)` : ""}` +
+				`${cause ? `: ${cause instanceof Error ? cause.message : String(cause)}` : ""}`,
+			// The wrapped failure stays reachable for a log or a bug report.
+			cause === undefined ? undefined : { cause },
+		);
+		this.name = "AuxPaneReplaceError";
+	}
+}
+
+/**
+ * Close every pane the purpose owns and PROVE they are gone. Unlike
+ * {@link closeAuxPane}, nothing here is best-effort — not the close, and not the
+ * LOOKUP: only an observed empty list may let a replacement open, so a lookup
+ * that could not run fails the launch instead of reading as "there was nothing".
+ */
+async function replaceAuxPanes(task: Task, purpose: AuxPanePurpose, socket: string): Promise<void> {
+	const existing = await findOwnedPanesStrictly(task, purpose, socket);
+	for (const handle of existing) {
+		try {
+			await closeTaskPane(task, handle, socket);
+		} catch (err) {
+			throw new AuxPaneReplaceError(purpose, [handle.paneId], err);
+		}
+		log.info("Closed auxiliary pane", { taskId: task.id.slice(0, 8), purpose, backend: handle.backend, paneId: handle.paneId });
+	}
+	// Re-read rather than trusting the closes: the pane set is the authority, and
+	// a pane that reappears (or was never listed) must still block the launch.
+	const remaining = await findOwnedPanesStrictly(task, purpose, socket);
+	if (remaining.length > 0) {
+		throw new AuxPaneReplaceError(purpose, remaining.map((handle) => handle.paneId));
+	}
+}
+
+/** The purpose's panes, where a failed lookup is a failure and not an empty set. */
+async function findOwnedPanesStrictly(
+	task: Task,
+	purpose: AuxPanePurpose,
+	socket: string,
+): Promise<AuxPaneHandle[]> {
+	try {
+		return await findAuxPanes(task, purpose, socket, { strict: true });
+	} catch (err) {
+		throw new AuxPaneUndecidableError(purpose, err);
+	}
 }
 
 /**
@@ -208,7 +348,11 @@ export async function closeAuxPane(task: Task, purpose: AuxPanePurpose, socket: 
  */
 export async function openAuxPane(spec: OpenAuxPaneSpec): Promise<AuxPaneHandle> {
 	const { task, purpose, socket } = spec;
-	await closeAuxPane(task, purpose, socket);
+	if (AUX_PANE_PURPOSES[purpose].provenReplace) {
+		await replaceAuxPanes(task, purpose, socket);
+	} else {
+		await closeAuxPane(task, purpose, socket);
+	}
 	const handle = await splitTaskPane({ ...spec, restoreFocus: true });
 	log.info("Opened auxiliary pane", {
 		taskId: task.id.slice(0, 8),
@@ -282,8 +426,11 @@ export async function splitTaskPane(spec: SplitTaskPaneSpec): Promise<AuxPaneHan
 			socket,
 		});
 		if (stderr.trim()) log.warn("splitTaskPane tmux stderr", { stderr: stderr.trim() });
+		// AWAITED on purpose. `select-pane -t` sets the title AND makes that pane
+		// active, so a fire-and-forget call can land after the caller has already
+		// focused the pane it wants and silently steal focus back.
 		if (paneId && title) {
-			tmux.selectPane(paneId, { socket, title }).catch(() => {});
+			await tmux.selectPane(paneId, { socket, title }).catch(() => {});
 		}
 		log.info("Split a tmux task pane", { taskId: task.id.slice(0, 8), paneId });
 		return { backend: "tmux", paneId: paneId ?? "" };

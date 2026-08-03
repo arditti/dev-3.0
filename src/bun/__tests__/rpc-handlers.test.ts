@@ -159,6 +159,10 @@ const mockNativePanes = {
 	nativeTaskPaneLayout: vi.fn(async (..._args: any[]) => null as any),
 	nativeTaskPanesAlive: vi.fn(async () => false),
 	nativeTaskPaneCommands: vi.fn(async () => [] as any[]),
+	// Serves the same fake pane list as the tolerant read; the undecidable and
+	// unreadable-record cases run against the real discovery path in
+	// column-agent-strict-discovery.test.ts.
+	nativeTaskPaneCommandsStrict: vi.fn(async () => ({ kind: "read", panes: await mockNativePanes.nativeTaskPaneCommands(), unreadable: [] as string[] })),
 	nativeTaskPaneCommandsOf: vi.fn(() => [] as any[]),
 	splitNativeTaskPane: vi.fn(async (..._args: any[]) => null as any),
 	closeNativeTaskPane: vi.fn(async (..._args: any[]) => ({ sessionTornDown: false, state: null }) as any),
@@ -387,6 +391,8 @@ const {
 	tmuxPaneCount,
 	tmuxPaneNavigate,
 } = await import("../rpc-handlers/tmux-pty");
+const { AuxPaneUnavailableError } = await import("../task-aux-panes");
+const { dev3TaskTempPath } = await import("../temp-paths");
 const { _resetLifecycleActorsForTest } = await import("../lifecycle/service");
 
 beforeEach(async () => {
@@ -2138,6 +2144,14 @@ describe("handlers.pullProjectMain", () => {
 // ================================================================
 // handlers.moveTask
 // ================================================================
+
+/** Every tmux invocation the code made after `from`, as flat argv strings. */
+function tmuxArgvSince(from: number): string[] {
+	return mockSpawn.mock.calls
+		.slice(from)
+		.map((call) => (Array.isArray(call[0]) ? call[0].join(" ") : String(call[0])))
+		.filter((argv) => /tmux/.test(argv));
+}
 
 describe("handlers.moveTask", () => {
 	beforeEach(() => {
@@ -11449,6 +11463,162 @@ describe("triggerColumnAgentIfNeeded", () => {
 		expect(agents.resolveCommandForAgent).not.toHaveBeenCalled();
 	});
 
+	// A native task has no tmux session, so the review agent must reach a real pane
+	// of the task's own terminal and nothing else.
+	describe("on a native task", () => {
+		const nativeTask = () => makeTask({
+			status: "review-by-ai",
+			worktreePath: "/tmp/wt",
+			terminalBackend: "native",
+		} as any);
+
+		beforeEach(() => {
+			mockNativePanes.nativeTaskPanesState.mockResolvedValue({
+				taskId: "task-1",
+				panes: [{ paneId: "pane-1", sessionId: "s1", hostPid: 1, shellPid: 2, cols: 80, rows: 24, alive: true }],
+				layout: null,
+				activePaneId: "pane-1",
+			} as any);
+			mockNativePanes.nativeTaskPaneCommands.mockResolvedValue([]);
+			mockNativePanes.splitNativeTaskPane.mockResolvedValue({ paneId: "pane-2", state: null } as any);
+		});
+
+		// clearAllMocks only clears calls; these doubles are shared with every other
+		// suite in this file, so their implementations must be handed back.
+		afterEach(() => {
+			mockNativePanes.nativeTaskPanesState.mockReset();
+			mockNativePanes.nativeTaskPaneCommands.mockReset();
+			mockNativePanes.splitNativeTaskPane.mockReset();
+			mockNativePanes.closeNativeTaskPane.mockReset();
+		});
+
+		it("opens a real native pane and touches no tmux at all", async () => {
+			const before = mockSpawn.mock.calls.length;
+			const project = makeProject();
+			vi.mocked(repoConfig.resolveProjectConfig).mockResolvedValue(project);
+
+			await triggerColumnAgentIfNeeded("review-by-ai", project, nativeTask());
+
+			const [, anchor, orientation, viewSpec] = mockNativePanes.splitNativeTaskPane.mock.calls[0] as any[];
+			expect(anchor).toBe("pane-1");
+			expect(orientation).toBe("horizontal");
+			expect(viewSpec.launch.argv[0]).toContain("col-agent.sh");
+			// The tmux client is real over the shared spawn mock, so "no tmux" is
+			// provable at the process level: no tmux argv at all, hence no socket.
+			expect(tmuxArgvSince(before)).toEqual([]);
+		});
+
+		it("replaces the pane a previous activation owns, so two clicks cannot yield two agents", async () => {
+			const project = makeProject();
+			vi.mocked(repoConfig.resolveProjectConfig).mockResolvedValue(project);
+			const task = nativeTask();
+			// The pane set answers honestly: the pane is there until it is closed, and
+			// gone afterwards. A static list would let a launch pass without the close
+			// ever having worked.
+			const owned = new Set(["pane-9"]);
+			mockNativePanes.nativeTaskPaneCommands.mockImplementation(async () =>
+				[...owned].map((paneId) => ({
+					paneId,
+					sessionId: `s-${paneId}`,
+					command: ["/bin/bash", dev3TaskTempPath(task.id, "col-agent.sh")],
+					shellPid: 3,
+					alive: true,
+				})) as any,
+			);
+			mockNativePanes.closeNativeTaskPane.mockImplementation(async (_taskId: any, paneId: any) => {
+				owned.delete(paneId);
+				return { sessionTornDown: false, state: { taskId: task.id, panes: [], layout: null, activePaneId: "pane-1" } } as any;
+			});
+
+			await triggerColumnAgentIfNeeded("review-by-ai", project, task);
+
+			expect(mockNativePanes.closeNativeTaskPane).toHaveBeenCalledWith(task.id, "pane-9");
+			expect(mockNativePanes.splitNativeTaskPane).toHaveBeenCalledTimes(1);
+		});
+
+		it("refuses to launch when a pane it must replace cannot be closed", async () => {
+			const project = makeProject();
+			vi.mocked(repoConfig.resolveProjectConfig).mockResolvedValue(project);
+			const task = nativeTask();
+			mockNativePanes.nativeTaskPaneCommands.mockResolvedValue([
+				{ paneId: "pane-9", sessionId: "s9", command: ["/bin/bash", dev3TaskTempPath(task.id, "col-agent.sh")], shellPid: 3, alive: true },
+			] as any);
+			mockNativePanes.closeNativeTaskPane.mockRejectedValue(new Error("host refused to close the pane"));
+			mockTaskWrites(task);
+			const push = vi.fn();
+			setPushMessage(push);
+
+			await triggerColumnAgentIfNeeded("review-by-ai", project, task);
+
+			// No second agent, and the user is told rather than left with one stale pane.
+			expect(mockNativePanes.splitNativeTaskPane).not.toHaveBeenCalled();
+			const payload = push.mock.calls.find((call) => call[0] === "columnAgentFailed")?.[1];
+			expect(String(payload.error)).toContain("could not close the columnAgent pane");
+		});
+
+		it("refuses to launch when the pane it closed is still present afterwards", async () => {
+			const project = makeProject();
+			vi.mocked(repoConfig.resolveProjectConfig).mockResolvedValue(project);
+			const task = nativeTask();
+			// Close resolves, but the pane set still lists it — a silent survivor.
+			mockNativePanes.nativeTaskPaneCommands.mockResolvedValue([
+				{ paneId: "pane-9", sessionId: "s9", command: ["/bin/bash", dev3TaskTempPath(task.id, "col-agent.sh")], shellPid: 3, alive: true },
+			] as any);
+			mockNativePanes.closeNativeTaskPane.mockResolvedValue({ sessionTornDown: false, state: null } as any);
+			mockTaskWrites(task);
+			const push = vi.fn();
+			setPushMessage(push);
+
+			await triggerColumnAgentIfNeeded("review-by-ai", project, task);
+
+			expect(mockNativePanes.splitNativeTaskPane).not.toHaveBeenCalled();
+			const payload = push.mock.calls.find((call) => call[0] === "columnAgentFailed")?.[1];
+			expect(String(payload.error)).toContain("still present");
+		});
+
+		it("clears every duplicate pane a previous run left behind, not just the first", async () => {
+			const project = makeProject();
+			vi.mocked(repoConfig.resolveProjectConfig).mockResolvedValue(project);
+			const task = nativeTask();
+			const owned = new Set(["pane-8", "pane-9"]);
+			mockNativePanes.nativeTaskPaneCommands.mockImplementation(async () =>
+				[...owned].map((paneId) => ({
+					paneId,
+					sessionId: `s-${paneId}`,
+					command: ["/bin/bash", dev3TaskTempPath(task.id, "col-agent.sh")],
+					shellPid: 3,
+					alive: true,
+				})) as any,
+			);
+			mockNativePanes.closeNativeTaskPane.mockImplementation(async (_taskId: any, paneId: any) => {
+				owned.delete(paneId);
+				return { sessionTornDown: false, state: { taskId: task.id, panes: [], layout: null, activePaneId: "pane-1" } } as any;
+			});
+
+			await triggerColumnAgentIfNeeded("review-by-ai", project, task);
+
+			expect(mockNativePanes.closeNativeTaskPane).toHaveBeenCalledWith(task.id, "pane-8");
+			expect(mockNativePanes.closeNativeTaskPane).toHaveBeenCalledWith(task.id, "pane-9");
+			expect(mockNativePanes.splitNativeTaskPane).toHaveBeenCalledTimes(1);
+		});
+
+		it("reports terminal-not-running instead of silently doing nothing when the terminal is down", async () => {
+			const before = mockSpawn.mock.calls.length;
+			const project = makeProject();
+			vi.mocked(repoConfig.resolveProjectConfig).mockResolvedValue(project);
+			mockNativePanes.nativeTaskPanesState.mockResolvedValue(null as any);
+			mockTaskWrites(nativeTask());
+			const push = vi.fn();
+			setPushMessage(push);
+
+			await triggerColumnAgentIfNeeded("review-by-ai", project, nativeTask());
+
+			const payload = push.mock.calls.find((call) => call[0] === "columnAgentFailed")?.[1];
+			expect(payload).toMatchObject({ reason: "terminal-not-running", movedTo: "review-by-user" });
+			expect(tmuxArgvSince(before)).toEqual([]);
+		});
+	});
+
 	it("keeps review-agent launch failure best-effort when its fallback move cannot persist", async () => {
 		const project = makeProject();
 		const task = makeTask({ status: "review-by-ai", worktreePath: "/tmp/wt" });
@@ -11467,6 +11637,55 @@ describe("triggerColumnAgentIfNeeded", () => {
 			}),
 			{ dropPosition: "top", ifStatus: "review-by-ai" },
 		);
+	});
+
+	it("tells the user when the AI Review agent cannot launch, alongside the fallback move", async () => {
+		const project = makeProject();
+		const task = makeTask({ status: "review-by-ai", worktreePath: "/tmp/wt" });
+		vi.mocked(agents.resolveCommandForAgent).mockRejectedValueOnce(new Error("boom: review agent missing"));
+		mockTaskWrites(task);
+		const push = vi.fn();
+		setPushMessage(push);
+
+		await triggerColumnAgentIfNeeded("review-by-ai", project, task);
+
+		const payload = push.mock.calls.find((call) => call[0] === "columnAgentFailed")?.[1];
+		expect(payload).toMatchObject({
+			taskId: task.id,
+			projectId: project.id,
+			column: { kind: "builtin", status: "review-by-ai" },
+			movedTo: "review-by-user",
+		});
+		expect(String(payload.error)).toContain("boom");
+		// An unrecognised failure carries no reason code — the renderer then shows the
+		// error string as diagnostics instead of claiming to know what happened.
+		expect(payload.reason).toBeUndefined();
+		expect(data.updateTask).toHaveBeenCalledWith(
+			project,
+			task.id,
+			expect.objectContaining({ status: "review-by-user", customColumnId: null }),
+			{ dropPosition: "top", ifStatus: "review-by-ai" },
+		);
+	});
+
+	it("carries terminal-not-running as a structured reason so the toast can be localized", async () => {
+		const project = makeProject();
+		const task = makeTask({ status: "review-by-ai", worktreePath: "/tmp/wt" });
+		vi.mocked(agents.resolveCommandForAgent).mockRejectedValueOnce(
+			new AuxPaneUnavailableError("terminal-not-running"),
+		);
+		mockTaskWrites(task);
+		const push = vi.fn();
+		setPushMessage(push);
+
+		await triggerColumnAgentIfNeeded("review-by-ai", project, task);
+
+		const payload = push.mock.calls.find((call) => call[0] === "columnAgentFailed")?.[1];
+		expect(payload).toMatchObject({
+			column: { kind: "builtin", status: "review-by-ai" },
+			reason: "terminal-not-running",
+			movedTo: "review-by-user",
+		});
 	});
 
 	it("falls back to review-by-user when review-agent configuration cannot resolve", async () => {
@@ -11513,7 +11732,7 @@ describe("triggerColumnAgentIfNeeded", () => {
 		expect(payload).toMatchObject({
 			taskId: task.id,
 			projectId: project.id,
-			columnName: "Security Review",
+			column: { kind: "custom", name: "Security Review" },
 		});
 		expect(String(payload.error)).toContain("boom");
 	});

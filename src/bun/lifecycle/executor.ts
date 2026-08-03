@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import type {
 	ColumnAgentConfig,
+	ColumnAgentFailureReason,
+	ColumnAgentIdentity,
 	CompletedDiffStats,
 	CustomColumn,
 	AppRPCSchema,
@@ -30,6 +32,7 @@ import {
 } from "../preparation-runtime";
 import * as pty from "../pty-server";
 import { taskTerminalBackendIdentity } from "../task-terminal-backend";
+import { AuxPaneUnavailableError } from "../task-aux-panes";
 import * as repoConfig from "../repo-config";
 import { loadSettings, loadSettingsSync } from "../settings";
 import { getUserShell } from "../shell-env";
@@ -431,15 +434,10 @@ export async function launchLifecycleColumnAgent(
 	column: LifecycleColumn,
 	customColumn?: CustomColumn,
 ): Promise<Extract<LifecycleEvent, { type: "columnAgentFailed" }> | null> {
-	let columnName = column.status === "review-by-ai" && column.customColumnId === null
-		? "AI Review"
-		: customColumn?.name
-			?? project.customColumns?.find((candidate) => candidate.id === column.customColumnId)?.name
-			?? column.status;
+	const identity = columnAgentIdentity(project, column, customColumn);
 	try {
 		const configured = await columnAgentConfig(project, task, column, customColumn);
 		if (!configured) return null;
-		columnName = configured.paneTitle;
 		await launchColumnAgent(project, task, configured.config, {
 			paneTitle: configured.paneTitle,
 			onExitCommand: configured.onExitCommand,
@@ -448,10 +446,42 @@ export async function launchLifecycleColumnAgent(
 	} catch (error) {
 		return {
 			type: "columnAgentFailed",
-			columnName,
-			error: String(error),
+			column: identity,
+			// The diagnostic half: whatever the thrower wrote, minus the "Error: " that
+			// String() would prepend. Never parsed — only ever shown.
+			error: error instanceof Error ? error.message : String(error),
+			// The explainable half. A recognised failure travels as a code so the UI can
+			// say it in the user's language instead of matching on English.
+			reason: columnAgentFailureReason(error),
 		};
 	}
+}
+
+/**
+ * Which column the agent belonged to, in a shape the UI can name in the user's
+ * language: a built-in column as its status, a custom one as the name the user
+ * typed for it.
+ */
+function columnAgentIdentity(
+	project: Project,
+	column: LifecycleColumn,
+	customColumn?: CustomColumn,
+): ColumnAgentIdentity {
+	if (column.customColumnId === null) return { kind: "builtin", status: column.status };
+	const name = customColumn?.name
+		?? project.customColumns?.find((candidate) => candidate.id === column.customColumnId)?.name;
+	return name ? { kind: "custom", name } : { kind: "builtin", status: column.status };
+}
+
+/**
+ * The stable code for a failure the app knows how to explain, or `undefined` for
+ * anything it can only report verbatim.
+ */
+function columnAgentFailureReason(error: unknown): ColumnAgentFailureReason | undefined {
+	if (error instanceof AuxPaneUnavailableError && error.reason === "terminal-not-running") {
+		return "terminal-not-running";
+	}
+	return undefined;
 }
 
 async function launchColumnAgentEffect(
@@ -568,8 +598,10 @@ function pushEffect(effect: Extract<LifecycleEffect, { type: "push" }>, ctx: Lif
 			const payload: BunMessagePayload<"columnAgentFailed"> = {
 				taskId: ctx.task.id,
 				projectId: ctx.project.id,
-				columnName: failure.columnName,
+				column: failure.column,
 				error: failure.error,
+				movedTo: failure.movedTo,
+				reason: failure.reason,
 			};
 			push("columnAgentFailed", payload);
 			return;
