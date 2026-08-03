@@ -1,19 +1,36 @@
 import type { TranslationKey } from "./i18n";
-import { isMac } from "./utils/platform";
+import type { ShortcutSlot } from "../shared/types";
+import {
+	bindingsEqual,
+	formatBindings,
+	matchesBinding,
+	type Binding,
+	type MatchContext,
+} from "./keymap-bindings";
+import { isKeymapCapturing, resolvedSlot } from "./keymap-store";
+import { isMac, isRemote } from "./utils/platform";
+import { isTypingContext } from "./utils/typing-context";
 
 /**
  * Single source of truth for every APP-LEVEL keyboard shortcut.
  *
- * This registry DOCUMENTS the keymap — it does not dispatch it. The actual
- * handlers live in `App.tsx` (the `useGlobalShortcut` chain) and
- * `hooks/useTaskSwitcher.ts`; the native-menu accelerators live in
- * `src/bun/application-menu.ts`. This array is what the KeyboardShortcutsModal,
- * the README table, and the website render from, so any newly added app-level
- * shortcut MUST get an entry here (a test guards basic validity; staying in
- * lockstep with the handlers is a maintenance discipline — see AGENTS.md).
+ * This registry both DOCUMENTS and DRIVES the keymap: handlers ask
+ * `matchesShortcut(e, id)` (see `keymap-store.ts`) instead of hand-writing
+ * modifier conditions, so a user rebind in Settings → Keyboard takes effect
+ * everywhere at once. Display strings are DERIVED from the bindings — never
+ * author a combo twice.
  *
- * Terminal/tmux prefix bindings (⌃B …) are NOT here — they are owned by tmux
- * (`src/bun/tmux/config.ts`) and shown on the modal's Terminal tab.
+ * The registry also feeds the KeyboardShortcutsModal, the README table and the
+ * website, so any newly added app-level shortcut MUST get an entry here.
+ *
+ * Every shortcut has two independent slots: a `primary` combo and an optional
+ * `alias`. The user sets each on its own, so "the second way to press it" is a
+ * first-class thing rather than an extra element in a list.
+ *
+ * Terminal/tmux PREFIX bindings (⌃B …, and the prefix-free ⌥+arrows) are NOT here
+ * — tmux owns them (`src/bun/tmux/config.ts`) and the modal's Terminal tab shows
+ * them. The ⌘-key pane shortcuts below ARE here: the renderer dispatches those,
+ * so they are ours to rebind.
  */
 
 export type ShortcutCategory = "navigation" | "create" | "view" | "terminal" | "app";
@@ -28,23 +45,52 @@ export type ShortcutCategory = "navigation" | "create" | "view" | "terminal" | "
  */
 export type ShortcutScope = "both" | "desktop" | "remote";
 
+/**
+ * Which keys a shortcut competes for. Two shortcuts in different groups may share
+ * a combo because only one of them can be focused at a time — ⌘F is the terminal
+ * search inside a terminal and the artifact search inside an artifact.
+ */
+export type ShortcutConflictGroup = "app" | "terminal" | "artifact";
+
 export interface ShortcutSpec {
-	/** Stable, unique id. */
+	/** Stable, unique id. Also the persistence key for a user override. */
 	id: string;
-	/** Rendered key combo per platform (macOS uses ⌘/⌥, Linux uses Ctrl/Alt). */
-	keys: { mac: string; other: string };
+	/**
+	 * The main way to press this shortcut. More than one entry ONLY for
+	 * mutually-exclusive platform variants (⌘- on macOS vs Ctrl+Alt+- elsewhere).
+	 * Empty only for `remappable: false` shortcuts whose combo is structural (a
+	 * chord sequence, a digit family, a hold-modifier cycle) and therefore lives
+	 * in `display` instead.
+	 */
+	primary: Binding[];
+	/**
+	 * An optional second way to press the same thing — usually absent. Kept a
+	 * separate slot rather than a longer list so the editor can show "main combo"
+	 * and "alternative" as two things the user sets independently.
+	 */
+	alias?: Binding[];
 	/** i18n key for the human description. */
 	descKey: TranslationKey;
 	category: ShortcutCategory;
 	/** Transport scope. Defaults to `both` when omitted. */
 	scope?: ShortcutScope;
+	/** Key-competition group. Defaults to `app` when omitted. */
+	conflictGroup?: ShortcutConflictGroup;
 	/**
-	 * Browser-safe combo shown (and relied on) in remote mode when the desktop
-	 * combo is reserved by the browser. e.g. ⌘1–9 (browser tab switch) → the
-	 * `G then 1–9` go-to chord. When omitted, `keys` is used in both modes.
+	 * False when the combo cannot be rebound. Such a row still renders — greyed,
+	 * with `fixedReasonKey` explaining why — because an editor that silently omits
+	 * a third of the keymap reads as broken.
 	 */
-	remoteKeys?: { mac: string; other: string };
+	remappable?: boolean;
+	/** Why this shortcut is fixed. Required whenever `remappable` is false. */
+	fixedReasonKey?: TranslationKey;
+	/** Literal combo text for fixed shortcuts that no `Binding` can express. */
+	display?: { mac: string; other: string };
+	/** Literal combo text shown in remote mode when the desktop one is unusable. */
+	remoteDisplay?: { mac: string; other: string };
 }
+
+export const SHORTCUT_SLOTS: ShortcutSlot[] = ["primary", "alias"];
 
 /** Display order of categories in the App tab. */
 export const SHORTCUT_CATEGORY_ORDER: ShortcutCategory[] = [
@@ -63,63 +109,142 @@ export const SHORTCUT_CATEGORY_KEY: Record<ShortcutCategory, TranslationKey> = {
 	app: "keymap.category.app",
 };
 
+/** Shorthand for the common `Mod`-prefixed binding. */
+const mod = (code: string, ...extra: Binding["mods"]): Binding => ({ code, mods: ["Mod", ...extra] });
+
 export const APP_SHORTCUTS: ShortcutSpec[] = [
 	// ── Navigation ──
-	{ id: "go-to-project", keys: { mac: "⌘K", other: "Ctrl+K" }, descKey: "keymap.shortcut.goToProject", category: "navigation" },
-	{ id: "command-palette", keys: { mac: "⇧⌘P", other: "Ctrl+Shift+P" }, descKey: "keymap.shortcut.commandPalette", category: "navigation" },
-	{ id: "back", keys: { mac: "⌘[ / Ctrl+-", other: "Ctrl+[ / Ctrl+-" }, descKey: "keymap.shortcut.back", category: "navigation" },
-	{ id: "forward", keys: { mac: "⌘] / Ctrl+Shift+-", other: "Ctrl+] / Ctrl+Shift+-" }, descKey: "keymap.shortcut.forward", category: "navigation" },
-	{ id: "previous-variant", keys: { mac: "⇧⌘[", other: "Ctrl+Shift+[" }, descKey: "keymap.shortcut.previousVariant", category: "navigation" },
-	{ id: "next-variant", keys: { mac: "⇧⌘]", other: "Ctrl+Shift+]" }, descKey: "keymap.shortcut.nextVariant", category: "navigation" },
-	{ id: "switch-project", keys: { mac: "⌘1–9", other: "Ctrl+1–9" }, remoteKeys: { mac: "G then 1–9", other: "G then 1–9" }, descKey: "keymap.shortcut.switchProject", category: "navigation" },
-	{ id: "switch-project-flip", keys: { mac: "⇧⌘1–9", other: "Ctrl+Shift+1–9" }, descKey: "keymap.shortcut.switchProjectFlip", category: "navigation" },
-	{ id: "jump-operations", keys: { mac: "⌘0", other: "Ctrl+0" }, descKey: "keymap.shortcut.jumpOperations", category: "navigation" },
-	{ id: "task-switcher", keys: { mac: "⌥Tab", other: "Ctrl+Tab" }, descKey: "keymap.shortcut.taskSwitcher", category: "navigation" },
-	{ id: "task-switcher-global", keys: { mac: "⌥⇧Tab", other: "Ctrl+Shift+Tab" }, descKey: "keymap.shortcut.taskSwitcherGlobal", category: "navigation" },
-	{ id: "task-hints", keys: { mac: "F / ⌘G", other: "F / Ctrl+G" }, descKey: "keymap.shortcut.taskHints", category: "navigation" },
-	{ id: "go-to", keys: { mac: "G then D/P/T/S/1–9", other: "G then D/P/T/S/1–9" }, descKey: "keymap.shortcut.goTo", category: "navigation" },
-	{ id: "focus-search", keys: { mac: "/", other: "/" }, descKey: "keymap.shortcut.focusSearch", category: "navigation" },
-	{ id: "escape", keys: { mac: "Esc", other: "Esc" }, descKey: "keymap.shortcut.escape", category: "navigation" },
+	{ id: "go-to-project", primary: [mod("KeyK")], descKey: "keymap.shortcut.goToProject", category: "navigation" },
+	{ id: "command-palette", primary: [mod("KeyP", "Shift")], descKey: "keymap.shortcut.commandPalette", category: "navigation" },
+	{ id: "back", primary: [mod("BracketLeft")], alias: [{ code: "Minus", mods: ["Ctrl"] }], descKey: "keymap.shortcut.back", category: "navigation" },
+	{ id: "forward", primary: [mod("BracketRight")], alias: [{ code: "Minus", mods: ["Ctrl", "Shift"] }], descKey: "keymap.shortcut.forward", category: "navigation" },
+	{ id: "previous-variant", primary: [mod("BracketLeft", "Shift")], descKey: "keymap.shortcut.previousVariant", category: "navigation" },
+	{ id: "next-variant", primary: [mod("BracketRight", "Shift")], descKey: "keymap.shortcut.nextVariant", category: "navigation" },
+	{
+		id: "switch-project", primary: [], descKey: "keymap.shortcut.switchProject", category: "navigation",
+		remappable: false, fixedReasonKey: "keymap.fixed.digitFamily",
+		display: { mac: "⌘1–9", other: "Ctrl+1–9" }, remoteDisplay: { mac: "G then 1–9", other: "G then 1–9" },
+	},
+	{
+		id: "switch-project-flip", primary: [], descKey: "keymap.shortcut.switchProjectFlip", category: "navigation",
+		remappable: false, fixedReasonKey: "keymap.fixed.digitFamily",
+		display: { mac: "⇧⌘1–9", other: "Ctrl+Shift+1–9" },
+	},
+	{ id: "jump-operations", primary: [mod("Digit0")], descKey: "keymap.shortcut.jumpOperations", category: "navigation" },
+	{
+		id: "task-switcher", primary: [], descKey: "keymap.shortcut.taskSwitcher", category: "navigation",
+		remappable: false, fixedReasonKey: "keymap.fixed.holdModifier",
+		display: { mac: "⌥Tab", other: "Ctrl+Tab" },
+	},
+	{
+		id: "task-switcher-global", primary: [], descKey: "keymap.shortcut.taskSwitcherGlobal", category: "navigation",
+		remappable: false, fixedReasonKey: "keymap.fixed.holdModifier",
+		display: { mac: "⌥⇧Tab", other: "Ctrl+Shift+Tab" },
+	},
+	{ id: "task-hints", primary: [{ code: "KeyF", mods: [] }], alias: [mod("KeyG")], descKey: "keymap.shortcut.taskHints", category: "navigation" },
+	{
+		id: "go-to", primary: [], descKey: "keymap.shortcut.goTo", category: "navigation",
+		remappable: false, fixedReasonKey: "keymap.fixed.chordSequence",
+		display: { mac: "G then D/P/T/S/1–9", other: "G then D/P/T/S/1–9" },
+	},
+	{ id: "focus-search", primary: [{ code: "Slash", mods: [] }], descKey: "keymap.shortcut.focusSearch", category: "navigation" },
+	{
+		id: "escape", primary: [], descKey: "keymap.shortcut.escape", category: "navigation",
+		remappable: false, fixedReasonKey: "keymap.fixed.reserved",
+		display: { mac: "Esc", other: "Esc" },
+	},
 
 	// ── Create ──
-	{ id: "new-task", keys: { mac: "⌘N / C", other: "Ctrl+N / C" }, remoteKeys: { mac: "C", other: "C" }, descKey: "keymap.shortcut.newTask", category: "create" },
-	{ id: "add-project", keys: { mac: "⌘P", other: "Ctrl+P" }, descKey: "keymap.shortcut.addProject", category: "create" },
-	{ id: "new-window", keys: { mac: "⇧⌘N", other: "Ctrl+Shift+N" }, descKey: "keymap.shortcut.newWindow", category: "create", scope: "desktop" },
+	{ id: "new-task", primary: [{ ...mod("KeyN"), desktopOnly: true }], alias: [{ code: "KeyC", mods: [] }], descKey: "keymap.shortcut.newTask", category: "create" },
+	{ id: "add-project", primary: [mod("KeyP")], descKey: "keymap.shortcut.addProject", category: "create" },
+	{ id: "new-window", primary: [mod("KeyN", "Shift")], descKey: "keymap.shortcut.newWindow", category: "create", scope: "desktop" },
 
 	// ── View & Zoom ──
-	{ id: "settings", keys: { mac: "⌘,", other: "Ctrl+," }, descKey: "keymap.shortcut.settings", category: "view" },
-	{ id: "zoom-in", keys: { mac: "⌘=", other: "Ctrl+=" }, descKey: "keymap.shortcut.zoomIn", category: "view", scope: "desktop" },
-	{ id: "zoom-out", keys: { mac: "⌘-", other: "Ctrl+Alt+-" }, descKey: "keymap.shortcut.zoomOut", category: "view", scope: "desktop" },
-	{ id: "zoom-reset", keys: { mac: "⇧⌘0", other: "Ctrl+Shift+0" }, descKey: "keymap.shortcut.zoomReset", category: "view", scope: "desktop" },
-	{ id: "hard-refresh", keys: { mac: "⌘R", other: "Ctrl+R" }, descKey: "keymap.shortcut.hardRefresh", category: "view", scope: "desktop" },
-	{ id: "open-in", keys: { mac: "⌘O", other: "Ctrl+O" }, descKey: "keymap.shortcut.openIn", category: "view", scope: "desktop" },
-	{ id: "keyboard-shortcuts", keys: { mac: "⌘/", other: "Ctrl+/" }, descKey: "keymap.shortcut.keyboardShortcuts", category: "view" },
-	{ id: "help-mode", keys: { mac: "⇧⌘/", other: "Ctrl+Shift+/" }, descKey: "keymap.shortcut.helpMode", category: "view" },
-	{ id: "terminal-fullscreen", keys: { mac: "F11 / ⇧⌘F", other: "F11 / Ctrl+Shift+F" }, descKey: "keymap.shortcut.terminalFullscreen", category: "view" },
-	{ id: "artifact-search", keys: { mac: "⌘F", other: "Ctrl+F" }, descKey: "keymap.shortcut.artifactSearch", category: "view" },
+	{ id: "settings", primary: [mod("Comma")], descKey: "keymap.shortcut.settings", category: "view" },
+	{ id: "zoom-in", primary: [mod("Equal")], descKey: "keymap.shortcut.zoomIn", category: "view", scope: "desktop" },
+	{
+		id: "zoom-out",
+		primary: [{ code: "Minus", mods: ["Mod"], platform: "mac" }, { code: "Minus", mods: ["Ctrl", "Alt"], platform: "other" }],
+		descKey: "keymap.shortcut.zoomOut", category: "view", scope: "desktop",
+	},
+	{ id: "zoom-reset", primary: [mod("Digit0", "Shift")], descKey: "keymap.shortcut.zoomReset", category: "view", scope: "desktop" },
+	{
+		id: "hard-refresh", primary: [], descKey: "keymap.shortcut.hardRefresh", category: "view", scope: "desktop",
+		remappable: false, fixedReasonKey: "keymap.fixed.shellOwned",
+		display: { mac: "⌘R", other: "Ctrl+R" },
+	},
+	{ id: "open-in", primary: [mod("KeyO")], descKey: "keymap.shortcut.openIn", category: "view", scope: "desktop" },
+	{ id: "keyboard-shortcuts", primary: [mod("Slash")], descKey: "keymap.shortcut.keyboardShortcuts", category: "view" },
+	{ id: "help-mode", primary: [mod("Slash", "Shift")], descKey: "keymap.shortcut.helpMode", category: "view" },
+	{ id: "terminal-fullscreen", primary: [{ code: "F11", mods: [] }], alias: [mod("KeyF", "Shift")], descKey: "keymap.shortcut.terminalFullscreen", category: "view" },
+	{ id: "artifact-search", primary: [mod("KeyF")], descKey: "keymap.shortcut.artifactSearch", category: "view", conflictGroup: "artifact" },
 
 	// ── Terminal ──
-	{ id: "toggle-project-terminal", keys: { mac: "⌘`", other: "Ctrl+`" }, descKey: "keymap.shortcut.toggleProjectTerminal", category: "terminal" },
-	{ id: "open-quick-shell", keys: { mac: "⇧⌘`", other: "Ctrl+Shift+`" }, descKey: "keymap.shortcut.openQuickShell", category: "terminal" },
-	{ id: "terminal-search", keys: { mac: "⌘F", other: "Ctrl+F" }, descKey: "keymap.shortcut.terminalSearch", category: "terminal" },
+	{ id: "toggle-project-terminal", primary: [mod("Backquote")], descKey: "keymap.shortcut.toggleProjectTerminal", category: "terminal" },
+	{ id: "open-quick-shell", primary: [mod("Backquote", "Shift")], descKey: "keymap.shortcut.openQuickShell", category: "terminal" },
+	{ id: "terminal-search", primary: [mod("KeyF")], descKey: "keymap.shortcut.terminalSearch", category: "terminal", conflictGroup: "terminal" },
+	// Pane control, formerly the opt-in "iTerm2 compatibility" preset and now just
+	// how dev3 works. `terminal` group: they only fire while a terminal has focus,
+	// so they may share a combo with an app-level shortcut. Pane *navigation* is
+	// deliberately absent — tmux already binds ⌥+arrows prefix-free (tmux/config.ts).
+	{ id: "pane-split-vertical", primary: [mod("KeyD")], descKey: "tmux.splitVDesc", category: "terminal", conflictGroup: "terminal" },
+	{ id: "pane-split-horizontal", primary: [mod("KeyD", "Shift")], descKey: "tmux.splitHDesc", category: "terminal", conflictGroup: "terminal" },
+	{ id: "pane-close", primary: [mod("KeyW")], descKey: "tmux.closePaneDesc", category: "terminal", conflictGroup: "terminal" },
+	{ id: "tmux-new-window", primary: [mod("KeyT")], descKey: "cheatSheet.newWindow", category: "terminal", conflictGroup: "terminal" },
 
 	// ── Application ──
-	{ id: "quit", keys: { mac: "⌘Q", other: "Ctrl+Q" }, descKey: "keymap.shortcut.quit", category: "app", scope: "desktop" },
-	{ id: "hide", keys: { mac: "⌘H", other: "Ctrl+H" }, descKey: "keymap.shortcut.hide", category: "app", scope: "desktop" },
+	{ id: "quit", primary: [mod("KeyQ")], descKey: "keymap.shortcut.quit", category: "app", scope: "desktop" },
+	{ id: "hide", primary: [mod("KeyH")], descKey: "keymap.shortcut.hide", category: "app", scope: "desktop" },
 ];
+
+const BY_ID = new Map(APP_SHORTCUTS.map((s) => [s.id, s]));
+
+export function shortcutById(id: string): ShortcutSpec | undefined {
+	return BY_ID.get(id);
+}
+
+/** Whether the user may rebind this shortcut. */
+export function isRemappable(spec: ShortcutSpec): boolean {
+	return spec.remappable !== false;
+}
+
+export function conflictGroupOf(spec: ShortcutSpec): ShortcutConflictGroup {
+	return spec.conflictGroup ?? "app";
+}
+
+/** The default bindings declared for one slot. */
+export function slotDefaults(spec: ShortcutSpec, slot: ShortcutSlot): Binding[] {
+	return (slot === "primary" ? spec.primary : spec.alias) ?? [];
+}
+
+/** The bindings one slot fires on right now (user override, else its default). */
+export function slotBindings(spec: ShortcutSpec, slot: ShortcutSlot): Binding[] {
+	const defaults = slotDefaults(spec, slot);
+	return isRemappable(spec) ? resolvedSlot(spec.id, slot, defaults) : defaults;
+}
+
+/** Every binding a spec fires on right now, both slots, primary first. */
+export function bindingsFor(spec: ShortcutSpec): Binding[] {
+	return [...slotBindings(spec, "primary"), ...slotBindings(spec, "alias")];
+}
 
 /** The key combo to display for a shortcut on the current platform. */
 export function shortcutKeysFor(spec: ShortcutSpec, mac: boolean = isMac()): string {
-	return mac ? spec.keys.mac : spec.keys.other;
+	return shortcutKeysForMode(spec, mac, false);
 }
 
 /**
  * The key combo to display for a shortcut, transport-aware: in remote (browser)
- * mode a `remoteKeys` override wins over `keys` (e.g. ⌘1–9 → `G then 1–9`).
+ * mode a `remoteDisplay` override wins (e.g. ⌘1–9 → `G then 1–9`), and bindings
+ * the browser owns are dropped from the rendered list.
  */
 export function shortcutKeysForMode(spec: ShortcutSpec, mac: boolean, remote: boolean): string {
-	const combo = remote && spec.remoteKeys ? spec.remoteKeys : spec.keys;
-	return mac ? combo.mac : combo.other;
+	if (remote && spec.remoteDisplay) return mac ? spec.remoteDisplay.mac : spec.remoteDisplay.other;
+	const bindings = bindingsFor(spec).filter(
+		(b) => (!b.platform || (b.platform === "mac") === mac) && !(remote && b.desktopOnly),
+	);
+	if (bindings.length > 0) return formatBindings(bindings, mac);
+	return spec.display ? (mac ? spec.display.mac : spec.display.other) : "";
 }
 
 /** Whether a shortcut applies under the current transport. */
@@ -137,4 +262,53 @@ export function appShortcutsForMode(remote: boolean): ShortcutSpec[] {
 /** Shortcuts of one category, in registry order. */
 export function shortcutsInCategory(category: ShortcutCategory): ShortcutSpec[] {
 	return APP_SHORTCUTS.filter((s) => s.category === category);
+}
+
+/**
+ * Whether a keydown fires the given shortcut. This is the dispatch entry point —
+ * handlers call it instead of hand-writing modifier conditions, which is what
+ * makes a rebind take effect everywhere at once.
+ *
+ * `typing` defaults to a live DOM check so a bare-key binding (`C`, `/`) never
+ * steals a keystroke from a focused field or terminal.
+ */
+export function matchesShortcut(e: KeyboardEvent, id: string, ctx?: Partial<MatchContext>): boolean {
+	if (isKeymapCapturing()) return false;
+	const spec = BY_ID.get(id);
+	if (!spec) return false;
+	const remote = ctx?.remote ?? isRemote();
+	if (!shortcutAppliesInMode(spec, remote)) return false;
+	const full: MatchContext = {
+		mac: ctx?.mac ?? isMac(),
+		remote,
+		typing: ctx?.typing ?? isTypingContext(),
+	};
+	return bindingsFor(spec).some((b) => matchesBinding(e, b, full));
+}
+
+export interface ShortcutConflict {
+	/** The shortcut currently holding the combo. */
+	ownerId: string;
+	/** Which of the owner's two slots holds it — stealing empties only that one. */
+	ownerSlot: ShortcutSlot;
+	binding: Binding;
+}
+
+/**
+ * The shortcut that already owns `binding`, if any. Scoped to the conflict group
+ * so the terminal's ⌘F and the artifact viewer's ⌘F can coexist — only one of
+ * them can have focus.
+ */
+export function findConflict(id: string, binding: Binding): ShortcutConflict | null {
+	const self = BY_ID.get(id);
+	if (!self) return null;
+	const group = conflictGroupOf(self);
+	for (const spec of APP_SHORTCUTS) {
+		if (spec.id === id || conflictGroupOf(spec) !== group) continue;
+		for (const slot of SHORTCUT_SLOTS) {
+			const clash = slotBindings(spec, slot).find((b) => bindingsEqual(b, binding));
+			if (clash) return { ownerId: spec.id, ownerSlot: slot, binding: clash };
+		}
+	}
+	return null;
 }

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
-import type { GlobalSettings } from "../shared/types";
+import type { GlobalSettings, ShortcutOverride } from "../shared/types";
 import { DEFAULT_AGENTS, DEPRECATED_DEFAULT_CONFIG_REMAP } from "../shared/types";
 import { recordFavoriteUsage, sanitizeFavorites } from "../shared/favorites";
 import { withFileLock } from "./file-lock";
@@ -16,6 +16,36 @@ const SETTINGS_FILE = `${DEV3_HOME}/settings.json`;
 // a second copy — a drifted local interface is what silently dropped
 // `tipsDisabled` on load and then erased it from disk on the next save.
 export type { GlobalSettings };
+
+/**
+ * Keep only well-shaped shortcut rebinds. The renderer owns the combo grammar
+ * (`src/mainview/keymap-bindings.ts`) and drops entries it cannot parse, so this
+ * side only guards the container: a garbled settings.json must not take the
+ * whole keymap with it. An empty array is kept — it means "deliberately unbound".
+ */
+/**
+ * Keyboard overrides, slot by slot. A slot is kept only when it is a string (a
+ * serialized combo) or `null` (deliberately unbound) — anything else is dropped
+ * rather than allowed to corrupt the keymap. Written by the renderer, so treat it
+ * as untrusted shape.
+ */
+function sanitizeShortcutOverrides(raw: unknown): GlobalSettings["keyboardShortcuts"] {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const out: Record<string, ShortcutOverride> = {};
+	for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+		const slots = value as Record<string, unknown>;
+		const kept: ShortcutOverride = {};
+		for (const slot of ["primary", "alias"] as const) {
+			if (!(slot in slots)) continue;
+			const entry = slots[slot];
+			if (typeof entry === "string") kept[slot] = entry;
+			else if (entry === null) kept[slot] = null;
+		}
+		if (Object.keys(kept).length > 0) out[id] = kept;
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
 
 const DEFAULT_SETTINGS: GlobalSettings = {
 	defaultAgentId: "builtin-claude",
@@ -64,15 +94,6 @@ export async function loadSettings(): Promise<GlobalSettings> {
 			agentBinaryPaths: data.agentBinaryPaths ?? undefined,
 			playSoundOnTaskComplete: data.playSoundOnTaskComplete ?? true,
 			externalApps: Array.isArray(data.externalApps) ? data.externalApps : undefined,
-			// iTerm2 is the default (undefined ⇒ iterm2 in the renderer), so an
-			// explicit "default" is a real opt-out that must survive a round-trip;
-			// collapsing it to undefined would silently re-enable the hotkeys.
-			terminalKeymap:
-				data.terminalKeymap === "iterm2"
-					? "iterm2"
-					: data.terminalKeymap === "default"
-						? "default"
-						: undefined,
 			tipsDisabled: data.tipsDisabled === true ? true : undefined,
 			taskOpenMode: data.taskOpenMode === "fullscreen" ? "fullscreen" : undefined,
 			defaultDiffViewMode:
@@ -99,6 +120,8 @@ export async function loadSettings(): Promise<GlobalSettings> {
 			pxpipeProxyEnabled: data.pxpipeProxyEnabled === true ? true : undefined,
 			// Cross-provider favorite pointers; shape-validated, capped, empty ⇒ undefined.
 			favorites: sanitizeFavorites(data.favorites),
+			// User shortcut rebinds; sparse by design — absent means "all defaults".
+			keyboardShortcuts: sanitizeShortcutOverrides(data.keyboardShortcuts),
 		};
 	} catch (err) {
 		log.error("Failed to load settings", { error: String(err) });
@@ -170,15 +193,6 @@ export function loadSettingsSync(): GlobalSettings {
 			agentBinaryPaths: data.agentBinaryPaths ?? undefined,
 			playSoundOnTaskComplete: data.playSoundOnTaskComplete ?? true,
 			externalApps: Array.isArray(data.externalApps) ? data.externalApps : undefined,
-			// iTerm2 is the default (undefined ⇒ iterm2 in the renderer), so an
-			// explicit "default" is a real opt-out that must survive a round-trip;
-			// collapsing it to undefined would silently re-enable the hotkeys.
-			terminalKeymap:
-				data.terminalKeymap === "iterm2"
-					? "iterm2"
-					: data.terminalKeymap === "default"
-						? "default"
-						: undefined,
 			tipsDisabled: data.tipsDisabled === true ? true : undefined,
 			taskOpenMode: data.taskOpenMode === "fullscreen" ? "fullscreen" : undefined,
 			defaultDiffViewMode:
@@ -205,6 +219,8 @@ export function loadSettingsSync(): GlobalSettings {
 			pxpipeProxyEnabled: data.pxpipeProxyEnabled === true ? true : undefined,
 			// Cross-provider favorite pointers; shape-validated, capped, empty ⇒ undefined.
 			favorites: sanitizeFavorites(data.favorites),
+			// User shortcut rebinds; sparse by design — absent means "all defaults".
+			keyboardShortcuts: sanitizeShortcutOverrides(data.keyboardShortcuts),
 		};
 	} catch (err) {
 		log.error("Failed to load settings (sync)", { error: String(err) });

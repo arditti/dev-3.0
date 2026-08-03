@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import GlobalSettings from "../GlobalSettings";
 import { I18nProvider } from "../../i18n";
 import type { CodingAgent, GlobalSettings as GlobalSettingsType } from "../../../shared/types";
-import { KEYMAP_LS_KEY } from "../../terminal-keymaps";
 import type { SettingsSectionId } from "../../state";
 
 vi.mock("../../zoom", () => ({
@@ -1057,73 +1056,6 @@ describe("GlobalSettings", () => {
 		});
 	});
 
-	describe("terminal keymap preset", () => {
-		function getKeymapToggle() {
-			return screen.getByRole("button", { name: /iTerm2 compatibility/ });
-		}
-
-		it("renders the iTerm2 compatibility toggle", async () => {
-			setupMocks();
-			renderGlobalSettings("terminal");
-			await waitForLoad();
-
-			expect(getKeymapToggle()).toBeInTheDocument();
-		});
-
-		it("toggle is active by default (iTerm2 ships on)", async () => {
-			setupMocks();
-			renderGlobalSettings("terminal");
-			await waitForLoad();
-
-			expect(getKeymapToggle().className).toContain("border-accent");
-		});
-
-		it("clicking the toggle opts out, saving terminalKeymap default to backend", async () => {
-			setupMocks();
-			const user = userEvent.setup();
-			renderGlobalSettings("terminal");
-			await waitForLoad();
-
-			await user.click(getKeymapToggle());
-
-			expect(mockedApi.request.saveGlobalSettings).toHaveBeenCalledWith(
-				expect.objectContaining({ terminalKeymap: "default" }),
-			);
-		});
-
-		it("clicking the toggle persists the default (opt-out) preset to localStorage", async () => {
-			setupMocks();
-			const user = userEvent.setup();
-			renderGlobalSettings("terminal");
-			await waitForLoad();
-
-			await user.click(getKeymapToggle());
-
-			expect(localStorage.getItem(KEYMAP_LS_KEY)).toBe("default");
-		});
-
-		it("clicking the toggle from an explicit opt-out turns iTerm2 back on", async () => {
-			setupMocks(mockAgents, { ...mockGlobalSettings, terminalKeymap: "default" });
-			const user = userEvent.setup();
-			renderGlobalSettings("terminal");
-			await waitForLoad();
-
-			await user.click(getKeymapToggle());
-
-			expect(mockedApi.request.saveGlobalSettings).toHaveBeenCalledWith(
-				expect.objectContaining({ terminalKeymap: "iterm2" }),
-			);
-		});
-
-		it("loads terminalKeymap from backend settings and syncs to localStorage", async () => {
-			setupMocks(mockAgents, { ...mockGlobalSettings, terminalKeymap: "iterm2" });
-			renderGlobalSettings("terminal");
-			await waitForLoad();
-
-			expect(localStorage.getItem(KEYMAP_LS_KEY)).toBe("iterm2");
-		});
-	});
-
 	describe("category navigation and search", () => {
 		it("shows one category page at a time", async () => {
 			setupMocks();
@@ -1152,7 +1084,6 @@ describe("GlobalSettings", () => {
 			await user.click(screen.getByRole("button", { name: /Terminal scroll speed/ }));
 
 			expect(document.getElementById("settings-category-title")).toHaveTextContent("Terminal");
-			expect(screen.getByText("Terminal Keymap")).toBeInTheDocument();
 			expect(screen.getByRole("slider", { name: "Terminal scroll speed" })).toHaveValue("2");
 		});
 
