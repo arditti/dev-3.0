@@ -119,6 +119,8 @@ vi.mock("../task-terminal-backend", async (importOriginal) => {
 					connectPane: async (_record) => ({
 						role: () => "writer" as const,
 						onOutput: () => () => undefined,
+						onDisconnect: vi.fn(),
+						whenDisconnected: () => Promise.resolve(),
 						input: vi.fn(),
 						resize: vi.fn(),
 						capture: () => "",

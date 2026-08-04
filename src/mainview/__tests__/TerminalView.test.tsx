@@ -115,7 +115,7 @@ vi.mock("../rpc", () => ({
 			tmuxNewWindow: vi.fn(),
 			tmuxAltClickMoveCursor: vi.fn().mockResolvedValue({ moved: true }),
 			exitCopyModeAllPanes: vi.fn().mockResolvedValue({ panesExited: 1 }),
-			logRendererEvent: vi.fn().mockResolvedValue(undefined),
+			logRendererDiagnostic: vi.fn().mockResolvedValue(undefined),
 			copyTerminalSelection: vi.fn().mockResolvedValue({ ok: true, tool: "pbcopy" }),
 		},
 	},
@@ -1602,5 +1602,59 @@ describe("TerminalView – right-to-left reordering (beta flag)", () => {
 		expect(isBidiRenderInstalled(mockTermInstance.renderer)).toBe(false);
 		expect(vendorRender).toHaveBeenCalledTimes(2);
 		expect(vendorRender.mock.calls[1][0]).toBe(mockTermInstance.wasmTerm);
+	});
+});
+
+describe("TerminalView – cleanup markers are durable", () => {
+	it("emits both cleanup markers at a level the production logger keeps", async () => {
+		vi.mocked(api.request.logRendererDiagnostic).mockClear();
+		const view = render(
+			<I18nProvider>
+				<TerminalView ptyUrl="ws://localhost:1234" taskId="t1" projectId="p1" />
+			</I18nProvider>,
+		);
+		await waitFor(() => expect(mockTermInstance.open).toHaveBeenCalled());
+		view.unmount();
+
+		const disposeLines = vi
+			.mocked(api.request.logRendererDiagnostic)
+			.mock.calls.map(([p]) => p)
+			.filter((p) => p.tag === "terminal-dispose");
+		const started = disposeLines.find((p) => p.message === "cleanup started");
+		const finished = disposeLines.find((p) => p.message === "cleanup finished");
+		expect(started).toBeDefined();
+		expect(finished).toBeDefined();
+		// debug is dropped below the prod/staging/canary minimum of info, so a marker
+		// at debug would not be durable at all.
+		expect(started!.level).toBe("info");
+		expect(finished!.level).toBe("info");
+		expect(finished!.extra).toHaveProperty("disposeMs");
+	});
+});
+
+describe("TerminalView – diagnostics must never break cleanup", () => {
+	it("runs every disposer even when the diagnostic sink throws synchronously", async () => {
+		// The cleanup emits its "started" marker FIRST, so a synchronous throw there
+		// used to abort the terminal, socket and listener teardown behind it (seq 1407).
+		// Scoped to the cleanup marker: throwing for every tag would also break setup,
+		// and the seam under test is the one cleanup reaches first.
+		vi.mocked(api.request.logRendererDiagnostic).mockImplementation((params: { tag: string }) => {
+			if (params.tag === "terminal-dispose") throw new Error("sink exploded");
+			return Promise.resolve();
+		});
+		mockTermInstance.dispose.mockClear();
+
+		const view = render(
+			<I18nProvider>
+				<TerminalView ptyUrl="ws://localhost:1234" taskId="t1" projectId="p1" />
+			</I18nProvider>,
+		);
+		await waitFor(() => expect(mockTermInstance.open).toHaveBeenCalled());
+
+		expect(() => view.unmount()).not.toThrow();
+
+		// term.dispose() is the LAST statement in the cleanup, so reaching it proves
+		// every disposer between the throwing marker and the end still ran.
+		expect(mockTermInstance.dispose).toHaveBeenCalled();
 	});
 });

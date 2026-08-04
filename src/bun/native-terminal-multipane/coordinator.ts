@@ -121,6 +121,14 @@ export interface PaneConnection {
 	onOutput(cb: (bytes: Uint8Array) => void): () => void;
 	input(data: string | Uint8Array): void;
 	resize(cols: number, rows: number): void;
+	/**
+	 * Fires when the underlying socket has actually closed, immediately if it already
+	 * has. `close()` drops the role synchronously, long before the socket is really
+	 * gone, so role state cannot tell a real disconnect from one that never happened.
+	 */
+	onDisconnect(cb: () => void): void;
+	/** Sticky form of {@link onDisconnect}, safe to await after the fact. */
+	whenDisconnected(): Promise<void>;
 	close(): void;
 }
 
@@ -206,6 +214,8 @@ export const defaultCoordinatorDeps: CoordinatorDeps = {
 			onOutput: (cb) => client.onOutput(cb),
 			input: (data) => client.input(data),
 			resize: (cols, rows) => client.resize(cols, rows),
+			onDisconnect: (cb) => client.onDisconnect(cb),
+			whenDisconnected: () => client.whenDisconnected(),
 			close: () => client.close(),
 		};
 	},

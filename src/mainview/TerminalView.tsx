@@ -83,6 +83,12 @@ const LIGHT_TERMINAL_THEME = {
 };
 
 const TERMINAL_BASE_FONT_SIZE = 14;
+/**
+ * A terminal teardown longer than this blocked the renderer for that long: every
+ * dispose on the path is synchronous. One frame at 60 Hz is 16 ms, so 50 ms is
+ * already three dropped frames — worth a line, while staying quiet in normal use.
+ */
+const TERMINAL_DISPOSE_BUDGET_MS = 50;
 
 // ghostty-web 0.4.0 FitAddon reserves 15px on width for a native scrollbar
 // that never appears — ghostty draws its scrollbar overlaid on the canvas.
@@ -298,24 +304,43 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 	const resolvedThemeRef = useRef(resolvedTheme);
 	resolvedThemeRef.current = resolvedTheme;
 
+	/**
+	 * Narrow renderer→backend diagnostic (decision 199). Same-bridge limitation
+	 * applies: if the RPC bridge is dead these lines never arrive, so the console
+	 * mirror at each call site is what a post-mortem actually reads. The sink is what
+	 * survives a RESTART, which the console does not.
+	 */
+	function logDiagnostic(
+		tag: string,
+		level: "debug" | "info" | "warn" | "error",
+		message: string,
+		extra?: Record<string, string | number | boolean | null>,
+	) {
+		// The whole invocation is guarded, not just the promise: cleanup calls this
+		// FIRST, so a synchronous throw here would abort every disposer after it and
+		// leak the terminal, its sockets and its listeners. Diagnostics must never be
+		// able to break the thing they describe.
+		try {
+			const request = api.request.logRendererDiagnostic({
+				level,
+				tag,
+				message,
+				extra: { taskId: taskId.slice(0, 8), ...(extra ?? {}) },
+			});
+			if (request && typeof (request as Promise<void>).catch === "function") {
+				request.catch(() => {});
+			}
+		} catch {
+			/* diagnostics only */
+		}
+	}
+
 	function logCopyEvent(
 		level: "debug" | "info" | "warn" | "error",
 		message: string,
 		extra?: Record<string, string | number | boolean | null>,
 	) {
-		// TEMP DIAGNOSTIC: renderer->backend logging for the terminal copy investigation.
-		const request = api.request.logRendererEvent({
-			level,
-			tag: "terminal-copy",
-			message,
-			extra: {
-				taskId: taskId.slice(0, 8),
-				...(extra ?? {}),
-			},
-		});
-		if (request && typeof (request as Promise<void>).catch === "function") {
-			request.catch(() => {});
-		}
+		logDiagnostic("terminal-copy", level, message, extra);
 	}
 
 	useEffect(() => {
@@ -1450,6 +1475,22 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 
 		return () => {
 			console.log("[TerminalView] Cleanup (unmount/re-render)", { taskId: taskId.slice(0, 8) });
+			// term.dispose() and fitAddon.dispose() are synchronous, so a slow one blocks
+			// the renderer for its whole duration. A duration logged afterwards can only
+			// describe a cleanup that FINISHED, so a permanent hang would leave no trace
+			// at all — hence a marker before it starts as well. A "started" line with no
+			// matching "finished" line is the signature of a teardown that never
+			// returned (seq 1407).
+			const disposeStartedAt = performance.now();
+			// Dispatched BEFORE any synchronous dispose runs, so a teardown that never
+			// returns still leaves a "started" line with no matching "finished" — the
+			// only evidence a permanent hang can produce. Console AND the durable sink:
+			// the console does not survive a restart, and the sink does not survive a
+			// dead bridge (decision 199).
+			console.debug("[TerminalView] cleanup started", { taskId: taskId.slice(0, 8) });
+			// info, not debug: prod/staging/canary run the logger at a minimum of info,
+			// so a debug line never reaches the file and the marker would not be durable.
+			logDiagnostic("terminal-dispose", "info", "cleanup started");
 			disposed = true;
 			document.removeEventListener("visibilitychange", reconnectPtyOnResume);
 			window.removeEventListener("pageshow", reconnectPtyOnResume);
@@ -1502,6 +1543,20 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 					console.error("[TerminalView] term.dispose() failed:", err);
 				}
 				termRef.current = null;
+			}
+			const disposeMs = Math.round(performance.now() - disposeStartedAt);
+			console.debug("[TerminalView] cleanup finished", { taskId: taskId.slice(0, 8), disposeMs });
+			logDiagnostic("terminal-dispose", "info", "cleanup finished", { disposeMs });
+			if (disposeMs >= TERMINAL_DISPOSE_BUDGET_MS) {
+				console.warn("[TerminalView] cleanup exceeded its budget", {
+					taskId: taskId.slice(0, 8),
+					disposeMs,
+					budgetMs: TERMINAL_DISPOSE_BUDGET_MS,
+				});
+				logDiagnostic("terminal-dispose", "warn", "cleanup exceeded its budget", {
+					disposeMs,
+					budgetMs: TERMINAL_DISPOSE_BUDGET_MS,
+				});
 			}
 		};
 	}, [ptyUrl, taskId]);

@@ -187,6 +187,32 @@ function allowWatchdogReload(now: number): boolean {
 // ping on a timer and on wake/focus; on confirmed failure we re-open the socket,
 // and as a last resort reload the webview (bun stays alive, so this recovers the
 // bridge without a force-quit).
+/**
+ * Tell the backend the watchdog acted. Deliberately not a general RPC log hook:
+ * only these two transitions explain a UI that looked frozen to the user while the
+ * backend kept logging normally.
+ *
+ * Takes the raw request proxy rather than the module-level `api`, which is still in
+ * its temporal dead zone while `initElectrobunApi()` is running.
+ */
+function reportWatchdogAction(rawRequest: RequestProxy, action: "reinit" | "reload"): void {
+	try {
+		const request = (rawRequest as unknown as {
+			logRendererDiagnostic?: (p: unknown) => Promise<void>;
+		}).logRendererDiagnostic?.({
+			level: "warn",
+			tag: "rpc-watchdog",
+			message: `bridge recovery: ${action}`,
+			extra: { action },
+		});
+		if (request && typeof request.catch === "function") {
+			request.catch(() => {});
+		}
+	} catch {
+		/* diagnostics only */
+	}
+}
+
 function startBridgeWatchdog(electroview: Electroview<any>, rawRequest: RequestProxy): void {
 	const state = createWatchdogState();
 	let inFlight = false;
@@ -227,6 +253,11 @@ function startBridgeWatchdog(electroview: Electroview<any>, rawRequest: RequestP
 					// which would leak a socket on every re-init.
 					electroview.bunSocket?.close();
 					electroview.initSocketToBun();
+					// Report it AFTER the socket is back, which is the only moment this
+					// can reach the backend at all. Without it a dead-then-revived bridge
+					// leaves no trace on the side that keeps the logs, and a frozen UI is
+					// indistinguishable from an idle one (seq 1407).
+					reportWatchdogAction(rawRequest, "reinit");
 				} catch (err) {
 					console.error("[rpc-watchdog] socket re-init failed", err);
 				}
@@ -238,6 +269,9 @@ function startBridgeWatchdog(electroview: Electroview<any>, rawRequest: RequestP
 					message: "Bridge unresponsive — reloading the app",
 					source: "rpc-watchdog",
 				});
+				// Best effort: the bridge is dead, so this may not land — but if the
+				// re-init above revived it briefly, it is the record of why we reloaded.
+				reportWatchdogAction(rawRequest, "reload");
 				if (allowWatchdogReload(Date.now())) window.location.reload();
 			}
 		} finally {
