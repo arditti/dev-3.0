@@ -28,7 +28,7 @@ export default function InlineRename({
 	hasCustomTitle,
 	dispatch,
 	className = "text-fg font-semibold truncate",
-	inputClassName = "bg-base border border-edge-active rounded px-1.5 py-0.5 text-sm text-fg font-semibold focus:outline-none focus:border-accent",
+	inputClassName = "bg-base border border-edge-active rounded px-1.5 py-0.5 text-sm text-fg font-semibold focus:border-accent",
 	showReset,
 }: InlineRenameProps) {
 	const t = useT();
@@ -122,7 +122,7 @@ export default function InlineRename({
 					<button
 						onClick={() => save(null)}
 						disabled={saving}
-						className="text-[0.625rem] text-fg-3 hover:text-fg-2 transition-colors flex-shrink-0 whitespace-nowrap"
+						className="text-dense text-fg-3 hover:text-fg-2 transition-colors flex-shrink-0 whitespace-nowrap"
 					>
 						{t("task.resetTitle")}
 					</button>

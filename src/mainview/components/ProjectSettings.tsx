@@ -203,7 +203,7 @@ function LabelRow({
 					title={t("labels.dragToReorder")}
 					aria-label={t("labels.dragToReorder")}
 				>
-					<span className="text-[1rem] leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\u{F01DB}"}</span>
+					<span className="text-base leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\u{F01DB}"}</span>
 				</button>
 				<div className="flex items-center gap-0.5 transition-opacity duration-150 ease-out md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
 					<button
@@ -214,7 +214,7 @@ function LabelRow({
 						title={t("labels.moveUp")}
 						aria-label={t("labels.moveUp")}
 					>
-						<span className="text-[0.8125rem] leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\uF062"}</span>
+						<span className="text-sm-plus leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\uF062"}</span>
 					</button>
 					<button
 						type="button"
@@ -224,7 +224,7 @@ function LabelRow({
 						title={t("labels.moveDown")}
 						aria-label={t("labels.moveDown")}
 					>
-						<span className="text-[0.8125rem] leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\uF063"}</span>
+						<span className="text-sm-plus leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\uF063"}</span>
 					</button>
 				</div>
 			</div>
@@ -389,7 +389,7 @@ function CustomColumnRow({ column, saving, onUpdate, onDelete, availableAgents }
 				<div className="flex items-center justify-between gap-3 mb-2">
 					<div>
 						<span className="block text-fg-3 text-xs font-medium">{t("columnAgent.title")}</span>
-						<p className="text-fg-muted text-[0.65rem]">{t("columnAgent.desc")}</p>
+						<p className="text-fg-muted text-dense">{t("columnAgent.desc")}</p>
 					</div>
 					<ToggleSwitch
 						checked={agentEnabled}
@@ -434,7 +434,7 @@ function CustomColumnRow({ column, saving, onUpdate, onDelete, availableAgents }
 								spellCheck={false}
 								className="w-full px-2 py-1.5 bg-base border border-edge rounded-lg text-fg-2 text-xs placeholder-fg-muted outline-none focus:border-accent/40 transition-colors resize-y font-mono"
 							/>
-							<p className="text-fg-muted text-[0.6rem] mt-1">{t("columnAgent.hint")}</p>
+							<p className="text-fg-muted text-nano mt-1">{t("columnAgent.hint")}</p>
 						</div>
 					</div>
 				)}
@@ -505,9 +505,9 @@ function EnvVarsEditor({ env, storageScope, onChange, onErrorChange }: {
 
 	return (
 		<div>
-			<label className="block text-fg text-sm font-semibold mb-2">
+			<p className="block text-fg text-sm font-semibold mb-2">
 				{t("projectSettings.envVars")}
-			</label>
+			</p>
 			<p className="text-fg-3 text-sm mb-3">
 				{t("projectSettings.envVarsDesc")}
 			</p>
@@ -686,7 +686,7 @@ function BranchPicker({
 				<div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-overlay border border-edge rounded-xl shadow-lg">
 					{localBranches.length > 0 && (
 						<>
-							<div className="px-3 py-1 text-[0.625rem] font-semibold text-fg-muted uppercase tracking-wider">
+							<div className="px-3 py-1 text-dense font-semibold text-fg-muted uppercase tracking-wider">
 								{t("createTask.branchLocal")}
 							</div>
 							{localBranches.map((branch) => (
@@ -710,7 +710,7 @@ function BranchPicker({
 
 					{includeRemote && remoteBranches.length > 0 && (
 						<>
-							<div className="px-3 py-1 text-[0.625rem] font-semibold text-fg-muted uppercase tracking-wider">
+							<div className="px-3 py-1 text-dense font-semibold text-fg-muted uppercase tracking-wider">
 								{t("createTask.branchRemote")}
 							</div>
 							{remoteBranches.map((branch) => (
@@ -1636,6 +1636,7 @@ function ProjectSettings({
 	const tabButtonProps = (tab: ConfigTab) => ({
 		role: "tab",
 		"aria-selected": activeTab === tab,
+		tabIndex: activeTab === tab ? 0 : -1,
 		onClick: () => setActiveTab(tab),
 		className: `flex-1 px-4 py-2 text-sm font-medium rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent/60 transition-[color,background-color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] ${
 			activeTab === tab
@@ -1643,6 +1644,29 @@ function ProjectSettings({
 				: "text-fg-3 hover:text-fg-2 hover:bg-elevated"
 		}`,
 	});
+
+	function handleMainTabListKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+		const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+		const currentIndex = tabs.findIndex((t) => t.getAttribute("aria-selected") === "true");
+		let nextIndex = currentIndex;
+		if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+			nextIndex = (currentIndex + 1) % tabs.length;
+			e.preventDefault();
+		} else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+			nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+			e.preventDefault();
+		} else if (e.key === "Home") {
+			nextIndex = 0;
+			e.preventDefault();
+		} else if (e.key === "End") {
+			nextIndex = tabs.length - 1;
+			e.preventDefault();
+		} else {
+			return;
+		}
+		tabs[nextIndex].focus();
+		tabs[nextIndex].click();
+	}
 
 	const dirty = isDirty();
 	const saving = savingProject || savingWtRepo || savingWtLocal;
@@ -1694,7 +1718,7 @@ function ProjectSettings({
 
 					{/* 3-tab selector */}
 					<div>
-						<div role="tablist" aria-label={t("projectSettings.tabsAria")} className="flex gap-1 bg-elevated/50 rounded-xl p-1 mb-1">
+						<div role="tablist" aria-label={t("projectSettings.tabsAria")} className="flex gap-1 bg-elevated/50 rounded-xl p-1 mb-1" onKeyDown={handleMainTabListKeyDown}>
 							<button type="button" {...tabButtonProps("global")}>
 								{t("projectSettings.tabGlobal")}
 							</button>
@@ -1749,7 +1773,10 @@ function ProjectSettings({
 										/>
 									))}
 									{(project.customColumns ?? []).length === 0 && (
-										<EmptyHint>{t("customColumns.noColumns")}</EmptyHint>
+										<EmptyHint>
+											{t("customColumns.noColumns")}
+											<span className="block text-xs mt-1">{t("customColumns.noColumnsHint")}</span>
+										</EmptyHint>
 									)}
 								</div>
 								<AddRowButton onClick={handleAddColumn} disabled={columnSaving !== null}>
@@ -1980,7 +2007,7 @@ function ProjectSettings({
 
 									{/* Repo / Local sub-tabs */}
 									<div>
-										<div role="tablist" aria-label={t("projectSettings.worktreeSubTabsAria")} className="flex gap-1 bg-elevated/50 rounded-xl p-1 mb-1">
+										<div role="tablist" aria-label={t("projectSettings.worktreeSubTabsAria")} className="flex gap-1 bg-elevated/50 rounded-xl p-1 mb-1" onKeyDown={handleMainTabListKeyDown}>
 											{([
 												{ id: "repo" as WorktreeSubTab, label: t("projectSettings.worktreeRepoTab") },
 												{ id: "local" as WorktreeSubTab, label: t("projectSettings.worktreeLocalTab") },
@@ -1990,6 +2017,7 @@ function ProjectSettings({
 													type="button"
 													role="tab"
 													aria-selected={worktreeSubTab === tab.id}
+													tabIndex={worktreeSubTab === tab.id ? 0 : -1}
 													onClick={() => setWorktreeSubTab(tab.id)}
 													className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent/60 transition-[color,background-color,box-shadow,transform] duration-150 ease-out active:scale-[0.98] ${
 														worktreeSubTab === tab.id

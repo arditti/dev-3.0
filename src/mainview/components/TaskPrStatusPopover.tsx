@@ -341,7 +341,7 @@ export default function TaskPrStatusPopover({ prInfo, projectId, taskId, onShowU
 						}}
 						title={t("task.prShowUnresolvedInDiff")}
 						aria-label={t("task.prShowUnresolvedInDiff")}
-						className="mt-2 flex items-center gap-1.5 rounded text-warning transition-colors hover:underline focus:outline-none focus:ring-1 focus:ring-accent"
+						className="mt-2 flex items-center gap-1.5 rounded text-warning transition-colors hover:underline focus:ring-1 focus:ring-accent"
 					>
 						<span className="leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
 						<span>{t.plural("task.prUnresolvedComments", prInfo.unresolvedCount)}</span>
@@ -407,7 +407,7 @@ export default function TaskPrStatusPopover({ prInfo, projectId, taskId, onShowU
 								<span className="flex min-w-0 items-center gap-2">
 									<span className={"flex-shrink-0 leading-none " + checkClass(state)} style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{checkGlyph(state)}</span>
 									<span className="min-w-0 flex-1 truncate text-fg-2">{name}</span>
-									<span className={"flex-shrink-0 " + (sheet ? "text-xs " : "text-[0.625rem] ") + checkClass(state)}>{checkStatusLabel(state, t)}</span>
+									<span className={"flex-shrink-0 " + (sheet ? "text-xs " : "text-dense ") + checkClass(state)}>{checkStatusLabel(state, t)}</span>
 								</span>
 							);
 							const rowPadding = sheet ? "px-1 py-2" : "px-1 py-1";
@@ -418,7 +418,7 @@ export default function TaskPrStatusPopover({ prInfo, projectId, taskId, onShowU
 											href={check.detailsUrl}
 											target="_blank"
 											rel="noreferrer"
-											className={`block rounded ${rowPadding} hover:bg-elevated-hover focus:outline-none focus:ring-1 focus:ring-accent`}
+											className={`block rounded ${rowPadding} hover:bg-elevated-hover focus:ring-1 focus:ring-accent`}
 											aria-label={t("task.prCheckDetails", { name })}
 										>
 											{row}

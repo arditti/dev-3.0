@@ -204,7 +204,7 @@ function AutomationEditModal({ project, automation, onClose, onSaved }: Automati
 	const hasDays = mode !== "daily" || byDay.length > 0;
 	const canSave = name.trim().length > 0 && prompt.trim().length > 0 && hasDays && !saving;
 
-	const inputClass = "w-full bg-raised border border-edge rounded-lg px-3 py-2 text-sm text-fg placeholder-fg-muted focus:border-edge-active focus:outline-none";
+	const inputClass = "w-full bg-raised border border-edge rounded-lg px-3 py-2 text-sm text-fg placeholder-fg-muted focus:border-edge-active";
 	const labelClass = "text-xs text-fg-3 block mb-1";
 	const modeButtonClass = (m: ScheduleMode) =>
 		`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -222,12 +222,13 @@ function AutomationEditModal({ project, automation, onClose, onSaved }: Automati
 				ref={trapRef}
 				role="dialog"
 				aria-modal="true"
+				aria-labelledby="automation-dialog-title"
 				tabIndex={-1}
 				className="bg-overlay rounded-2xl shadow-2xl shadow-black/50 border border-edge-active w-full max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto outline-none"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="px-6 py-4 border-b border-edge flex items-center gap-1.5">
-					<h2 className="text-fg text-lg font-semibold">
+					<h2 id="automation-dialog-title" className="text-fg text-lg font-semibold">
 						{isCreate ? t("automations.modalCreateTitle") : t("automations.modalEditTitle")}
 					</h2>
 					<HelpSpot topicId="modal.automation" />
@@ -236,7 +237,7 @@ function AutomationEditModal({ project, automation, onClose, onSaved }: Automati
 				<div className="px-6 py-4 space-y-4">
 					{isCreate && (
 						<div>
-							<label className={labelClass}>{t("automations.template")}</label>
+							<p className={labelClass}>{t("automations.template")}</p>
 							<div className="flex flex-wrap gap-2">
 								{AUTOMATION_TEMPLATES.map((tpl) => (
 									<button
@@ -277,7 +278,7 @@ function AutomationEditModal({ project, automation, onClose, onSaved }: Automati
 					</div>
 
 					<div>
-						<label className={labelClass}>{t("automations.schedule")}</label>
+						<p className={labelClass}>{t("automations.schedule")}</p>
 						<div className="flex gap-1 bg-elevated/50 rounded-lg p-1 mb-2 w-fit">
 							<button type="button" onClick={() => setMode("daily")} className={modeButtonClass("daily")}>{t("automations.scheduleDaily")}</button>
 							<button type="button" onClick={() => setMode("monthly")} className={modeButtonClass("monthly")}>{t("automations.scheduleMonthly")}</button>
@@ -335,7 +336,7 @@ function AutomationEditModal({ project, automation, onClose, onSaved }: Automati
 									max={31}
 									value={monthDay}
 									onChange={(e) => setMonthDay(Number(e.target.value))}
-									className="w-20 bg-raised border border-edge rounded-lg px-2 py-1 text-sm text-fg focus:border-edge-active focus:outline-none"
+									className="w-20 bg-raised border border-edge rounded-lg px-2 py-1 text-sm text-fg focus:border-edge-active"
 								/>
 							</div>
 						)}
@@ -348,7 +349,7 @@ function AutomationEditModal({ project, automation, onClose, onSaved }: Automati
 									type="time"
 									value={time}
 									onChange={(e) => setTime(e.target.value)}
-									className="bg-raised border border-edge rounded-lg px-2 py-1 text-sm text-fg focus:border-edge-active focus:outline-none"
+									className="bg-raised border border-edge rounded-lg px-2 py-1 text-sm text-fg focus:border-edge-active"
 								/>
 							</div>
 						) : (

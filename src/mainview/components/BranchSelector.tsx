@@ -217,9 +217,9 @@ function BranchSelector({ projectId, selectedBranch, onSelectBranch, reviewMode,
 		<div className="space-y-1.5" data-help-id="field.task-branch">
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-1.5">
-					<label className="text-fg-2 text-sm font-medium">
+					<span className="text-fg-2 text-sm font-medium">
 						{t("createTask.branchLabel")}
-					</label>
+					</span>
 					<HelpSpot topicId="field.task-branch" />
 				</div>
 				{!selectedBranch && (
@@ -304,7 +304,7 @@ function BranchSelector({ projectId, selectedBranch, onSelectBranch, reviewMode,
 					<div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-overlay border border-edge rounded-xl shadow-lg">
 						{(preferRemoteBranches ? remoteBranches.length > 0 : localBranches.length > 0) && (
 							<>
-								<div className="px-3 py-1 text-[0.625rem] font-semibold text-fg-muted uppercase tracking-wider">
+								<div className="px-3 py-1 text-dense font-semibold text-fg-muted uppercase tracking-wider">
 									{preferRemoteBranches ? t("createTask.branchRemote") : t("createTask.branchLocal")}
 								</div>
 								{(preferRemoteBranches ? remoteBranches : localBranches).map((b) => (
@@ -326,7 +326,7 @@ function BranchSelector({ projectId, selectedBranch, onSelectBranch, reviewMode,
 
 						{(preferRemoteBranches ? localBranches.length > 0 : remoteBranches.length > 0) && (
 							<>
-								<div className="px-3 py-1 text-[0.625rem] font-semibold text-fg-muted uppercase tracking-wider">
+								<div className="px-3 py-1 text-dense font-semibold text-fg-muted uppercase tracking-wider">
 									{preferRemoteBranches ? t("createTask.branchLocal") : t("createTask.branchRemote")}
 								</div>
 								{(preferRemoteBranches ? localBranches : remoteBranches).map((b) => (

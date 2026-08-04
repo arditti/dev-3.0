@@ -530,10 +530,10 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 			onClick={handleRequestClose}
 		>
 			{/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-			<div ref={trapRef} role="dialog" aria-modal="true" tabIndex={-1} data-help-id="modal.create-task" className="relative bg-overlay border border-edge rounded-2xl shadow-2xl w-[32.5rem] max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 sm:p-6 space-y-5 outline-none" onClick={(e) => e.stopPropagation()}>
+			<div ref={trapRef} role="dialog" aria-modal="true" aria-labelledby="create-task-modal-title" tabIndex={-1} data-help-id="modal.create-task" className="relative bg-overlay border border-edge rounded-2xl shadow-2xl w-[32.5rem] max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 sm:p-6 space-y-5 outline-none" onClick={(e) => e.stopPropagation()}>
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-1.5">
-						<h2 className="text-fg text-lg font-semibold">
+						<h2 id="create-task-modal-title" className="text-fg text-lg font-semibold">
 							{isDraftEdit ? t("createTask.editDraftTitle") : t("createTask.title")}
 						</h2>
 						<HelpSpot topicId="modal.create-task" />
@@ -576,7 +576,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 				{/* Description textarea + drop zone */}
 				<div className="space-y-1.5">
 					<div className="flex items-center justify-between">
-						<label className="text-fg-2 text-sm font-medium">
+						<label htmlFor="create-task-description" className="text-fg-2 text-sm font-medium">
 							{t("createTask.descriptionLabel")}
 						</label>
 						{showAttachButton && (
@@ -602,7 +602,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 										<div className="w-3.5 h-3.5 border-2 border-fg-muted/30 border-t-accent rounded-full animate-spin" />
 									) : (
 										<span
-											className="text-[1rem] leading-none"
+											className="text-base leading-none"
 											style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
 										>
 											{"\u{F03E2}"}
@@ -631,6 +631,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 							</div>
 						)}
 							<textarea
+							id="create-task-description"
 							ref={textareaRef}
 							value={description}
 							onChange={(e) => {
@@ -664,7 +665,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 						)}
 					</div>
 					{isPasting && (
-						<span className="text-[0.6875rem] text-accent animate-pulse">{t(pasteKind === "text" ? "paste.savingText" : "images.pasting")}</span>
+						<span className="text-micro text-accent animate-pulse">{t(pasteKind === "text" ? "paste.savingText" : "images.pasting")}</span>
 					)}
 					<ImageAttachmentsStrip text={description} onRemovePath={handleRemovePath} />
 					{(generatedTitle || customTitle) && (
@@ -702,7 +703,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 												setCustomTitle(null);
 												setEditingTitle(false);
 											}}
-											className="text-fg-muted hover:text-danger text-[0.625rem] flex-shrink-0 transition-colors"
+											className="text-fg-muted hover:text-danger text-dense flex-shrink-0 transition-colors"
 											title={t("task.resetTitle")}
 										>
 											✕
@@ -737,7 +738,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 				{showPrBanner && detectedPr && (
 					<div className="flex items-start gap-2.5 rounded-xl border border-accent/30 bg-accent/10 px-3 py-2.5">
 						<span
-							className="text-accent text-[1.0625rem] leading-none mt-0.5 shrink-0"
+							className="text-accent text-base-lg leading-none mt-0.5 shrink-0"
 							style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
 						>
 							{"\uf407"}
@@ -769,18 +770,18 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 
 				{/* Priority selector — compact badge + picker, defaults to P3. */}
 				<div className="flex items-center gap-2">
-					<label className="text-fg-2 text-sm font-medium">
+					<span className="text-fg-2 text-sm font-medium">
 						{t("priority.label")}
-					</label>
+					</span>
 					<PriorityBadge priority={priority} onChange={setPriority} size="sm" />
 				</div>
 
 				{/* Label selector — compact: only the selected labels show as chips;
 				    the picker popover (search / toggle / inline-create) owns the full list. */}
 				<div className="space-y-2">
-					<label className="text-fg-2 text-sm font-medium">
+					<span className="text-fg-2 text-sm font-medium">
 						{t("labels.taskLabels")}
-					</label>
+					</span>
 					<div className="flex flex-wrap items-center gap-1.5">
 						{selectedLabels.map((label) => (
 							<LabelChip
@@ -798,7 +799,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 							ref={labelAnchorRef}
 							type="button"
 							onClick={() => setLabelPickerOpen(true)}
-							className="inline-flex items-center rounded-full border border-dashed border-edge-active px-2 py-0.5 text-[0.625rem] font-medium text-fg-3 hover:text-fg hover:bg-fg/5 transition-colors"
+							className="inline-flex items-center rounded-full border border-dashed border-edge-active px-2 py-0.5 text-dense font-medium text-fg-3 hover:text-fg hover:bg-fg/5 transition-colors"
 							title={t("labels.addLabel")}
 						>
 							{t("labels.addLabel")}
@@ -819,7 +820,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 				{/* Virtual ops: working-folder selector (managed temp dir by default). */}
 				{isVirtual ? (
 					<div className="space-y-1.5">
-						<label className="text-fg-2 text-sm font-medium">{t("ops.create.workDirLabel")}</label>
+						<span className="text-fg-2 text-sm font-medium">{t("ops.create.workDirLabel")}</span>
 						<div className="flex gap-2">
 							<div className="flex-1 px-3 py-2 bg-raised border border-edge rounded-xl text-sm truncate">
 								{opsFolder ? (
@@ -876,7 +877,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 								<button
 									ref={keepEditingRef}
 									onClick={() => setConfirmDiscard(false)}
-									className="px-3 py-1 text-fg-3 text-sm hover:text-fg transition-colors rounded-lg focus:outline-none focus:ring-2 focus:ring-edge-active focus:text-fg"
+									className="px-3 py-1 text-fg-3 text-sm hover:text-fg transition-colors rounded-lg focus:ring-2 focus:ring-edge-active focus:text-fg"
 								>
 									{t("createTask.keepEditing")}
 								</button>
@@ -892,7 +893,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 								</button>
 								<button
 									onClick={onClose}
-									className="px-3 py-1 bg-danger text-white text-sm font-medium rounded-lg hover:bg-danger/80 transition-colors"
+									className="px-3 py-1 bg-danger-fill text-white text-sm font-medium rounded-lg hover:bg-danger-fill-hover transition-colors"
 								>
 									{t("createTask.discard")}
 								</button>
@@ -912,14 +913,14 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 											className="px-3 py-1.5 bg-elevated border border-edge-active text-fg-2 text-xs font-medium rounded-lg hover:bg-elevated-hover hover:text-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
 										>
 											<span
-												className="text-[0.875rem] leading-none"
+												className="text-sm leading-none"
 												style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
 											>
 												{"\u{F018D}"}
 											</span>
 											{t("createTask.scratch")}
 										</button>
-										<span className="text-fg-muted text-[0.6875rem] leading-tight">
+										<span className="text-fg-muted text-micro leading-tight">
 											{t("createTask.scratchSubtitle")}
 										</span>
 									</div>
@@ -956,7 +957,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 									{creating ? t("createTask.creating") : t("createTask.create")}
 								</button>
 							</div>
-							<div className="flex flex-wrap items-center justify-between gap-2 text-[0.6875rem]">
+							<div className="flex flex-wrap items-center justify-between gap-2 text-micro">
 								{onOpenAutomations ? (
 									<button
 										type="button"
@@ -964,7 +965,7 @@ function CreateTaskModal({ project: initialProject, projects, dispatch, onClose,
 										className="text-accent hover:text-accent-emphasis hover:underline transition-colors flex items-center gap-1"
 									>
 										<span
-											className="text-[0.8125rem] leading-none"
+											className="text-sm-plus leading-none"
 											style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
 										>
 											{"\u{F0150}"}

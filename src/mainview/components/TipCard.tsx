@@ -4,6 +4,7 @@ import type { TipState } from "../../shared/types";
 import { SNOOZE_MS, ROTATION_INTERVAL_MS } from "../tips";
 import { useT } from "../i18n";
 import { api } from "../rpc";
+import { OPEN_SETTINGS_SECTION_EVENT } from "../state";
 
 interface TipCardProps {
 	tip: Tip;
@@ -43,12 +44,12 @@ function TipCard({ tip, tipState, onChanged, compact = false }: TipCardProps) {
 		<div
 			onMouseEnter={() => setPaused(true)}
 			onMouseLeave={() => setPaused(false)}
-			className={`relative overflow-hidden select-none ${compact ? "p-2.5" : "p-3.5"} rounded-xl border border-dashed border-accent/25 bg-accent/[0.04] transition-all hover:border-accent/40 hover:bg-accent/[0.07]`}
+			className={`relative overflow-hidden select-none ${compact ? "p-2.5" : "p-3.5"} rounded-xl border border-dashed border-accent/25 bg-accent/[0.04] transition-colors hover:border-accent/40 hover:bg-accent/[0.07]`}
 		>
 			{/* Snooze button (hide all tips for 4h) */}
 			<button
 				onClick={handleSnooze}
-				className="absolute top-2.5 right-2.5 w-5 h-5 flex items-center justify-center rounded-md text-fg-muted hover:text-fg-3 hover:bg-fg/5 transition-all"
+				className="absolute top-2.5 right-2.5 w-5 h-5 flex items-center justify-center rounded-md text-fg-muted hover:text-fg-3 hover:bg-fg/5 transition-colors"
 				title={t("tip.snooze")}
 			>
 				<svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
@@ -64,7 +65,7 @@ function TipCard({ tip, tipState, onChanged, compact = false }: TipCardProps) {
 				>
 					{tip.icon}
 				</span>
-				<span className="text-[0.625rem] font-semibold text-accent uppercase tracking-wider">
+				<span className="text-dense font-semibold text-accent uppercase tracking-wider">
 					{t("tip.badge")}
 				</span>
 			</div>
@@ -79,13 +80,29 @@ function TipCard({ tip, tipState, onChanged, compact = false }: TipCardProps) {
 				{t(tip.bodyKey)}
 			</div>
 
-			{/* Next tip link */}
-			<button
-				onClick={handleNext}
-				className="mt-2.5 text-[0.625rem] text-fg-muted hover:text-accent transition-colors"
-			>
-				{t("tip.next")} →
-			</button>
+			{/* Footer: deep link to the setting this tip is about (when it has one),
+			    then the next-tip link. The tip body never spells the path out. */}
+			<div className="mt-2.5 flex items-center gap-3">
+				{tip.settingsSection && (
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							window.dispatchEvent(
+								new CustomEvent(OPEN_SETTINGS_SECTION_EVENT, { detail: tip.settingsSection }),
+							);
+						}}
+						className="text-micro text-accent hover:text-accent-emphasis transition-colors"
+					>
+						{t("tip.openSetting")} →
+					</button>
+				)}
+				<button
+					onClick={handleNext}
+					className="text-micro text-fg-muted hover:text-accent transition-colors"
+				>
+					{t("tip.next")} →
+				</button>
+			</div>
 
 			{/* Rotation progress bar — the animation IS the timer: when it ends we
 			    rotate. Pauses on hover; restarts (key) on every tip change. */}

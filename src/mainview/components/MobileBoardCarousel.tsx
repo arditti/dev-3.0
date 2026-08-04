@@ -114,11 +114,11 @@ function MobileBoardCarousel({ columns, initialColumnId }: { columns: CarouselCo
 					<div className="flex items-center justify-center gap-2 min-w-0">
 						<span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: current.color }} />
 						<span className="font-semibold text-fg truncate">{current.label}</span>
-						<span className="text-[0.625rem] font-bold text-fg-muted bg-fg/10 px-1.5 py-px rounded-full flex-shrink-0">
+						<span className="text-dense font-bold text-fg-muted bg-fg/10 px-1.5 py-px rounded-full flex-shrink-0">
 							{current.count}
 						</span>
 					</div>
-					<div className="text-[0.625rem] text-fg-muted mt-0.5">
+					<div className="text-dense text-fg-muted mt-0.5">
 						{active + 1} / {columns.length}
 					</div>
 				</div>
@@ -145,7 +145,7 @@ function MobileBoardCarousel({ columns, initialColumnId }: { columns: CarouselCo
 							onClick={() => goTo(i)}
 							aria-label={t("kanban.carouselGoTo", { label: col.label })}
 							aria-current={i === active}
-							className={`h-1.5 rounded-full transition-all ${
+							className={`h-1.5 rounded-full transition-[width,background-color] ${
 								i === active ? "w-4 bg-accent" : "w-1.5 bg-edge hover:bg-edge-active"
 							}`}
 						/>

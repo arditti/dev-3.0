@@ -368,14 +368,14 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 		<>
 		<div className="relative z-30 flex items-center justify-between px-5 py-2.5 border-b border-edge flex-shrink-0 glass-header" data-collapse-on-compose>
 			{/* Breadcrumbs */}
-			<div className="flex items-center gap-2 text-sm min-w-0">
+			<nav className="flex items-center gap-2 text-sm min-w-0" aria-label={t("nav.appHeader")}>
 				{/* Back / forward navigation — segmented history control (Safari toolbar style) */}
 				<div className="flex items-stretch flex-shrink-0 -ml-1.5 rounded-md border border-edge bg-raised overflow-hidden">
 					<Tooltip content={t("header.navBack")} detail={t("ttip.header.navBack")}>
 						<button
 							onClick={goBack}
 							disabled={!canGoBack}
-							className={`header-anim px-1.5 py-1 transition-colors ${
+							className={`header-anim px-1.5 py-[5px] transition-colors ${
 								canGoBack
 									? "text-fg-3 hover:text-fg hover:bg-elevated"
 									: "text-fg-muted/40 cursor-default"
@@ -390,7 +390,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 						<button
 							onClick={goForward}
 							disabled={!canGoForward}
-							className={`header-anim px-1.5 py-1 transition-colors ${
+							className={`header-anim px-1.5 py-[5px] transition-colors ${
 								canGoForward
 									? "text-fg-3 hover:text-fg hover:bg-elevated"
 									: "text-fg-muted/40 cursor-default"
@@ -469,13 +469,13 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 													}`}
 												>
 													{isBuiltin && (
-														<span className="text-accent flex-shrink-0 text-[0.8125rem]" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
+														<span className="text-accent flex-shrink-0 text-sm-plus" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
 													)}
 													<span className="truncate text-sm flex-1">{isBuiltin ? t("ops.boardName") : p.name}</span>
 													{isBuiltin && (
-														<span className="flex-shrink-0 px-1 py-0.5 rounded bg-raised text-fg-3 text-[0.5625rem] font-medium uppercase tracking-wide">{t("ops.badgeSystem")}</span>
+														<span className="flex-shrink-0 px-1 py-0.5 rounded bg-raised text-fg-3 text-nano font-medium uppercase tracking-wide">{t("ops.badgeSystem")}</span>
 													)}
-													<span className="text-[0.6875rem] text-fg-muted flex-shrink-0">
+													<span className="text-micro text-fg-muted flex-shrink-0">
 														{count != null
 															? count > 0
 																? t.plural("header.activeTaskCount", count)
@@ -483,8 +483,8 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 															: ""}
 													</span>
 													{shortcutLabel && (
-														<kbd className="flex-shrink-0 inline-flex items-center gap-0.5 text-[0.625rem] text-fg-muted/60 font-mono">
-															<span className="text-[0.6875rem]">{"\u2318"}</span>{shortcutLabel}
+														<kbd className="flex-shrink-0 inline-flex items-center gap-0.5 text-dense text-fg-muted/60 font-mono">
+															<span className="text-micro">{"\u2318"}</span>{shortcutLabel}
 														</kbd>
 													)}
 												</button>
@@ -503,7 +503,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 						) : (
 							<span className="flex items-baseline gap-1.5 min-w-0 overflow-hidden">
 								{seg.badge && (
-									<span className="font-mono text-[0.6875rem] text-accent/70 flex-shrink-0 tracking-wide">{seg.badge}</span>
+									<span className="font-mono text-micro text-accent/70 flex-shrink-0 tracking-wide">{seg.badge}</span>
 								)}
 								{seg.task && (
 									<NativeBackendMark
@@ -526,7 +526,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 						)}
 					</Fragment>
 				))}
-			</div>
+			</nav>
 
 			{/* Actions — tmux sessions, changelog, project settings, global settings, external links */}
 			<div className="flex items-center gap-0.5 flex-shrink-0" data-help-id="header.utilities">
@@ -537,7 +537,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 							<circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
 							<path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
 						</svg>
-						<span className="text-[0.6875rem] font-semibold">
+						<span className="text-micro font-semibold">
 							{updateDownloadStatus === "checking" ? t("update.checking") : t("update.downloading")}
 						</span>
 					</div>
@@ -552,7 +552,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 								aria-label={t("update.readyTooltip", { version: updateVersion })}
 							>
 								<UpdateReadyIcon className="w-4 h-4" />
-								<span className="text-[0.6875rem] font-semibold">{t("update.readyLabel")}</span>
+								<span className="text-micro font-semibold">{t("update.readyLabel")}</span>
 							</button>
 					</Tooltip>
 						{showUpdateDropdown && (
@@ -598,7 +598,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 							aria-label={t("quickShell.tooltipWithShortcut")}
 						>
 							<QuickShellIcon className="w-[1.125rem] h-[1.125rem]" />
-							{!compact && <span className="text-[0.6875rem] font-medium">{t("quickShell.open")}</span>}
+							{!compact && <span className="text-micro font-medium">{t("quickShell.open")}</span>}
 						</button>
 				</Tooltip>
 				)}
@@ -625,7 +625,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 							aria-label={t("projectTerminal.tooltipWithShortcut")}
 						>
 							<ProjectTerminalIcon className="w-[1.125rem] h-[1.125rem]" />
-							{!compact && <span className="text-[0.6875rem] font-medium">{t("projectTerminal.open")}</span>}
+							{!compact && <span className="text-micro font-medium">{t("projectTerminal.open")}</span>}
 						</button>
 				</Tooltip>
 				)}
@@ -759,7 +759,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 						aria-label={t("header.projectSettings")}
 					>
 						<WrenchIcon className="w-[1.125rem] h-[1.125rem]" />
-						{!compact && <span className="text-[0.6875rem] font-medium">{t("header.projLabel")}</span>}
+						{!compact && <span className="text-micro font-medium">{t("header.projLabel")}</span>}
 					</button>
 					</Tooltip>
 				)}
@@ -773,7 +773,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 						aria-label={t("header.globalSettingsTooltip")}
 					>
 						<SlidersIcon className="w-[1.125rem] h-[1.125rem]" />
-						{!compact && <span className="text-[0.6875rem] font-medium">{t("header.globalLabel")}</span>}
+						{!compact && <span className="text-micro font-medium">{t("header.globalLabel")}</span>}
 					</button>
 					</Tooltip>
 				)}

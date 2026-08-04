@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import HelpSpot from "./HelpSpot";
 import { toast } from "../toast";
 import { usePinchZoom } from "../hooks/usePinchZoom";
+import { useFocusTrap } from "../utils/useFocusTrap";
 
 interface TaskImageViewerProps {
 	images: SharedImage[];
@@ -46,7 +47,7 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 	const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
 	// null = auto (decide from aspect ratio); otherwise a manual override.
 	const [fitOverride, setFitOverride] = useState<"fit" | "width" | null>(null);
-	const containerRef = useRef<HTMLDivElement>(null);
+	const containerRef = useFocusTrap<HTMLDivElement>();
 	const thumbStripRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	// Ids whose fetch has already been kicked off — dedupes the priority effect
@@ -139,7 +140,6 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 			else if (e.key === "f" || e.key === "F") { consume(); setFullscreen((v) => !v); }
 		}
 		window.addEventListener("keydown", onKey, { capture: true });
-		containerRef.current?.focus();
 		return () => window.removeEventListener("keydown", onKey, { capture: true });
 	}, [go, onClose, images.length, fullscreen]);
 
@@ -287,7 +287,7 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 								onClick={() => go(-1)}
 								disabled={index === 0}
 								aria-label={t("imageViewer.prev")}
-								className="absolute left-3 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70 disabled:opacity-0 disabled:cursor-default transition-all"
+								className="absolute left-3 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70 disabled:opacity-0 disabled:cursor-default transition-[background-color,opacity]"
 							>
 								<span className="text-xl leading-none" style={{ fontFamily: ICON }}>{""}</span>
 							</button>
@@ -296,7 +296,7 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 								onClick={() => go(1)}
 								disabled={index === images.length - 1}
 								aria-label={t("imageViewer.next")}
-								className="absolute right-3 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70 disabled:opacity-0 disabled:cursor-default transition-all"
+								className="absolute right-3 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70 disabled:opacity-0 disabled:cursor-default transition-[background-color,opacity]"
 							>
 								<span className="text-xl leading-none" style={{ fontFamily: ICON }}>{""}</span>
 							</button>

@@ -43,6 +43,7 @@ const terminal = {
 	"paneMap.hint": "Tap a pane to jump to it.",
 	"paneMap.loading": "Reading layout…",
 	"paneMap.empty": "No panes to show.",
+	"paneMap.emptyHint": "Split the terminal with the tmux shortcuts to see panes here.",
 	"paneMap.goTo": "Go to {label}",
 	"paneMap.current": "current",
 	"paneMap.windows": "Windows",
@@ -97,6 +98,7 @@ const terminal = {
 	"tmux.pickPaneError": "Couldn't read the terminal layout — try again.",
 	"tmux.closePaneConfirmTitle": "Close the last pane?",
 	"tmux.closePaneConfirmMessage": "This is the only remaining pane — closing it will tear down the whole tmux session and terminate the agent. Are you sure?",
+	"tmux.closePaneConfirmLabel": "Close pane",
 	"tmux.selectPaneDesc": "Click on a pane to select it",
 	"tmux.resizePaneDesc": "Drag pane border to resize",
 
@@ -146,6 +148,7 @@ const terminal = {
 	// Tmux Session Manager
 	"tmuxSessions.title": "tmux Sessions",
 	"tmuxSessions.empty": "No active dev3 sessions",
+	"tmuxSessions.emptyHint": "Start a task on the board to create a session here.",
 	"tmuxSessions.sessionCount_one": "{count} session",
 	"tmuxSessions.sessionCount_other": "{count} sessions",
 	"tmuxSessions.copied": "Copied!",
@@ -158,6 +161,7 @@ const terminal = {
 	"tmuxSessions.killAll": "Kill All",
 	"tmuxSessions.killAllConfirmTitle": "Kill all tmux sessions",
 	"tmuxSessions.killAllConfirmMessage": "Kill all {count} dev3 tmux sessions? This will terminate all processes in them.",
+	"tmuxSessions.killAllConfirmLabel": "Kill all sessions",
 	"tmuxSessions.refresh": "Refresh",
 
 	// Spawn Agent
@@ -181,7 +185,7 @@ const terminal = {
 
 	// Ports
 	"ports.title": "Ports",
-	"ports.empty": "No listening ports",
+	"ports.empty": "No listening ports — start a dev server to expose one.",
 	"ports.openInBrowser": "Open in browser",
 	"ports.copyUrl": "Copy URL",
 	"ports.copied": "Copied!",

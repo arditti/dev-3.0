@@ -49,7 +49,7 @@ function PriorityFilterChips({
 						aria-pressed={isOn}
 						aria-label={t("priority.filterAria", { level, name: t(PRIORITY_NAME_KEYS[level]) })}
 						title={t(PRIORITY_NAME_KEYS[level])}
-						className={`font-mono text-[0.6875rem] font-semibold px-1.5 py-0.5 rounded transition-all ${
+						className={`font-mono text-micro font-semibold px-1.5 py-0.5 rounded transition-colors ${
 							isOn ? style.chipActive : style.chipIdle
 						}`}
 					>
@@ -120,6 +120,7 @@ function LabelFilterBar({
 						ref={inputRef}
 						type="text"
 						data-search-input="true"
+						aria-label={t("labels.searchAriaLabel")}
 						value={searchQuery}
 						onChange={(e) => onSearchChange(e.target.value)}
 						onKeyDown={(e) => {
@@ -130,7 +131,7 @@ function LabelFilterBar({
 							}
 						}}
 						placeholder={t("labels.searchPlaceholderTasks")}
-						className="w-full pl-7 pr-6 py-1.5 text-sm bg-base border border-edge rounded-lg text-fg placeholder:text-fg-muted focus:outline-none focus:border-edge-active transition-colors"
+						className="w-full pl-7 pr-6 py-1.5 text-sm bg-base border border-edge rounded-lg text-fg placeholder:text-fg-muted focus:border-edge-active transition-colors"
 					/>
 					{searchQuery && (
 						<button
@@ -172,6 +173,7 @@ function LabelFilterBar({
 						ref={inputRef}
 						type="text"
 						data-search-input="true"
+						aria-label={t("labels.searchAriaLabel")}
 						value={searchQuery}
 						onChange={(e) => onSearchChange(e.target.value)}
 						onKeyDown={(e) => {
@@ -183,7 +185,7 @@ function LabelFilterBar({
 							}
 						}}
 						placeholder={t("labels.searchPlaceholderTasks")}
-						className="w-full pl-7 pr-6 py-1 text-xs bg-base border border-edge rounded-lg text-fg placeholder:text-fg-muted focus:outline-none focus:border-edge-active transition-colors"
+						className="w-full pl-7 pr-6 py-1 text-xs bg-base border border-edge rounded-lg text-fg placeholder:text-fg-muted focus:border-edge-active transition-colors"
 					/>
 					{searchQuery && (
 						<button
@@ -234,7 +236,7 @@ function LabelFilterBar({
 						<button
 							type="button"
 							onClick={() => setFunnelOpen(true)}
-							className="text-[0.625rem] font-medium text-fg-3 hover:text-fg px-1.5 py-0.5 rounded-full border border-edge hover:border-edge-active transition-colors flex-shrink-0"
+							className="text-dense font-medium text-fg-3 hover:text-fg px-1.5 py-0.5 rounded-full border border-edge hover:border-edge-active transition-colors flex-shrink-0"
 						>
 							{t("labels.moreLabels", { count: String(hiddenLabelCount) })}
 						</button>

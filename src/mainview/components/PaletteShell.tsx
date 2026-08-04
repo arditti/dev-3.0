@@ -101,7 +101,7 @@ export function PaletteShell<T>({
 			<div
 				ref={trapRef}
 				tabIndex={-1}
-				className="bg-overlay border border-edge rounded-2xl shadow-2xl w-[34rem] max-h-[60vh] flex flex-col overflow-hidden outline-none"
+				className="bg-overlay border border-edge rounded-2xl shadow-2xl w-[34rem] max-w-[calc(100vw-2rem)] max-h-[60vh] flex flex-col overflow-hidden outline-none"
 				role="dialog"
 				aria-modal="true"
 				aria-label={ariaLabel}
@@ -118,7 +118,7 @@ export function PaletteShell<T>({
 						}}
 						onKeyDown={handleKeyDown}
 						placeholder={placeholder}
-						className="w-full bg-base border border-edge rounded-lg px-3 py-2 text-fg text-sm placeholder:text-fg-muted focus:outline-none focus:border-edge-active"
+						className="w-full bg-base border border-edge rounded-lg px-3 py-2 text-fg text-sm placeholder:text-fg-muted focus:border-edge-active"
 						aria-label={placeholder}
 					/>
 				</div>
