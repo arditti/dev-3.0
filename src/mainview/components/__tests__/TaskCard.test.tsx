@@ -6,6 +6,15 @@ import type { CodingAgent, Label, Project, Task, TaskPRBadgeInfo, TaskStatus } f
 import { getPreparingStageProgress } from "../../../shared/types";
 import type { AppAction, Route } from "../../state";
 
+/**
+ * The lifecycle rail is the status control. Its first button carries the full
+ * column label as its accessible name; the rail only *prints* a short uppercase
+ * form, so tests must not look the trigger up by the full label text.
+ */
+function statusTrigger(): HTMLElement {
+	return within(screen.getByTestId("task-card-rail")).getAllByRole("button")[0];
+}
+
 vi.mock("../../rpc", () => ({
 	api: {
 		request: {
@@ -283,6 +292,24 @@ describe("TaskCard", () => {
 			expect(screen.getByText("#7")).toBeInTheDocument();
 		});
 
+		it("shows a compact N/M fraction when the group really has siblings", () => {
+			const task = makeTask({ seq: 5, variantIndex: 2, groupId: "g1" });
+			renderCard(task, {
+				siblingMap: new Map([[
+					"g1",
+					[task, makeTask({ id: "t2", seq: 5, variantIndex: 1, groupId: "g1" }), makeTask({ id: "t3", seq: 5, variantIndex: 3, groupId: "g1" })],
+				]]),
+			});
+			expect(screen.getByText("2/3")).toBeInTheDocument();
+		});
+
+		it("hides the fraction for a lone variant — 1/1 says nothing", () => {
+			const task = makeTask({ seq: 5, variantIndex: 1, groupId: "g1" });
+			renderCard(task, { siblingMap: new Map([["g1", [task]]]) });
+			expect(screen.queryByText("1/1")).not.toBeInTheDocument();
+			expect(screen.getByText("#5")).toBeInTheDocument();
+		});
+
 		it("shows badge with seq, attempt, agent name and config for variant task", () => {
 			renderCard(makeTask({
 				seq: 5,
@@ -294,7 +321,7 @@ describe("TaskCard", () => {
 				configId: "claude-default",
 				groupId: "g1",
 			}));
-			expect(screen.getByText("#5 · Variant 1")).toBeInTheDocument();
+			expect(screen.getByText("#5")).toBeInTheDocument();
 			expect(screen.getByRole("img", { name: "Claude" })).toBeInTheDocument();
 			expect(screen.getByText("Default · sonnet")).toBeInTheDocument();
 		});
@@ -310,7 +337,7 @@ describe("TaskCard", () => {
 				configId: "codex-default",
 				groupId: "g1",
 			}));
-			expect(screen.getByText("#5 · Variant 2")).toBeInTheDocument();
+			expect(screen.getByText("#5")).toBeInTheDocument();
 			expect(screen.getByRole("img", { name: "Codex" })).toBeInTheDocument();
 			expect(screen.getByText("Default")).toBeInTheDocument();
 		});
@@ -326,7 +353,7 @@ describe("TaskCard", () => {
 				configId: "whatever",
 				groupId: "g1",
 			}));
-			expect(screen.getByText("#5 · Variant 3")).toBeInTheDocument();
+			expect(screen.getByText("#5")).toBeInTheDocument();
 		});
 
 		it("shows agent name without config when configId does not match", () => {
@@ -340,7 +367,7 @@ describe("TaskCard", () => {
 				configId: "nonexistent-config",
 				groupId: "g1",
 			}));
-			expect(screen.getByText("#5 · Variant 1")).toBeInTheDocument();
+			expect(screen.getByText("#5")).toBeInTheDocument();
 			expect(screen.getByRole("img", { name: "Claude" })).toBeInTheDocument();
 		});
 
@@ -376,7 +403,9 @@ describe("TaskCard", () => {
 					/>
 				</I18nProvider>,
 			);
-			expect(screen.getByText("#2 · Variant 1 · Custom")).toBeInTheDocument();
+			// Seq+attempt and the agent config are separate nodes in the identity header.
+			expect(screen.getByText("#2")).toBeInTheDocument();
+			expect(screen.getByText("Custom")).toBeInTheDocument();
 			expect(screen.getByText("First · fast")).toBeInTheDocument();
 		});
 	});
@@ -387,7 +416,9 @@ describe("TaskCard", () => {
 
 			expect(screen.getByRole("button", { name: "Run" })).toBeInTheDocument();
 			expect(screen.getByText("Run")).toBeInTheDocument();
-			expect(screen.getByText("To Do")).toBeInTheDocument();
+			// The rail prints the short form; the full column label is its a11y name.
+			expect(screen.getByText("TODO")).toBeInTheDocument();
+			expect(statusTrigger()).toHaveAccessibleName(/To Do/);
 		});
 
 		it("Run button triggers onLaunchVariants with in-progress", async () => {
@@ -513,7 +544,7 @@ describe("TaskCard", () => {
 			const user = userEvent.setup();
 			renderCard(makeTask({ status: "todo" }));
 
-			await user.click(screen.getByText("To Do"));
+			await user.click(statusTrigger());
 
 			expect(screen.getByText("Agent is Working")).toBeInTheDocument();
 			expect(screen.getByText("Cancelled")).toBeInTheDocument();
@@ -525,7 +556,7 @@ describe("TaskCard", () => {
 			const task = makeTask({ status: "todo" });
 			renderCard(task, { onLaunchVariants });
 
-			await user.click(screen.getByText("To Do"));
+			await user.click(statusTrigger());
 			await user.click(screen.getByText("Agent is Working"));
 
 			expect(onLaunchVariants).toHaveBeenCalledWith(task, "in-progress");
@@ -570,7 +601,7 @@ describe("TaskCard", () => {
 			const user = userEvent.setup();
 			renderCard(makeTask({ status: "cancelled" }));
 
-			await user.click(screen.getByText("Cancelled"));
+			await user.click(statusTrigger());
 
 			expect(screen.getByText("Delete")).toBeInTheDocument();
 		});
@@ -581,7 +612,7 @@ describe("TaskCard", () => {
 			const user = userEvent.setup();
 			renderCard(makeTask({ status: "in-progress", worktreePath: "/tmp/wt", branchName: "dev3/test" }));
 
-			await user.click(screen.getByText("Agent is Working"));
+			await user.click(statusTrigger());
 
 			expect(screen.getByText("To Do")).toBeInTheDocument();
 			expect(screen.getByText("Completed")).toBeInTheDocument();
@@ -600,11 +631,11 @@ describe("TaskCard", () => {
 			renderCard(makeTask({ status: "in-progress", worktreePath: "/tmp/wt", branchName: "dev3/test" }));
 
 			// Click the status trigger button (first match — the card's status button)
-			await user.click(screen.getAllByText("Agent is Working")[0]);
+			await user.click(statusTrigger());
 			expect(screen.getByText("Move to")).toBeInTheDocument();
 
 			// Click the trigger again to close — it's still the first match
-			await user.click(screen.getAllByText("Agent is Working")[0]);
+			await user.click(statusTrigger());
 			expect(screen.queryByText("Move to")).not.toBeInTheDocument();
 		});
 	});
@@ -639,7 +670,7 @@ describe("TaskCard", () => {
 			const user = userEvent.setup();
 			renderCard(makeTask({ status: "in-progress", worktreePath: "/tmp/wt", branchName: "dev3/test" }));
 
-			await user.click(screen.getAllByText("Agent is Working")[0]);
+			await user.click(statusTrigger());
 
 			const sheet = screen.getByTestId("task-status-sheet");
 			expect(within(sheet).getByText("Move to")).toBeInTheDocument();
@@ -654,7 +685,7 @@ describe("TaskCard", () => {
 			mockedApi.request.moveTask.mockResolvedValue({ ...task, status: "user-questions" });
 			renderCard(task, { navigate });
 
-			await user.click(screen.getAllByText("Agent is Working")[0]);
+			await user.click(statusTrigger());
 			await user.click(within(screen.getByTestId("task-status-sheet")).getByText("Has Questions"));
 
 			await waitFor(() => {
@@ -847,7 +878,7 @@ describe("TaskCard", () => {
 				description: "This is a much longer description that differs from title",
 			}));
 
-			expect(screen.getByText("Show full description")).toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Show full description" })).toBeInTheDocument();
 		});
 
 		it("does not show description button when title equals description", () => {
@@ -859,7 +890,7 @@ describe("TaskCard", () => {
 				description: "Same",
 			}));
 
-			expect(screen.queryByText("Show full description")).not.toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Show full description" })).not.toBeInTheDocument();
 		});
 
 		it("does not show description button for todo tasks even with long description", () => {
@@ -869,7 +900,7 @@ describe("TaskCard", () => {
 				description: "This is a much longer description that differs from title",
 			}));
 
-			expect(screen.queryByText("Show full description")).not.toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Show full description" })).not.toBeInTheDocument();
 		});
 
 		it("clicking description button opens detail modal", async () => {
@@ -882,7 +913,7 @@ describe("TaskCard", () => {
 				description: "Long description different from title",
 			}));
 
-			await user.click(screen.getByText("Show full description"));
+			await user.click(screen.getByRole("button", { name: "Show full description" }));
 
 			expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
 		});
@@ -896,7 +927,7 @@ describe("TaskCard", () => {
 				description: "This is a much longer description that differs from title",
 			}));
 
-			await user.click(screen.getByText("Show full description"));
+			await user.click(screen.getByRole("button", { name: "Show full description" }));
 
 			expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
 		});
@@ -914,7 +945,7 @@ describe("TaskCard", () => {
 			const runButton = screen.getByRole("button", { name: "Run" });
 			expect(runButton).toBeDisabled();
 
-			await user.click(screen.getByText("Show full description"));
+			await user.click(screen.getByRole("button", { name: "Show full description" }));
 
 			expect(onLaunchVariants).not.toHaveBeenCalled();
 		});
@@ -1107,7 +1138,7 @@ describe("TaskCard", () => {
 
 			renderCard(task, { dispatch, onTaskMoved });
 
-			await user.click(screen.getByText("Agent is Working"));
+			await user.click(statusTrigger());
 			await user.click(screen.getByText("Completed"));
 
 			await waitFor(() => {
@@ -1142,7 +1173,7 @@ describe("TaskCard", () => {
 
 			renderCard(task, { dispatch });
 
-			await user.click(screen.getByText("Agent is Working"));
+			await user.click(statusTrigger());
 			await user.click(screen.getByText("Cancelled"));
 
 			await waitFor(() => {
@@ -1166,7 +1197,7 @@ describe("TaskCard", () => {
 
 			renderCard(task, { dispatch, onTaskMoved });
 
-			await user.click(screen.getByText("Has Questions"));
+			await user.click(statusTrigger());
 			await user.click(screen.getByText("Agent is Working"));
 
 			await waitFor(() => {
@@ -1200,7 +1231,7 @@ describe("TaskCard", () => {
 
 			renderCard(task);
 
-			await user.click(screen.getByText("Has Questions"));
+			await user.click(statusTrigger());
 			await user.click(screen.getByText("Agent is Working"));
 
 			await waitFor(() => {
@@ -1357,7 +1388,7 @@ describe("TaskCard", () => {
 			const user = userEvent.setup();
 			renderCard(makeTask({ status: "in-progress", worktreePath: "/tmp/wt", branchName: "dev3/test" }));
 
-			await user.click(screen.getByText("Agent is Working"));
+			await user.click(statusTrigger());
 			expect(screen.getByText("Move to")).toBeInTheDocument();
 
 			// Click outside the menu
@@ -1380,7 +1411,7 @@ describe("TaskCard", () => {
 			renderCard(task, { dispatch });
 
 			// Open status dropdown
-			await user.click(screen.getByText("Cancelled"));
+			await user.click(statusTrigger());
 
 			// Click "Delete" in the dropdown — it's the button with danger text styling
 			const allDeleteBtns = screen.getAllByText("Delete");
@@ -1465,7 +1496,7 @@ describe("TaskCard", () => {
 				{ projectOverride: projectWithCustomColumns },
 			);
 
-			await user.click(screen.getByText("Agent is Working"));
+			await user.click(statusTrigger());
 
 			await waitFor(() => {
 				expect(screen.getByText("On Hold")).toBeInTheDocument();
@@ -1484,7 +1515,7 @@ describe("TaskCard", () => {
 				{ projectOverride: projectWithCustomColumns, dispatch },
 			);
 
-			await user.click(screen.getByText("Agent is Working"));
+			await user.click(statusTrigger());
 
 			await waitFor(() => {
 				expect(screen.getByText("On Hold")).toBeInTheDocument();
@@ -1509,7 +1540,7 @@ describe("TaskCard", () => {
 			);
 
 			// Card status button now shows custom column name instead of built-in status
-			await user.click(screen.getByText("On Hold"));
+			await user.click(statusTrigger());
 
 			await waitFor(() => {
 				expect(screen.getByText("Blocked")).toBeInTheDocument();
@@ -1526,7 +1557,7 @@ describe("TaskCard", () => {
 	});
 
 	describe("PR badge", () => {
-		it("wraps crowded completed-card footer badges instead of overlapping them", () => {
+		it("wraps crowded completed-card signal badges instead of overlapping them", () => {
 			renderCard(makeTask({ status: "completed" }), {
 				prInfo: {
 					number: 42,
@@ -1537,7 +1568,7 @@ describe("TaskCard", () => {
 				},
 			});
 
-			expect(screen.getByTestId("task-card-footer")).toHaveClass("flex-wrap");
+			expect(screen.getByTestId("task-card-signals")).toHaveClass("flex-wrap");
 		});
 
 		it("renders the PR badge in its own status-badge row for active tasks", () => {
@@ -1546,11 +1577,11 @@ describe("TaskCard", () => {
 			});
 
 			const badge = screen.getByText("#42").closest("button");
-			// Badge lives in the dedicated status-badge row, not crammed into the
-			// action row (Watch / + Variant) or the footer.
+			// The badge belongs to the git compartment of the signal strip, never to
+			// the reserved action strip (Open in / Watch / + Variant).
 			expect(screen.getByTestId("task-card-status-badges")).toContainElement(badge);
+			expect(screen.getByTestId("task-card-signals")).toContainElement(badge);
 			expect(screen.getByTestId("task-card-action-row")).not.toContainElement(badge);
-			expect(screen.getByTestId("task-card-footer")).not.toContainElement(badge);
 		});
 
 		it("shows PR badge when prInfo is provided", () => {
@@ -2033,7 +2064,8 @@ describe("TaskCard — drafts", () => {
 		const onLaunchVariants = vi.fn();
 		renderCard(makeTask({ draft: true }), { onEditDraft: vi.fn(), onLaunchVariants });
 
-		await userEvent.click(screen.getAllByText("To Do")[0]);
+		await userEvent.click(statusTrigger());
+		// The second click is on the menu's "Agent is Working" row, not the rail.
 		await userEvent.click(screen.getByText("Agent is Working"));
 
 		expect(onLaunchVariants).not.toHaveBeenCalled();
@@ -2084,7 +2116,7 @@ describe("hibernated card", () => {
 
 	it("refuses to open the status menu, so the column cannot be changed", () => {
 		const { container } = renderCard(hibernated());
-		const trigger = container.querySelector("[data-testid='task-card-footer'] button");
+		const trigger = container.querySelector("[data-testid='task-card-rail'] button");
 
 		expect(trigger).toBeDisabled();
 	});
