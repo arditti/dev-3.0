@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { TmuxClient } from "../../tmux";
-import { PANE_SWITCHER_FORMAT } from "../../tmux/formats";
+import { PANE_CAPTURE_FORMAT, PANE_SWITCHER_FORMAT } from "../../tmux/formats";
 import { tmuxBackendPort } from "../tmux-port";
 
 function stubClient() {
@@ -20,6 +20,19 @@ function stubClient() {
 		sendKeys: vi.fn(async () => undefined),
 		resizeWindow: vi.fn(async () => undefined),
 		capturePane: vi.fn(async () => "text"),
+		capturePaneWithFacts: vi.fn(async () => ({
+			facts: {
+				paneId: "%1",
+				width: 120,
+				height: 2,
+				dead: false,
+				pid: 7788,
+				serverEpoch: 1785758259,
+				historySize: 3,
+				alternateScreen: false,
+			},
+			rows: ["old-1", "old-2", "old-3", "screen-1", "screen-2"],
+		})),
 		killPane: vi.fn(async () => undefined),
 		killSession: vi.fn(async () => undefined),
 	};
@@ -78,12 +91,46 @@ describe("tmuxBackendPort", () => {
 		expect(client.resizeWindow).toHaveBeenCalledWith({ target: "task-a", cols: 120, rows: 40 });
 	});
 
-	it("captures the visible pane by default and bounded history on request", async () => {
+	it("captures the facts and the rows in ONE server turn", async () => {
 		const client = stubClient();
-		await portFor(client).capturePane("%1", false);
-		expect(client.capturePane).toHaveBeenCalledWith({ target: "%1", startLine: undefined });
-		await portFor(client).capturePane("%1", true);
-		expect(client.capturePane).toHaveBeenCalledWith({ target: "%1", startLine: -3000 });
+		const captured = await portFor(client).capturePane("%1", 50);
+		expect(client.capturePaneWithFacts).toHaveBeenCalledWith(PANE_CAPTURE_FORMAT, {
+			target: "%1",
+			startLine: -50,
+		});
+		// Split from the FRONT by the history depth observed in the same turn.
+		expect(captured?.history).toEqual(["old-1", "old-2", "old-3"]);
+		expect(captured?.viewport).toEqual(["screen-1", "screen-2"]);
+		expect(captured?.pane.historySize).toBe(3);
+		// The two-call variant is gone, so nothing can read them from separate turns.
+		expect(client.capturePane).not.toHaveBeenCalled();
+	});
+
+	it("asks for no scrollback at all when no history was requested", async () => {
+		const client = stubClient();
+		const captured = await portFor(client).capturePane("%1", 0);
+		expect(client.capturePaneWithFacts).toHaveBeenCalledWith(PANE_CAPTURE_FORMAT, { target: "%1" });
+		expect(captured?.history).toEqual([]);
+	});
+
+	it("clamps the split to the history the pane actually holds", async () => {
+		const client = stubClient();
+		client.capturePaneWithFacts = vi.fn(async () => ({
+			facts: {
+				paneId: "%1",
+				width: 120,
+				height: 2,
+				dead: false,
+				pid: 7788,
+				serverEpoch: 1785758259,
+				historySize: 1,
+				alternateScreen: false,
+			},
+			rows: ["old-1", "screen-1", "screen-2"],
+		}));
+		const captured = await portFor(client).capturePane("%1", 500);
+		expect(captured?.history).toEqual(["old-1"]);
+		expect(captured?.viewport).toEqual(["screen-1", "screen-2"]);
 	});
 
 	it("passes best-effort teardown through to tmux", async () => {

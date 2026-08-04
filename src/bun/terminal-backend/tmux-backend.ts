@@ -12,14 +12,27 @@
  */
 
 import {
+	boundCaptureLines,
+	captureIncarnation,
+	clampHistoryLines,
+	clampMaxBytes,
+	knownFact,
+	paneCaptureMiss,
+	paneIdentityDrift,
+	TERMINAL_CAPTURE_VERSION,
+	unknownFact,
+	type TerminalPaneCapture,
+	type TerminalPaneCaptureIdentity,
+	type TerminalPaneCaptureRequest,
+	type TerminalPaneLiveness,
+} from "./capture";
+import {
 	isTerminalLaunchSpec,
 	isTerminalSessionId,
 	isTerminalSize,
 	terminalLaunchCommand,
 	type TerminalAttachment,
 	type TerminalBackend,
-	type TerminalCapture,
-	type TerminalCaptureOptions,
 	type TerminalSessionId,
 	type TerminalSessionSpec,
 	type TerminalSessionState,
@@ -39,7 +52,11 @@ import {
 	sessionNotFound,
 	viewNotFound,
 } from "./errors";
-import { tmuxBackendPort, type TmuxBackendPort } from "./tmux-port";
+import { tmuxBackendPort, type TmuxBackendPort, type TmuxPaneObservation } from "./tmux-port";
+
+function reasonOf(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
 
 /** tmux runs one shell-ready string, so a structured launch is quoted into one. */
 function launchCommand(spec: TerminalSessionSpec | TerminalViewSpec): string | undefined {
@@ -89,6 +106,138 @@ export class TmuxTerminalBackend implements TerminalBackend {
 		if (panes.length === 0) return null;
 		const views: TerminalViewState[] = panes.map((pane) => ({ id: pane.paneId, focused: pane.active }));
 		return { id, views, focusedViewId: views.find((view) => view.focused)?.id ?? null };
+	}
+
+	/**
+	 * Read-only, and structurally incapable of side effects: it asks the server for
+	 * one pane's rows and for tmux's own accounting of that pane. `select-pane`,
+	 * `send-keys`, and `resize-window` are never on this path.
+	 *
+	 * tmux answers synchronously, so the text is true as of the read itself: its
+	 * freshness is `current` by construction. It cannot say when the screen last
+	 * CHANGED, though — it reports the live screen, not a change log. What tmux
+	 * cannot answer is loss: it keeps no account of output it dropped, so `gaps`
+	 * comes back unknown-with-reason instead of a zero that would read as "nothing
+	 * was lost". The pane is observed BEFORE and AFTER the content read, so a pane
+	 * that dies and is replaced mid-read is reported rather than impersonated.
+	 */
+	async captureView(
+		id: TerminalSessionId,
+		viewId: TerminalViewId,
+		request: TerminalPaneCaptureRequest = {},
+	): Promise<TerminalPaneCapture> {
+		const blind: TerminalPaneCaptureIdentity = {
+			backend: this.kind,
+			sessionId: id,
+			viewId,
+			incarnation: unknownFact("the pane was not observed"),
+			epoch: unknownFact("the pane was not observed"),
+		};
+		if (!isTerminalSessionId(id)) {
+			return paneCaptureMiss(blind, "session-absent", `session id ${JSON.stringify(id)} is not portable`);
+		}
+		// Only a SUCCESSFULLY observed absence is an absence. A server that cannot be
+		// asked is unreadable, because "we could not look" and "it is not there" lead
+		// to opposite decisions.
+		let present: boolean;
+		try {
+			present = await this.port.hasSession(id);
+		} catch (err) {
+			return paneCaptureMiss(blind, "unreadable", `tmux could not be asked about the session: ${reasonOf(err)}`);
+		}
+		if (!present) {
+			return paneCaptureMiss(blind, "session-absent", `tmux has no session ${JSON.stringify(id)}`);
+		}
+
+		let before: TmuxPaneObservation | null;
+		try {
+			before = await this.port.observePane(id, viewId);
+		} catch (err) {
+			return paneCaptureMiss(blind, "unreadable", `tmux could not describe the pane: ${reasonOf(err)}`);
+		}
+		if (!before) {
+			return paneCaptureMiss(blind, "view-absent", `pane ${JSON.stringify(viewId)} is not part of the session`);
+		}
+
+		const identity = this.captureIdentityOf(id, before);
+		const liveness: TerminalPaneLiveness = before.dead ? "dead" : "live";
+		const historyLines = clampHistoryLines(request.historyLines);
+		const maxBytes = clampMaxBytes(request.maxBytes);
+
+		// ONE server turn for the facts AND the rows, so no output can land between
+		// them and duplicate or drop a row while the result claims to be one moment.
+		let captured: Awaited<ReturnType<TmuxBackendPort["capturePane"]>>;
+		try {
+			captured = await this.port.capturePane(viewId, historyLines);
+		} catch (err) {
+			return paneCaptureMiss(identity, "unreadable", `tmux capture failed: ${reasonOf(err)}`, liveness);
+		}
+		if (!captured) {
+			return paneCaptureMiss(identity, "view-absent", `pane ${JSON.stringify(viewId)} disappeared mid-capture`, liveness);
+		}
+
+		const pane = captured.pane;
+		const drift = paneIdentityDrift(identity, this.captureIdentityOf(id, pane));
+		if (drift) return paneCaptureMiss(identity, "replaced", `the pane was replaced mid-capture: ${drift}`, liveness);
+
+		// A full-screen program owns the screen and freezes the pane's scrollback, so
+		// history there is not recent output — it is whatever was on screen before that
+		// program started. Report it absent by nature rather than as stale activity.
+		const alternate = pane.alternateScreen;
+		const readAt = new Date().toISOString();
+		const bounded = boundCaptureLines(
+			{
+				viewport: captured.viewport,
+				history: alternate ? [] : captured.history,
+				historyAvailable: alternate ? 0 : pane.historySize,
+			},
+			{ historyLines, maxBytes },
+		);
+		return {
+			version: TERMINAL_CAPTURE_VERSION,
+			identity,
+			readAt,
+			availability: "captured",
+			sourceUpdatedAt: knownFact(readAt),
+			// tmux reports the live screen, not a change log, so it cannot say when that
+			// screen last changed — and claiming "just now" would be the same lie.
+			lastChangeAgeMs: unknownFact("tmux reports the live screen, not when it last changed"),
+			freshness: knownFact("current" as const),
+			liveness,
+			size: knownFact({ cols: pane.cols, rows: pane.rows }),
+			screen: knownFact(alternate ? "alternate" : "normal"),
+			content: bounded.content,
+			bounds: alternate ? { ...bounded.bounds, historyLinesAvailable: knownFact(0) } : bounded.bounds,
+			gaps: unknownFact("tmux keeps no account of output it dropped"),
+			issues: [
+				...bounded.issues,
+				{
+					code: "unknown" as const,
+					detail: "tmux cannot say whether output was dropped, or whether the screen was reset",
+				},
+			],
+		};
+	}
+
+	/**
+	 * tmux's pane id, its process, and the server's epoch — hashed, so no pid
+	 * leaves the seam. The epoch is there because tmux has no per-process start
+	 * signature: without it a reused pid under a restarted server (where `%N` ids
+	 * begin again) would compare equal to a completely different pane.
+	 */
+	private captureIdentityOf(
+		id: TerminalSessionId,
+		pane: TmuxPaneObservation,
+	): TerminalPaneCaptureIdentity {
+		return {
+			backend: this.kind,
+			sessionId: id,
+			viewId: pane.paneId,
+			incarnation: knownFact(captureIncarnation(pane.serverEpoch, pane.paneId, pane.pid)),
+			// tmux has no pane-set generation: panes come and go without any counter the
+			// server exposes, so an epoch here would be invented rather than observed.
+			epoch: unknownFact("tmux publishes no pane-set generation"),
+		};
 	}
 
 	async attachView(id: TerminalSessionId, viewId?: TerminalViewId): Promise<TerminalAttachment> {
@@ -160,6 +309,7 @@ export class TmuxTerminalBackend implements TerminalBackend {
 		this.attachments.clear();
 	}
 
+
 	private async present(id: TerminalSessionId): Promise<boolean> {
 		if (!isTerminalSessionId(id)) return false;
 		return this.guard("hasSession", id, () => this.port.hasSession(id));
@@ -210,13 +360,6 @@ class TmuxAttachment implements TerminalAttachment {
 		// tmux geometry lives on the window, so a resize applies to the session's
 		// whole layout — a recorded intentional difference from per-view native.
 		return this.run("resize", () => this.port.resize(this.sessionId, size.cols, size.rows));
-	}
-
-	async capture(opts: TerminalCaptureOptions = {}): Promise<TerminalCapture> {
-		const text = await this.run("capture", () =>
-			this.port.capturePane(this.viewId, opts.includeScrollback ?? false),
-		);
-		return { viewId: this.viewId, text };
 	}
 
 	async detach(): Promise<void> {

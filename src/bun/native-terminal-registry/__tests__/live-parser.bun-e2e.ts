@@ -215,7 +215,7 @@ async function run(): Promise<void> {
 
 	try {
 		// ── 1. live session: parsing runs while ConPTY/PTY output streams ──
-		const main = await start("lp-main", { launch, liveParser: true, stateTap: true, timeoutMs: 20_000 });
+		const main = await start("lp-main", { launch, captureMode: "semantic", stateTap: true, timeoutMs: 20_000 });
 		check(main.status === "started", "lp-main started with the live parser enabled");
 		check(isProcessAlive(main.record.host.pid), "lp-main host is alive");
 
@@ -228,7 +228,10 @@ async function run(): Promise<void> {
 		check(dsr !== null, "DSR probe inside the shell completed");
 		check(dsr?.[1] === "1", `parser answered the cursor-position query EXACTLY once (got ${dsr?.[1] ?? "none"})`);
 
-		const liveDuringOutput = await pollParserState("lp-main", (s) => s.health.status === "live" && s.ingested.frames > 0);
+		const liveDuringOutput = await pollParserState(
+			"lp-main",
+			(s) => s.health.status === "live" && s.ingested.frames > 0 && (isWindows || s.ingested.replies >= 1),
+		);
 		check(liveDuringOutput !== null, "parser state stays live while output streams");
 		const replies = liveDuringOutput?.ingested.replies ?? 0;
 		if (isWindows) {
@@ -314,7 +317,7 @@ async function run(): Promise<void> {
 
 		// ── 3. overflow: bounded + explicit, session stays healthy ──
 		process.env.DEV3_NATIVE_SESSION_PARSER_QUEUE_MAX_BYTES = "1024";
-		const overflow = await start("lp-overflow", { launch, liveParser: true, timeoutMs: 20_000 });
+		const overflow = await start("lp-overflow", { launch, captureMode: "semantic", timeoutMs: 20_000 });
 		delete process.env.DEV3_NATIVE_SESSION_PARSER_QUEUE_MAX_BYTES;
 		const cOf = new NativeSessionClient();
 		await cOf.connect(overflow.record, readFileSync(tokenFile("lp-overflow"), "utf8").trim());
@@ -346,7 +349,7 @@ async function run(): Promise<void> {
 
 		// ── 4. parser fault injection: contained, nothing else dies ──
 		process.env.DEV3_NATIVE_SESSION_PARSER_FAULT = "ingest";
-		const fault = await start("lp-fault", { launch, liveParser: true, timeoutMs: 20_000 });
+		const fault = await start("lp-fault", { launch, captureMode: "semantic", timeoutMs: 20_000 });
 		delete process.env.DEV3_NATIVE_SESSION_PARSER_FAULT;
 		const cF = new NativeSessionClient();
 		await cF.connect(fault.record, readFileSync(tokenFile("lp-fault"), "utf8").trim());

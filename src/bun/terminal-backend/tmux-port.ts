@@ -8,11 +8,38 @@
  */
 
 import { tmux, type TmuxClient } from "../tmux";
-import { PANE_SWITCHER_FORMAT } from "../tmux/formats";
+import { PANE_CAPTURE_FORMAT, PANE_SWITCHER_FORMAT } from "../tmux/formats";
 
 export interface TmuxPane {
 	readonly paneId: string;
 	readonly active: boolean;
+}
+
+/** Everything a capture needs to describe a pane, from ONE `list-panes` sweep. */
+export interface TmuxPaneObservation {
+	readonly paneId: string;
+	readonly cols: number;
+	readonly rows: number;
+	readonly dead: boolean;
+	/** The pane's foreground process group leader — part of the incarnation key. */
+	readonly pid: number;
+	/**
+	 * The tmux server's session-creation epoch. tmux publishes no per-process start
+	 * signature, so this is what keeps a reused pid from comparing equal across a
+	 * server restart, which is exactly when `%N` pane ids begin again.
+	 */
+	readonly serverEpoch: number;
+	/** Scrollback lines the server currently holds for this pane. */
+	readonly historySize: number;
+	/** True while a full-screen program owns the pane, so its history is frozen. */
+	readonly alternateScreen: boolean;
+}
+
+/** One point-in-time capture: rows plus the facts observed in the same turn. */
+export interface TmuxContiguousCapture {
+	readonly pane: TmuxPaneObservation;
+	readonly viewport: string[];
+	readonly history: string[];
 }
 
 export interface TmuxLaunch {
@@ -32,13 +59,38 @@ export interface TmuxBackendPort {
 	/** Raw text delivered to the pane's process, control bytes included. */
 	writePane(paneId: string, data: string): Promise<void>;
 	resize(session: string, cols: number, rows: number): Promise<void>;
-	capturePane(paneId: string, includeScrollback: boolean): Promise<string>;
+	/** Geometry, liveness, incarnation, and history depth — no content. */
+	observePane(session: string, paneId: string): Promise<TmuxPaneObservation | null>;
+	/**
+	 * ONE contiguous capture: the pane's facts and its rows from a single server
+	 * turn, already split into history and viewport. `null` when the pane is gone.
+	 */
+	capturePane(paneId: string, historyLines: number): Promise<TmuxContiguousCapture | null>;
 	killPane(paneId: string, bestEffort: boolean): Promise<void>;
 	killSession(session: string, bestEffort: boolean): Promise<void>;
 }
 
-/** Bounded history so a burst is fully visible without an unbounded capture. */
-const SCROLLBACK_START_LINE = -3000;
+function paneFrom(row: {
+	paneId: string;
+	width: number;
+	height: number;
+	dead: boolean;
+	pid: number;
+	serverEpoch: number;
+	historySize: number;
+	alternateScreen: boolean;
+}): TmuxPaneObservation {
+	return {
+		paneId: row.paneId,
+		cols: row.width,
+		rows: row.height,
+		dead: row.dead,
+		pid: row.pid,
+		serverEpoch: row.serverEpoch,
+		historySize: row.historySize,
+		alternateScreen: row.alternateScreen,
+	};
+}
 
 /** The production port over the typed tmux client singleton. */
 export function tmuxBackendPort(client: TmuxClient = tmux): TmuxBackendPort {
@@ -80,11 +132,29 @@ export function tmuxBackendPort(client: TmuxClient = tmux): TmuxBackendPort {
 
 		resize: (session, cols, rows) => client.resizeWindow({ target: session, cols, rows }),
 
-		capturePane: (paneId, includeScrollback) =>
-			client.capturePane({
+		async observePane(session, paneId) {
+			const rows = await client.listPanes(PANE_CAPTURE_FORMAT, { target: session, scope: "session" });
+			const row = rows.find((entry) => entry.paneId === paneId);
+			return row ? paneFrom(row) : null;
+		},
+
+		async capturePane(paneId, historyLines) {
+			const captured = await client.capturePaneWithFacts(PANE_CAPTURE_FORMAT, {
 				target: paneId,
-				startLine: includeScrollback ? SCROLLBACK_START_LINE : undefined,
-			}),
+				...(historyLines > 0 ? { startLine: -historyLines } : {}),
+			});
+			if (!captured) return null;
+			const pane = paneFrom(captured.facts);
+			// Split from the FRONT by the history depth observed in the same turn:
+			// `capture-pane` trims trailing blank rows, so counting the viewport from the
+			// end would eat history on a partly-blank screen.
+			const historyRows = historyLines > 0 ? Math.min(pane.historySize, historyLines) : 0;
+			return {
+				pane,
+				history: captured.rows.slice(0, historyRows),
+				viewport: captured.rows.slice(historyRows),
+			};
+		},
 
 		killPane: (paneId, bestEffort) => client.killPane(paneId, { bestEffort }),
 

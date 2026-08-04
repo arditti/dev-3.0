@@ -17,8 +17,28 @@
  * only node:fs/node:path so the pure logic is unit-testable under vitest.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { journalFile, logFile, parserStateFile, recordFile, sessionDir, streamTapFile, tokenFile } from "./paths";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmdirSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { withOwnedSessionState, type SessionStateLockOptions } from "./session-lock";
+import {
+	CAPTURE_RECORD_PATTERN,
+	journalFile,
+	logFile,
+	parserStateFile,
+	recordFile,
+	sessionDir,
+	streamTapFile,
+	tokenFile,
+} from "./paths";
 
 export const NATIVE_SESSION_SCHEMA_VERSION = 1 as const;
 export const NATIVE_SESSION_HOST_ARTIFACT_VERSION = "1" as const;
@@ -43,6 +63,27 @@ export interface NativeSessionIdentity {
 	paneId?: string;
 }
 
+/**
+ * Capture surfaces a host publishes. Each is INDEPENDENT: a host may advertise
+ * either, both, or neither, and an empty list is omitted entirely. Absence is the
+ * load-bearing case — it is how a reader states "not enabled" as a fact.
+ */
+export const NATIVE_SESSION_CAPTURE_CAPABILITY = "semantic-snapshot-v1" as const;
+export const NATIVE_SESSION_TEXT_CAPTURE_CAPABILITY = "plain-text-capture-v1" as const;
+
+export type NativeSessionCaptureSurface =
+	| typeof NATIVE_SESSION_CAPTURE_CAPABILITY
+	| typeof NATIVE_SESSION_TEXT_CAPTURE_CAPABILITY;
+
+const CAPTURE_SURFACES: readonly NativeSessionCaptureSurface[] = [
+	NATIVE_SESSION_CAPTURE_CAPABILITY,
+	NATIVE_SESSION_TEXT_CAPTURE_CAPABILITY,
+];
+
+export interface NativeSessionCapabilities {
+	capture?: NativeSessionCaptureSurface[];
+}
+
 export interface NativeSessionRecord {
 	schemaVersion: typeof NATIVE_SESSION_SCHEMA_VERSION;
 	sessionId: string;
@@ -53,6 +94,13 @@ export interface NativeSessionRecord {
 	 * unchanged and ignores it. Absent for sessions started outside a task.
 	 */
 	identity?: NativeSessionIdentity;
+	/**
+	 * ADDITIVE and optional at schemaVersion 1, on the same terms as `identity`:
+	 * an older dev3 parses such a record unchanged and ignores this field, and a
+	 * record without it is not a downgrade — it is the honest statement that the
+	 * host has no capture surface. No migration, no schema break.
+	 */
+	capabilities?: NativeSessionCapabilities;
 	protocolVersion: number;
 	hostArtifactVersion: string;
 	runtimeVersion: string;
@@ -87,6 +135,19 @@ function parseIdentity(value: unknown): NativeSessionIdentity | null {
 	if (typeof raw.seq === "string" && isSafeIdentityValue(raw.seq)) identity.seq = raw.seq;
 	if (typeof raw.paneId === "string" && isSafeIdentityValue(raw.paneId)) identity.paneId = raw.paneId;
 	return identity.seq || identity.paneId ? identity : null;
+}
+
+/**
+ * Read the optional capabilities block. An unrecognised surface is DROPPED, never
+ * rejected: a capability a newer host advertises must not cost an older dev3 the
+ * whole session, and dropping lands on "fewer capabilities", the safe side.
+ */
+function parseCapabilities(value: unknown): NativeSessionCapabilities | null {
+	if (!value || typeof value !== "object") return null;
+	const raw = (value as Record<string, unknown>).capture;
+	if (!Array.isArray(raw)) return null;
+	const capture = CAPTURE_SURFACES.filter((surface) => raw.includes(surface));
+	return capture.length > 0 ? { capture } : null;
 }
 
 /** Belt-and-braces: only the shapes `process-naming.ts` can produce are surfaced. */
@@ -140,11 +201,13 @@ export function parseRecord(text: string): NativeSessionRecord | null {
 	// Refuse to surface a token even if a malformed writer smuggled one in.
 	if ("token" in r) return null;
 	const identity = parseIdentity(r.identity);
+	const capabilities = parseCapabilities(r.capabilities);
 	return {
 		schemaVersion: NATIVE_SESSION_SCHEMA_VERSION,
 		sessionId: r.sessionId,
 		paneId: r.paneId,
 		...(identity ? { identity } : {}),
+		...(capabilities ? { capabilities } : {}),
 		protocolVersion: r.protocolVersion,
 		hostArtifactVersion: r.hostArtifactVersion,
 		runtimeVersion: r.runtimeVersion,
@@ -212,11 +275,16 @@ export function inspectRecordFile(sessionId: string): RecordInspection {
 
 /** Atomically publish a record (tmp write + rename) so readers never see a torn file. */
 export function writeRecordAtomic(record: NativeSessionRecord): void {
-	const dir = sessionDir(record.sessionId);
+	writeSerializedRecordAtomic(record.sessionId, serializeRecord(record));
+}
+
+/** Synchronous publish primitive for an already-serialized record. */
+export function writeSerializedRecordAtomic(sessionId: string, serialized: string): void {
+	const dir = sessionDir(sessionId);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const target = recordFile(record.sessionId);
+	const target = recordFile(sessionId);
 	const tmp = `${target}.${process.pid}.tmp`;
-	writeFileSync(tmp, serializeRecord(record), { mode: 0o600 });
+	writeFileSync(tmp, serialized, { mode: 0o600 });
 	renameSync(tmp, target);
 }
 
@@ -240,24 +308,60 @@ export function readToken(sessionId: string): string | null {
 }
 
 /**
- * Remove one session's on-disk state, but ONLY when its current token matches
- * `expectedToken`. This is the ownership guard: a stale stop/cleanup cannot
- * erase a newer session that reused the same session id, and one implementation
- * only ever deletes state it can prove it owns. The record is removed last so a
- * concurrent start cannot observe a half-cleared session. Returns false when the
- * token guard rejects the removal.
+ * Every capture artifact of this session, whichever producers wrote them. The path
+ * is producer-scoped, so cleanup matches the bounded family instead of one name —
+ * and it stays inside the session directory, matching nothing else.
  */
-export function removeSessionState(sessionId: string, expectedToken: string | null): boolean {
-	if (expectedToken === null || readToken(sessionId) !== expectedToken) return false;
-	const record = readRecord(sessionId);
+export interface SessionStateCleanupEffects {
+	readdir(path: string): string[];
+	unlink(path: string): void;
+	rmdir(path: string): void;
+}
+
+const nodeCleanupEffects: SessionStateCleanupEffects = {
+	readdir: (path) => readdirSync(path),
+	unlink: (path) => unlinkSync(path),
+	rmdir: (path) => rmdirSync(path),
+};
+
+function cleanupErrorCode(error: unknown): string | undefined {
+	return (error as NodeJS.ErrnoException).code;
+}
+
+function captureFamilyFiles(sessionId: string, effects: SessionStateCleanupEffects): string[] {
+	try {
+		return effects
+			.readdir(sessionDir(sessionId))
+			.filter((entry) => CAPTURE_RECORD_PATTERN.test(entry))
+			.map((entry) => join(sessionDir(sessionId), entry));
+	} catch (error) {
+		if (cleanupErrorCode(error) === "ENOENT") return [];
+		throw error;
+	}
+}
+
+function unlinkForCleanup(path: string, effects: SessionStateCleanupEffects): void {
+	try {
+		effects.unlink(path);
+	} catch (error) {
+		if (cleanupErrorCode(error) !== "ENOENT") throw error;
+	}
+}
+
+/**
+ * Remove one session's on-disk state only when its current token matches
+ * `expectedToken`. The record is parsed before lock entry, then token, record,
+ * capture artifacts, and cleanup are mutated under one generation-owned lock.
+ */
+function removeOwnedSessionState(
+	sessionId: string,
+	record: NativeSessionRecord | null,
+	effects: SessionStateCleanupEffects,
+): true {
 	const atomicFiles = [journalFile(sessionId), parserStateFile(sessionId), tokenFile(sessionId), recordFile(sessionId)];
 	if (record && Number.isInteger(record.host.pid) && record.host.pid > 0) {
 		for (const file of atomicFiles) {
-			try {
-				unlinkSync(`${file}.${record.host.pid}.tmp`);
-			} catch {
-				// absent, already published, or not owned by this recorded host
-			}
+			unlinkForCleanup(`${file}.${record.host.pid}.tmp`, effects);
 		}
 	}
 	const files = [
@@ -268,17 +372,44 @@ export function removeSessionState(sessionId: string, expectedToken: string | nu
 		tokenFile(sessionId),
 		recordFile(sessionId),
 	];
-	for (const file of files) {
-		try {
-			if (existsSync(file)) unlinkSync(file);
-		} catch {
-			// best-effort — a leftover file is harmless; liveness is always re-checked
-		}
-	}
+	// Ownership was verified INSIDE the lock, and the lock is held across every
+	// deletion below, so nothing can take ownership mid-cleanup. Re-checking after the
+	// token file itself is unlinked would report failure for a cleanup that succeeded.
+	for (const file of captureFamilyFiles(sessionId, effects)) unlinkForCleanup(file, effects);
+	for (const file of files) unlinkForCleanup(file, effects);
 	try {
-		rmdirSync(sessionDir(sessionId));
-	} catch {
-		// dir not empty (unknown sibling files) or already gone — leave it
+		effects.rmdir(sessionDir(sessionId));
+	} catch (error) {
+		if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(cleanupErrorCode(error) ?? "")) throw error;
 	}
 	return true;
 }
+
+/** Internal dependency seam for deterministic cleanup error injection. */
+export class SessionStateCleanupRuntime {
+	private readonly effects: SessionStateCleanupEffects;
+
+	constructor(effects: Partial<SessionStateCleanupEffects> = {}) {
+		this.effects = { ...nodeCleanupEffects, ...effects };
+	}
+
+	async removeSessionState(
+		sessionId: string,
+		expectedToken: string | null,
+		lockOptions: SessionStateLockOptions = {},
+	): Promise<boolean> {
+		if (expectedToken === null) return false;
+		const record = readRecord(sessionId);
+		const result = await withOwnedSessionState(
+			sessionId,
+			expectedToken,
+			() => removeOwnedSessionState(sessionId, record, this.effects),
+			lockOptions,
+		);
+		return result.kind === "applied";
+	}
+}
+
+const defaultSessionStateCleanup = new SessionStateCleanupRuntime();
+
+export const removeSessionState = defaultSessionStateCleanup.removeSessionState.bind(defaultSessionStateCleanup);

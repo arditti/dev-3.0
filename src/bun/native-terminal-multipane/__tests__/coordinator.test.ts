@@ -337,7 +337,7 @@ describe("native multipane coordinator publishGeometry", () => {
 	});
 });
 
-describe("native multipane coordinator capturePane", () => {
+describe("native multipane coordinator capture source", () => {
 	let root: string;
 	let deps: FakeRegistry;
 
@@ -352,17 +352,63 @@ describe("native multipane coordinator capturePane", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("captures the pane's text from the connection's capture method", async () => {
+	it("sources a capture from the pane's parser snapshot, without connecting", async () => {
 		const coordinator = await createWithPanes(deps, 2);
-		// The FakeRegistry captures joined inputs — write something first.
-		await coordinator.writePane("pane-1", "hello");
-		const text = await coordinator.capturePane("pane-1", false);
-		expect(typeof text).toBe("string");
+		await coordinator.writePane("pane-1", "hello\r");
+		const source = coordinator.readPaneCaptureSource("pane-1");
+		expect(source.kind).toBe("snapshot");
+		if (source.kind !== "snapshot") throw new Error("expected a snapshot source");
+		expect(source.state.screen.map((line) => line.text).join("\n")).toContain("hello");
+	});
+
+	it("reports a host that advertises no capture surface as disabled", async () => {
+		const coordinator = await createWithPanes(deps, 2);
+		const pane = deps.panes.get(`${coordinator.coordinatorId}-pane-1`);
+		if (!pane) throw new Error("fake pane missing");
+		// What an OLD record looks like: no capabilities block at all. The verdict
+		// comes from the host's own statement, never from a timer.
+		delete pane.record.capabilities;
+		pane.parserState = "absent";
+		expect(coordinator.readPaneCaptureSource("pane-1").kind).toBe("disabled");
+	});
+
+	it("reports a host that advertises capture but has not published yet as empty", async () => {
+		const coordinator = await createWithPanes(deps, 2);
+		const pane = deps.panes.get(`${coordinator.coordinatorId}-pane-1`);
+		if (!pane) throw new Error("fake pane missing");
+		pane.parserState = "absent"; // capability still advertised — genuinely "not yet"
+		const source = coordinator.readPaneCaptureSource("pane-1");
+		expect(source.kind).toBe("empty");
+		if (source.kind !== "empty") throw new Error("expected empty");
+		expect(source.reason).toContain("not published its first screen");
+	});
+
+	it("does not read a snapshot at all for a host with no capture capability", async () => {
+		const coordinator = await createWithPanes(deps, 2);
+		const pane = deps.panes.get(`${coordinator.coordinatorId}-pane-1`);
+		if (!pane) throw new Error("fake pane missing");
+		delete pane.record.capabilities;
+		let inspected = 0;
+		const inner = deps.inspectPaneParserState!.bind(deps);
+		deps.inspectPaneParserState = (sessionId) => {
+			inspected++;
+			return inner(sessionId);
+		};
+		expect(coordinator.readPaneCaptureSource("pane-1").kind).toBe("disabled");
+		expect(inspected).toBe(0);
+	});
+
+	it("reports an unbelievable snapshot as unreadable", async () => {
+		const coordinator = await createWithPanes(deps, 2);
+		const pane = deps.panes.get(`${coordinator.coordinatorId}-pane-1`);
+		if (!pane) throw new Error("fake pane missing");
+		pane.parserState = "rejected";
+		expect(coordinator.readPaneCaptureSource("pane-1").kind).toBe("unreadable");
 	});
 
 	it("rejects capture of an unknown pane", async () => {
 		const coordinator = await createWithPanes(deps, 2);
-		await expect(coordinator.capturePane("ghost", false)).rejects.toBeInstanceOf(PaneNotFoundError);
+		expect(() => coordinator.readPaneCaptureSource("ghost")).toThrow(PaneNotFoundError);
 	});
 });
 

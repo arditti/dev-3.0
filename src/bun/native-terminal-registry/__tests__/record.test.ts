@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { journalFile, NATIVE_SESSIONS_DIR_ENV, parserStateFile, recordFile, sessionDir, tokenFile } from "../paths";
 import {
+	journalFile,
+	NATIVE_SESSIONS_DIR_ENV,
+	NATIVE_SESSION_LOCKS_DIR_ENV,
+	parserStateFile,
+	recordFile,
+	sessionDir,
+	tokenFile,
+} from "../paths";
+import {
+	NATIVE_SESSION_CAPTURE_CAPABILITY,
 	NATIVE_SESSION_SCHEMA_VERSION,
+	SessionStateCleanupRuntime,
 	parseRecord,
 	readRecord,
 	readToken,
@@ -14,6 +24,10 @@ import {
 	writeToken,
 	type NativeSessionRecord,
 } from "../record";
+
+const LOCK_OPTIONS = {
+	processEvidence: { inspect: async (pid: number) => ({ status: "alive" as const, startSignature: `${pid}@test` }) },
+};
 
 function sample(overrides: Partial<NativeSessionRecord> = {}): NativeSessionRecord {
 	return {
@@ -35,6 +49,50 @@ function sample(overrides: Partial<NativeSessionRecord> = {}): NativeSessionReco
 		...overrides,
 	};
 }
+
+describe("native-session record — optional capture capability", () => {
+	it("round-trips the capability a parser-enabled host advertises", () => {
+		const record = sample({ capabilities: { capture: [NATIVE_SESSION_CAPTURE_CAPABILITY] } });
+		expect(parseRecord(serializeRecord(record))?.capabilities).toEqual({
+			capture: [NATIVE_SESSION_CAPTURE_CAPABILITY],
+		});
+	});
+
+	it("stays absent for a host that publishes no screen — which IS the answer", () => {
+		// Absence is the load-bearing half: it is how a reader says "not enabled" as
+		// a fact rather than inferring it from silence.
+		expect(parseRecord(serializeRecord(sample()))).not.toHaveProperty("capabilities");
+	});
+
+	it("is readable by a build that predates the field — no schema bump, no migration", () => {
+		const raw = JSON.parse(serializeRecord(sample())) as Record<string, unknown>;
+		raw.capabilities = { capture: [NATIVE_SESSION_CAPTURE_CAPABILITY] };
+		const parsed = parseRecord(JSON.stringify(raw));
+		expect(parsed?.schemaVersion).toBe(NATIVE_SESSION_SCHEMA_VERSION);
+		expect(parsed?.sessionId).toBe("alpha");
+		expect(parsed?.host.startSignature).toBe("4242@t0");
+	});
+
+	it("drops an unrecognised capability instead of losing the whole session", () => {
+		for (const capabilities of [
+			{ capture: ["semantic-snapshot-v2"] },
+			{ capture: "semantic-snapshot-v1" },
+			{ capture: [] },
+			{ capture: true },
+			"not-an-object",
+			42,
+			null,
+		]) {
+			const raw = JSON.parse(serializeRecord(sample())) as Record<string, unknown>;
+			raw.capabilities = capabilities;
+			const parsed = parseRecord(JSON.stringify(raw));
+			// The session survives; the unknown capability lands on "not enabled",
+			// which is the safe side — a caller reads less than the host can do.
+			expect(parsed?.sessionId).toBe("alpha");
+			expect(parsed).not.toHaveProperty("capabilities");
+		}
+	});
+});
 
 describe("native-session record — optional identity (seq 1383)", () => {
 	it("round-trips a task-owned identity", () => {
@@ -114,10 +172,12 @@ describe("native-session record (on disk)", () => {
 		prev = process.env[NATIVE_SESSIONS_DIR_ENV];
 		root = mkdtempSync(join(tmpdir(), "dev3-native-record-"));
 		process.env[NATIVE_SESSIONS_DIR_ENV] = root;
+		process.env[NATIVE_SESSION_LOCKS_DIR_ENV] = join(root, "locks");
 	});
 	afterEach(() => {
 		if (prev === undefined) delete process.env[NATIVE_SESSIONS_DIR_ENV];
 		else process.env[NATIVE_SESSIONS_DIR_ENV] = prev;
+		delete process.env[NATIVE_SESSION_LOCKS_DIR_ENV];
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -134,22 +194,22 @@ describe("native-session record (on disk)", () => {
 		expect(readFileSync(recordFile("alpha"), "utf8")).not.toContain("top-secret-token");
 	});
 
-	it("removeSessionState only deletes token-matched state", () => {
+	it("removeSessionState only deletes token-matched state", async () => {
 		writeRecordAtomic(sample());
 		writeToken("alpha", "tok-A");
 
 		// A stale caller with the wrong token cannot erase a newer session.
-		expect(removeSessionState("alpha", "tok-WRONG")).toBe(false);
+		expect(await removeSessionState("alpha", "tok-WRONG", LOCK_OPTIONS)).toBe(false);
 		expect(readRecord("alpha")).not.toBeNull();
 		expect(existsSync(tokenFile("alpha"))).toBe(true);
 
 		// The rightful owner clears everything, record removed last.
-		expect(removeSessionState("alpha", "tok-A")).toBe(true);
+		expect(await removeSessionState("alpha", "tok-A", LOCK_OPTIONS)).toBe(true);
 		expect(readRecord("alpha")).toBeNull();
 		expect(existsSync(sessionDir("alpha"))).toBe(false);
 	});
 
-	it("removes only atomic temp files owned by the recorded crashed host", () => {
+	it("removes only atomic temp files owned by the recorded crashed host", async () => {
 		writeRecordAtomic(sample());
 		writeToken("alpha", "tok-A");
 		const targets = [recordFile("alpha"), tokenFile("alpha"), journalFile("alpha"), parserStateFile("alpha")];
@@ -157,15 +217,39 @@ describe("native-session record (on disk)", () => {
 		const foreignTemp = `${journalFile("alpha")}.9999.tmp`;
 		writeFileSync(foreignTemp, "leave-me");
 
-		expect(removeSessionState("alpha", "tok-A")).toBe(true);
+		expect(await removeSessionState("alpha", "tok-A", LOCK_OPTIONS)).toBe(true);
 		for (const target of targets) expect(existsSync(`${target}.4242.tmp`)).toBe(false);
 		expect(existsSync(foreignTemp)).toBe(true);
 	});
 
-	it("removeSessionState fails closed when no expected token is available", () => {
+	it("removeSessionState fails closed when no expected token is available", async () => {
 		writeRecordAtomic(sample());
-		expect(removeSessionState("alpha", null)).toBe(false);
+		expect(await removeSessionState("alpha", null, LOCK_OPTIONS)).toBe(false);
 		expect(readRecord("alpha")).not.toBeNull();
+	});
+
+	it("rejects partial cleanup before record removal when the token cannot be deleted", async () => {
+		writeRecordAtomic(sample());
+		writeToken("alpha", "tok-A");
+		writeFileSync(journalFile("alpha"), "old output");
+		let recordDeletionAttempted = false;
+		const cleanup = new SessionStateCleanupRuntime({
+			unlink(path) {
+				if (path === tokenFile("alpha")) {
+					const error = new Error("token is busy") as NodeJS.ErrnoException;
+					error.code = "EBUSY";
+					throw error;
+				}
+				if (path === recordFile("alpha")) recordDeletionAttempted = true;
+				unlinkSync(path);
+			},
+		});
+
+		await expect(cleanup.removeSessionState("alpha", "tok-A", LOCK_OPTIONS)).rejects.toMatchObject({ code: "EBUSY" });
+		expect(existsSync(journalFile("alpha"))).toBe(false);
+		expect(readToken("alpha")).toBe("tok-A");
+		expect(readRecord("alpha")).toEqual(sample());
+		expect(recordDeletionAttempted).toBe(false);
 	});
 
 	it("ignores a corrupt record on read", () => {

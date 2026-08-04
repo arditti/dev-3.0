@@ -21,6 +21,7 @@
  * deterministically unit-testable without real processes.
  */
 
+import { NATIVE_CAPTURE_MODE_ENV, type NativeCaptureMode } from "./capture-mode";
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -48,6 +49,7 @@ import {
 	resolveShellLaunchSpec,
 	type ShellLaunchSpec,
 } from "./shell-launch";
+import type { SessionStateLockOptions } from "./session-lock";
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const CLEANUP_LOCK_TIMEOUT_MS = 5000;
@@ -60,8 +62,8 @@ export interface HostSpawnOptions {
 	launch: ShellLaunchSpec;
 	cols?: number;
 	rows?: number;
-	/** Opt-in live-parser proof stage (seq 1228); default off keeps the host lean. */
-	liveParser?: boolean;
+	/** Which capture artifacts the host publishes. Defaults to `none` — no parser. */
+	captureMode?: NativeCaptureMode;
 	/** Opt-in unbounded ground-truth stream tap — proof runs only. */
 	stateTap?: boolean;
 }
@@ -126,6 +128,7 @@ export interface RegistryDeps {
 	launchHost: HostLauncher;
 	classify: (record: NativeSessionRecord, token: string | null) => Promise<OwnershipVerdict>;
 	resolveLaunch: (spec: ShellLaunchSpec) => ShellLaunchSpec;
+	sessionLockOptions?: SessionStateLockOptions;
 }
 
 /** Named segments of one `stop()`, so a slow teardown can be attributed instead of guessed. */
@@ -165,8 +168,11 @@ export function defaultHostLauncher(sessionId: string, opts: HostSpawnOptions, l
 			[NATIVE_SESSION_LAUNCH_ENV]: encodeShellLaunchSpec(opts.launch),
 			...(opts.cols ? { DEV3_NATIVE_SESSION_COLS: String(opts.cols) } : {}),
 			...(opts.rows ? { DEV3_NATIVE_SESSION_ROWS: String(opts.rows) } : {}),
-			...(opts.liveParser ? { DEV3_NATIVE_SESSION_LIVE_PARSER: "1" } : {}),
-			...(opts.stateTap ? { DEV3_NATIVE_SESSION_STATE_TAP: "1" } : {}),
+			// Always stated, never merely added: the child inherits this process's
+			// environment, so an ambient mode would otherwise activate capture on every
+			// host nobody asked to. Absent call-site intent means `none`.
+			[NATIVE_CAPTURE_MODE_ENV]: opts.captureMode ?? "none",
+			DEV3_NATIVE_SESSION_STATE_TAP: opts.stateTap ? "1" : "",
 		},
 	});
 	let exited = false;
@@ -223,8 +229,6 @@ export async function start(
 		// Fail fast before touching the lock path, mirroring assertValidSessionId.
 		throw new Error(`invalid native session id ${JSON.stringify(sessionId)}`);
 	}
-	mkdirSync(sessionDir(sessionId), { recursive: true, mode: 0o700 });
-
 	return withFileLock(
 		recordFile(sessionId),
 		async () => {
@@ -235,7 +239,7 @@ export async function start(
 					return { status: "already-running", record: existing };
 				}
 				// Not ours anymore (dead/reused) — drop only our token-matched state.
-				if (!removeSessionState(sessionId, token)) {
+				if (!(await removeSessionState(sessionId, token, deps.sessionLockOptions))) {
 					throw new Error(`cannot safely replace stale native session ${sessionId}: cleanup token is missing or changed`);
 				}
 				mkdirSync(sessionDir(sessionId), { recursive: true, mode: 0o700 });
@@ -249,7 +253,7 @@ export async function start(
 					launch: launchSpec,
 					cols: opts.cols,
 					rows: opts.rows,
-					liveParser: opts.liveParser,
+					captureMode: opts.captureMode,
 					stateTap: opts.stateTap,
 				},
 				logFd,
@@ -399,7 +403,7 @@ export async function stop(
 
 	// Not (or no longer) ours: never signal the PID — just drop token-matched state.
 	if (verdict !== "owned") {
-		return removeSessionState(sessionId, token);
+		return removeSessionState(sessionId, token, deps.sessionLockOptions);
 	}
 
 	const forceOwnedTree = async (hard = false): Promise<void> => {
@@ -459,7 +463,7 @@ export async function stop(
 		await delay(50);
 	}
 	const dead = !isProcessAlive(record.host.pid) && !isProcessAlive(record.shell.pid);
-	if (dead) removeSessionState(sessionId, token);
+	if (dead) await removeSessionState(sessionId, token, deps.sessionLockOptions);
 	phase("forceKill");
 	return dead;
 }
@@ -486,7 +490,7 @@ export async function cleanupStale(deps: RegistryDeps = defaultDeps): Promise<Cl
 					kept.push({ sessionId, record, state: "running" });
 					return;
 				}
-				if (removeSessionState(sessionId, token)) {
+				if (await removeSessionState(sessionId, token, deps.sessionLockOptions)) {
 					removed.push(sessionId);
 					removedState = true;
 				} else kept.push({ sessionId, record, state: verdict });

@@ -200,6 +200,25 @@ export const PANE_GEOMETRY_FORMAT = tmuxFormat()
 	.build();
 
 /**
+ * Everything a read-only pane capture must report about a pane, in one sweep
+ *. No free-text field, so there is no tail slot: a capture
+ * deliberately carries no title, command, or any other process fact.
+ */
+export const PANE_CAPTURE_FORMAT = tmuxFormat()
+	.string("paneId", "pane_id")
+	.number("width", "pane_width")
+	.number("height", "pane_height")
+	.flag("dead", "pane_dead")
+	.number("pid", "pane_pid")
+	// tmux exposes no per-process start time (`pane_start_time` is empty), so the
+	// server's session-creation epoch is the closest thing to a start signature:
+	// it changes when the whole server does, which is when `%N` ids restart.
+	.number("serverEpoch", "session_created")
+	.number("historySize", "history_size")
+	.flag("alternateScreen", "alternate_on")
+	.build();
+
+/**
  * Pane list for the narrow-viewport pane switcher. `pane_title` defaults to
  * the hostname, so `host_short` rides along to detect an unset title.
  */

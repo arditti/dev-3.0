@@ -14,11 +14,14 @@
  * path/validation logic is unit-testable under vitest (which stubs Bun).
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import type { CaptureProducerDigest } from "./capture-digest";
 
 export const NATIVE_SESSIONS_DIR_ENV = "DEV3_NATIVE_SESSIONS_DIR";
 
 export const NATIVE_HOST_IMAGES_DIR_ENV = "DEV3_NATIVE_HOST_IMAGES_DIR";
+
+export const NATIVE_SESSION_LOCKS_DIR_ENV = "DEV3_NATIVE_SESSION_LOCKS_DIR";
 
 function dev3HomeDir(): string {
 	return process.env.DEV3_HOME || `${process.env.HOME || process.env.USERPROFILE || "/tmp"}/.dev3.0`;
@@ -29,6 +32,23 @@ export function sessionsRootDir(): string {
 	const explicit = process.env[NATIVE_SESSIONS_DIR_ENV];
 	if (explicit) return explicit;
 	return join(dev3HomeDir(), "native-sessions");
+}
+
+/**
+ * Root of the session-state lock family: its own top-level sibling, never inside
+ * `native-sessions` or a session directory — enumerators of that root read entries
+ * as sessions, and a lock living inside a directory keeps it alive through teardown.
+ *
+ * When only the SESSIONS root is overridden (tests, custom deployments), the locks
+ * root is derived beside it rather than falling back to the real home, so an
+ * isolated run cannot write lock state into a user's profile.
+ */
+export function sessionLocksRootDir(): string {
+	const explicit = process.env[NATIVE_SESSION_LOCKS_DIR_ENV];
+	if (explicit) return explicit;
+	const sessionsOverride = process.env[NATIVE_SESSIONS_DIR_ENV];
+	if (sessionsOverride) return `${sessionsOverride.replace(/[/\\]+$/, "")}-locks`;
+	return join(dev3HomeDir(), "native-session-locks");
 }
 
 /**
@@ -86,6 +106,80 @@ export function journalFile(id: string): string {
 export function parserStateFile(id: string): string {
 	return join(sessionDir(id), "parser-state.json");
 }
+
+/**
+ * Compact plain-text capture artifact, one path per PRODUCER. Scoping the path is
+ * what makes a stale producer physically unable to publish over its successor:
+ * there is no shared name to race for, so no ownership check to get wrong.
+ */
+export function captureRecordFile(id: string, producerDigest: CaptureProducerDigest): string {
+	const file = join(sessionDir(id), `capture.${producerDigest}.json`);
+	// The digest is validated on construction; the join is asserted anyway, because a
+	// path that escaped the session directory would be a traversal.
+	if (dirname(file) !== sessionDir(id)) throw new Error(`capture path escaped its session directory: ${file}`);
+	return file;
+}
+
+/** Matches the whole capture family of a session, for cleanup. */
+export const CAPTURE_RECORD_PATTERN = /^capture\.[0-9a-f]{64}\.json(?:\.tmp)?$/;
+
+/**
+ * The three members of one session's lock family, all siblings under the locks
+ * root: the published lock (`canonical`), a fully-written acquisition awaiting
+ * publication (`candidate`), and a contender's blocking claim (`claim`).
+ */
+export type SessionLockMember = "canonical" | "candidate" | "claim";
+export interface SessionLockFileIdentity {
+	sessionId: string;
+	member: SessionLockMember;
+	generation?: string;
+}
+
+const SESSION_LOCK_GENERATION_SOURCE = "[0-9a-f]{64}";
+const SESSION_LOCK_GENERATION_PATTERN = new RegExp(`^${SESSION_LOCK_GENERATION_SOURCE}$`);
+const SESSION_LOCK_FILE_PATTERN = new RegExp(
+	`^((?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]{0,63})\\.(?:(canonical)|(candidate|claim)\\.(${SESSION_LOCK_GENERATION_SOURCE}))\\.lock$`,
+);
+
+export function isSessionLockGeneration(value: unknown): value is string {
+	return typeof value === "string" && SESSION_LOCK_GENERATION_PATTERN.test(value);
+}
+
+/** Parse one lock-family basename or platform-native path. */
+export function parseSessionLockFile(pathOrName: string): SessionLockFileIdentity | null {
+	const segments = pathOrName.split(/[/\\]/);
+	const name = segments[segments.length - 1] ?? "";
+	const match = SESSION_LOCK_FILE_PATTERN.exec(name);
+	if (!match) return null;
+	const [, sessionId, canonical, generatedMember, generation] = match;
+	if (canonical === "canonical") return { sessionId, member: canonical };
+	const member = generatedMember;
+	if ((member === "candidate" || member === "claim") && isSessionLockGeneration(generation)) {
+		return { sessionId, member, generation };
+	}
+	return null;
+}
+
+export function sessionLockFile(id: string, member: "canonical"): string;
+export function sessionLockFile(id: string, member: "candidate" | "claim", generation: string): string;
+export function sessionLockFile(id: string, member: SessionLockMember, generation?: string): string {
+	assertValidSessionId(id);
+	if (member === "canonical" && generation !== undefined) {
+		throw new Error("the canonical session lock name has no generation suffix");
+	}
+	if (member !== "canonical" && !isSessionLockGeneration(generation)) {
+		throw new Error(`${member} session lock names require a 64-character lowercase hex generation`);
+	}
+	const suffix = generation === undefined ? "" : `.${generation}`;
+	const file = join(sessionLocksRootDir(), `${id}.${member}${suffix}.lock`);
+	if (dirname(file) !== sessionLocksRootDir()) {
+		throw new Error(`session lock path escaped the locks root: ${file}`);
+	}
+	return file;
+}
+
+/** Matches every member of every session's lock family, for enumeration and cleanup. */
+export const SESSION_LOCK_PATTERN = SESSION_LOCK_FILE_PATTERN;
 
 /** Ordered ground-truth stream tap (seq 1228) — proof runs only, env-gated. */
 export function streamTapFile(id: string): string {

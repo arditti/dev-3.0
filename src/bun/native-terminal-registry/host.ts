@@ -13,14 +13,13 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "../spawn";
 import { assertNativeTerminalRuntime, nativeTerminalSpawnError } from "../../shared/native-terminal-runtime";
-import { journalFile, sessionDir, streamTapFile } from "./paths";
+import { journalFile, streamTapFile } from "./paths";
 import { readProcessStartSignature } from "./process-identity-native";
 import { JournalWriter } from "./journal";
-import { LiveParserPipeline } from "./live-parser";
-import { bootFailedParserState, writeParserStateAtomic } from "./parser-state";
+import { LiveParserPipeline, type LiveParserProjection } from "./live-parser";
+import { bootFailedParserState, writeSerializedParserStateAtomic, type ParserStateSnapshot } from "./parser-state";
 import { StreamTapWriter } from "./stream-tap";
 import {
 	decodeControl,
@@ -37,11 +36,21 @@ import {
 	type StatusReply,
 } from "./protocol";
 import {
+	ProducerNotReadyError,
+	captureRecordOf,
+	writeCaptureRecordAtomic,
+	type CaptureProducer,
+} from "./capture-record";
+import { NATIVE_CAPTURE_MODE_ENV, captureModePlan, parseCaptureMode } from "./capture-mode";
+import {
+	NATIVE_SESSION_TEXT_CAPTURE_CAPABILITY,
 	NATIVE_SESSION_HOST_ARTIFACT_VERSION,
 	NATIVE_SESSION_SCHEMA_VERSION,
 	removeSessionState,
-	writeRecordAtomic,
+	serializeRecord,
+	writeSerializedRecordAtomic,
 	writeToken,
+	type NativeSessionCaptureSurface,
 	type NativeSessionRecord,
 } from "./record";
 import { deriveNativeProcessIdentity, PANE_ID_ENV, type NativeProcessIdentity } from "./process-naming";
@@ -53,6 +62,7 @@ import {
 	NATIVE_SESSION_LAUNCH_ENV,
 	type ShellLaunchSpec,
 } from "./shell-launch";
+import { withOwnedSessionState, withSessionStateLock } from "./session-lock";
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -99,6 +109,8 @@ export interface RecordFields {
 	rows: number;
 	runtimeVersion: string;
 	platform: string;
+	/** Capture surfaces this host is actually publishing right now. */
+	captureSurfaces?: readonly NativeSessionCaptureSurface[];
 	startedAt: string;
 	updatedAt: string;
 }
@@ -116,6 +128,9 @@ export function buildRecord(fields: RecordFields): NativeSessionRecord {
 		// Omitted entirely when nothing is known, so a non-task session's record
 		// keeps exactly the shape it had before seq 1383.
 		...(identity.seq || identity.paneId ? { identity } : {}),
+		// Advertised only for surfaces actually being written, so absence stays the
+		// honest "this host publishes nothing" rather than an unset flag.
+		...(fields.captureSurfaces?.length ? { capabilities: { capture: [...fields.captureSurfaces] } } : {}),
 		protocolVersion: NATIVE_SESSION_PROTOCOL_VERSION,
 		hostArtifactVersion: NATIVE_SESSION_HOST_ARTIFACT_VERSION,
 		runtimeVersion: fields.runtimeVersion,
@@ -238,7 +253,12 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 	// Self-enrol BEFORE Bun.spawn so Windows children inherit the non-breakaway
 	// job atomically at process creation (no root-shell assignment race).
 	const windowsJob = await createWindowsJobContainment(token);
-	mkdirSync(sessionDir(sessionId), { recursive: true, mode: 0o700 });
+	await withSessionStateLock(sessionId, () => writeToken(sessionId, token));
+
+	async function publishOwned(mutation: () => void): Promise<void> {
+		const result = await withOwnedSessionState(sessionId, token, mutation);
+		if (result.kind === "session-replaced") throw new Error(`native session ${sessionId} was replaced`);
+	}
 
 	type ClientData = { helloDone: boolean; clientPid?: number };
 	type HostClient = Bun.ServerWebSocket<ClientData>;
@@ -256,7 +276,41 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 	tap?.start();
 	let terminalRef: { write(data: string | Uint8Array): void } | null = null;
 	let pipeline: LiveParserPipeline | null = null;
-	if (process.env.DEV3_NATIVE_SESSION_LIVE_PARSER === "1") {
+	let recordPublication: Promise<void> = Promise.resolve();
+	// One exhaustive mode decides which artifacts exist; the two sinks below are
+	// independent, so selecting the compact one can never make the per-cell one
+	// unreachable.
+	const captureMode = parseCaptureMode(process.env[NATIVE_CAPTURE_MODE_ENV]);
+	const plan = captureModePlan(captureMode);
+	const publishesSemantic = plan.semantic;
+	const publishesCompact = plan.compact;
+	// A projection write needs the producer's identity, which only exists after the
+	// shell is spawned and its signature probed. Until then the sink reports "not
+	// ready" so the pipeline keeps the write retryable instead of throwing into a
+	// swallowed catch (findings 12 and 14).
+	let producerIdentity: CaptureProducer | null = null;
+	function publishCapture(projection: LiveParserProjection): Promise<void> {
+		if (!producerIdentity) throw new ProducerNotReadyError(sessionId);
+		// The pipeline owns the content timestamp and the retry policy; this only writes.
+		return writeCaptureRecordAtomic(captureRecordOf(sessionId, producerIdentity, projection, projection.updatedAt), token);
+	}
+
+	function publishParserState(snapshot: ParserStateSnapshot): Promise<void> {
+		const serialized = `${JSON.stringify(snapshot)}\n`;
+		return publishOwned(() => writeSerializedParserStateAtomic(sessionId, serialized));
+	}
+
+	/**
+	 * A surface is advertised only once its sink has something readable on disk. A
+	 * capability with nothing behind it is worse than no capability.
+	 */
+	const advertisedSurfaces = (): NativeSessionCaptureSurface[] =>
+		plan.surfaces.filter((surface) =>
+			surface === NATIVE_SESSION_TEXT_CAPTURE_CAPABILITY
+				? pipeline?.sinkState("compact") === "ready"
+				: pipeline?.sinkState("semantic") === "ready",
+		);
+	if (plan.runsParser) {
 		try {
 			pipeline = await LiveParserPipeline.create({
 				sessionId,
@@ -272,13 +326,19 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 						// terminal already closed
 					}
 				},
-				persistState: (snapshot) => writeParserStateAtomic(sessionId, snapshot),
+				...(publishesSemantic
+					? { persistState: (snapshot: ParserStateSnapshot) => publishParserState(snapshot) }
+					: {}),
+				...(publishesCompact
+					? { persistProjection: (projection: LiveParserProjection) => publishCapture(projection) }
+					: {}),
+				onSinkReadinessChange: () => persist(),
 				fault: process.env.DEV3_NATIVE_SESSION_PARSER_FAULT === "ingest" ? "ingest" : null,
 			});
 		} catch (err) {
 			// Containment: a parser that cannot boot must never take the host down.
 			try {
-				writeParserStateAtomic(sessionId, bootFailedParserState(sessionId, err));
+				await publishParserState(bootFailedParserState(sessionId, err));
 			} catch {
 				// state dir unavailable — raw operation continues regardless
 			}
@@ -371,7 +431,7 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 					} catch { /* that survivor died too */ }
 				}
 				// Detach boundary: make the reconstructable state current on disk.
-				pipeline?.flush();
+				void pipeline?.flushAndWait();
 			},
 			message(ws, message) {
 				try {
@@ -431,7 +491,7 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 				// Record the resize at its real position in the output order.
 				tap?.recordResize(msg.cols, msg.rows);
 				pipeline?.onResize(msg.cols, msg.rows);
-				persist();
+				void persist().catch(() => {});
 			} else if (msg.type === "status") {
 				ws.send(encodeControl(currentStatus(ws, msg.id)));
 			} else if (msg.type === "ownership" && "action" in msg) {
@@ -490,9 +550,8 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 		};
 	}
 
-	function persist(): void {
-		writeRecordAtomic(
-			buildRecord({
+	function persist(): Promise<void> {
+		const record = buildRecord({
 				sessionId,
 				paneId,
 				identity,
@@ -507,10 +566,16 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 				rows: currentRows,
 				runtimeVersion: bunVersion,
 				platform: process.platform,
+				// Compact is advertised only once its producer identity exists, so a reader
+				// never sees the capability before a record can be written.
+				captureSurfaces: pipeline === null ? [] : advertisedSurfaces(),
 				startedAt,
 				updatedAt: new Date().toISOString(),
-			}),
-		);
+			});
+		const serialized = serializeRecord(record);
+		const publication = recordPublication.then(() => publishOwned(() => writeSerializedRecordAtomic(sessionId, serialized)));
+		recordPublication = publication.catch(() => {});
+		return publication;
 	}
 
 	async function shutdown(exitCode: number): Promise<void> {
@@ -522,11 +587,11 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 			// already stopped
 		}
 		try {
-			pipeline?.flush();
-			pipeline?.dispose();
+			await pipeline?.disposeAndWait();
 		} catch {
 			// parser teardown must never block host shutdown
 		}
+		await recordPublication;
 		tap?.stop();
 		journal.stop();
 		if (windowsJob) {
@@ -538,7 +603,11 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 				// terminal already closed
 			}
 			await Promise.race([proc.exited, delay(1500)]);
-			removeSessionState(sessionId, token);
+			try {
+				await removeSessionState(sessionId, token);
+			} catch {
+				// Cleanup failure must not strand the owned process tree during shutdown.
+			}
 			windowsJob.closeForTreeTermination();
 			process.exit(exitCode);
 			return;
@@ -555,7 +624,11 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 		} catch {
 			// already closed
 		}
-		removeSessionState(sessionId, token);
+		try {
+			await removeSessionState(sessionId, token);
+		} catch {
+			// Cleanup failure must not prevent process termination.
+		}
 		process.exit(exitCode);
 	}
 
@@ -575,8 +648,28 @@ export async function runHost(config: HostConfig = resolveHostConfig()): Promise
 		process.on(sig, () => void shutdown(0));
 	}
 
-	// Readiness signal: publish the private token first, then the discoverable
-	// record last, so a reader that sees the record can always read the token.
-	writeToken(sessionId, token);
-	persist();
+	// The producer's identity is complete only here, so this is the first moment a
+	// capture record CAN be written. Publish an initial one (blank is fine) before
+	// the session record advertises the surface, so a reader never sees a capability
+	// with nothing behind it.
+	producerIdentity = {
+		hostPid: process.pid,
+		hostStartSignature,
+		shellPid,
+		shellStartSignature,
+	};
+	if (plan.runsParser && pipeline) {
+		try {
+			// Through the pipeline, so the sink state machine records the publication —
+			// a direct write would leave the sink `pending` and the capability unadvertised.
+			await pipeline.flushAndWait();
+		} catch {
+			// A capture artifact that cannot be written must never take the host down;
+			// the pipeline retries on its own cadence.
+		}
+	}
+
+	// The private token was published under the state lock before any sink. The
+	// discoverable record is last, after every initial sink attempt truly settled.
+	await persist();
 }
