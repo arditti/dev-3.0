@@ -827,6 +827,12 @@ export interface GlobalSettings {
 	externalApps?: ExternalApp[]; // user-configured apps for "Open in..." menus
 	tipsDisabled?: boolean;
 	taskOpenMode?: "split" | "fullscreen"; // how active tasks open when clicked
+	/**
+	 * What Cmd/Ctrl+Click on a file path in terminal output does:
+	 * in-app preview modal (default), OS default app, or reveal in the file
+	 * manager. Browser/remote mode always previews in-app regardless.
+	 */
+	terminalPathOpenMode?: TerminalPathOpenMode;
 	defaultDiffViewMode?: "split" | "unified" | "auto"; // default inline diff layout; "auto" picks based on screen size
 	preventSleepWhileRunning?: boolean; // spawn caffeinate when agents are active
 	skipQuitDialog?: boolean; // suppress the "tmux keeps running" quit confirmation
@@ -900,6 +906,29 @@ export interface ShortcutOverride {
 
 /** Sparse: only shortcuts the user actually touched appear here. */
 export type ShortcutOverrides = Record<string, ShortcutOverride>;
+
+/** Behavior of Cmd/Ctrl+Click on a file path in terminal output. */
+export type TerminalPathOpenMode = "preview" | "system" | "reveal";
+
+/** A path candidate resolved against a task worktree / project directory. */
+export interface ResolvedTerminalPath {
+	/** Absolute, normalized path that exists on disk. */
+	path: string;
+	kind: "file" | "directory";
+}
+
+/**
+ * Content of a file for the in-app terminal path preview modal. `text` is
+ * capped (see FILE_PREVIEW_MAX_TEXT_BYTES); larger files report `too-large`
+ * so the modal can offer external open instead of shipping megabytes over RPC.
+ */
+export type FilePreviewResult =
+	| { kind: "text"; content: string; truncated: boolean; size: number }
+	| { kind: "image"; dataUrl: string; size: number }
+	| { kind: "binary"; size: number }
+	| { kind: "too-large"; size: number }
+	| { kind: "directory" }
+	| { kind: "not-found" };
 
 /**
  * Live state of the optional local `pxpipe-proxy` (token-saving image proxy),
@@ -3709,6 +3738,26 @@ export type AppRPCSchema = {
 			openInApp: {
 				params: { appName: string; path: string };
 				response: void;
+			};
+			/**
+			 * Resolve path candidates detected in terminal output against the
+			 * task's worktree (or the project directory for the project
+			 * terminal). Only candidates that exist on disk resolve; the rest
+			 * map to null so the renderer never linkifies dead paths.
+			 */
+			resolveTerminalPaths: {
+				params: { taskId?: string; projectId?: string; paths: string[] };
+				response: { resolved: Record<string, ResolvedTerminalPath | null> };
+			};
+			/** Open a terminal-linked path in the OS default app or reveal it in the file manager. */
+			openTerminalPath: {
+				params: { path: string; mode: "system" | "reveal" };
+				response: void;
+			};
+			/** Read file content for the in-app terminal path preview modal. */
+			readFilePreview: {
+				params: { path: string };
+				response: FilePreviewResult;
 			};
 			/**
 			 * Open a specific macOS System Settings pane. On non-darwin platforms

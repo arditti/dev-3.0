@@ -31,6 +31,8 @@ import { writeClipboardText } from "./utils/clipboard-write";
 import { isLargeTextPaste, uploadPastedText } from "./utils/uploadPastedText";
 import { createAnsiThemeFilter } from "./utils/ansi-theme-adapt";
 import { submitPastedText } from "./terminal-submit";
+import { createFilePathLinkProvider } from "./terminal-file-links";
+import { activateTerminalPath } from "./terminal-path-open";
 import { isMac } from "./utils/platform";
 import { paneHighlightRect, type PaneRectPct } from "./utils/paneHighlight";
 import TerminalSearchBar, { type TerminalSearchBarHandle } from "./components/TerminalSearchBar";
@@ -511,6 +513,17 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 			if (getTerminalBidiEnabled() && term.renderer) {
 				installBidiRender(term.renderer);
 			}
+
+			// File paths in output become Cmd/Ctrl+Click links; open behavior is
+			// the "File path click action" global setting.
+			term.registerLinkProvider(createFilePathLinkProvider({
+				term,
+				resolvePaths: async (paths) =>
+					(await api.request.resolveTerminalPaths({ taskId, projectId, paths })).resolved,
+				onActivate: (resolved) => {
+					void activateTerminalPath(resolved, tRef.current);
+				},
+			}));
 
 			// ghostty marks the container contenteditable="true", so ANY focus on
 			// it (term.focus() after fit, ghostty's own canvas mousedown →

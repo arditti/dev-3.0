@@ -96,6 +96,12 @@ export async function loadSettings(): Promise<GlobalSettings> {
 			externalApps: Array.isArray(data.externalApps) ? data.externalApps : undefined,
 			tipsDisabled: data.tipsDisabled === true ? true : undefined,
 			taskOpenMode: data.taskOpenMode === "fullscreen" ? "fullscreen" : undefined,
+			terminalPathOpenMode:
+				data.terminalPathOpenMode === "preview" ||
+				data.terminalPathOpenMode === "system" ||
+				data.terminalPathOpenMode === "reveal"
+					? data.terminalPathOpenMode
+					: undefined,
 			defaultDiffViewMode:
 				data.defaultDiffViewMode === "unified"
 					? "unified"
@@ -197,6 +203,12 @@ export function loadSettingsSync(): GlobalSettings {
 			externalApps: Array.isArray(data.externalApps) ? data.externalApps : undefined,
 			tipsDisabled: data.tipsDisabled === true ? true : undefined,
 			taskOpenMode: data.taskOpenMode === "fullscreen" ? "fullscreen" : undefined,
+			terminalPathOpenMode:
+				data.terminalPathOpenMode === "preview" ||
+				data.terminalPathOpenMode === "system" ||
+				data.terminalPathOpenMode === "reveal"
+					? data.terminalPathOpenMode
+					: undefined,
 			defaultDiffViewMode:
 				data.defaultDiffViewMode === "unified"
 					? "unified"

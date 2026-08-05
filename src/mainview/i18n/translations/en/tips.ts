@@ -221,6 +221,8 @@ const tips = {
 	"tip.terminalSearch.body": "Press \u2318F (Ctrl+F on Linux) in a terminal to search its tmux scrollback \u2014 matches highlight right in the pane.",
 	"tip.streamerMode.title": "Record without leaking identity",
 	"tip.streamerMode.body": "Streamer mode (⇧⌘P, or the Appearance settings) blurs emails, account names, paths, and tunnel URLs for screencasts.",
+	"tip.terminalPathLinks.title": "Open files the agent mentions",
+	"tip.terminalPathLinks.body": "⌘-click (Ctrl on Linux) any file path in terminal output to preview it in dev3, open it, or reveal it in Finder.",
 } as const;
 
 export default tips;

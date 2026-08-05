@@ -225,6 +225,20 @@ const terminal = {
 	"terminal.composerScheduleLater": "Enviar más tarde",
 	"terminal.rawKeyboard": "Entrada directa de teclado",
 	"terminal.backspace": "Retroceso",
+
+	// File path links in terminal output (Cmd/Ctrl+Click)
+	"terminal.pathLinkFolderBrowser": "Las carpetas no se pueden abrir desde el navegador — usa la aplicación de escritorio.",
+	"terminal.pathLinkOpenFailed": "No se pudo abrir la ruta: {error}",
+	"terminal.filePreviewLoading": "Cargando vista previa…",
+	"terminal.filePreviewNotFound": "Archivo no encontrado — puede que se haya movido o eliminado.",
+	"terminal.filePreviewBinary": "Archivo binario ({size}) — vista previa no disponible.",
+	"terminal.filePreviewTooLarge": "El archivo es demasiado grande para la vista previa ({size}).",
+	"terminal.filePreviewDirectory": "Esta ruta es una carpeta.",
+	"terminal.filePreviewTruncated": "Vista previa truncada — se muestran los primeros 256 KB.",
+	"terminal.filePreviewCopyPath": "Copiar ruta",
+	"terminal.filePreviewCopied": "Ruta copiada",
+	"terminal.filePreviewOpenSystem": "Abrir en la aplicación predeterminada",
+	"terminal.filePreviewReveal": "Mostrar en Finder",
 };
 
 export default terminal;

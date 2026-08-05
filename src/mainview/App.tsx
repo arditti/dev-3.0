@@ -50,6 +50,8 @@ import RemoteAccessExposedPorts from "./components/RemoteAccessExposedPorts";
 import { ConfirmHost, confirm } from "./confirm";
 import AgentLaunchRequestModal from "./components/AgentLaunchRequestModal";
 import AboutModal from "./components/AboutModal";
+import FilePreviewModal from "./components/FilePreviewModal";
+import { OPEN_FILE_PREVIEW_EVENT, type OpenFilePreviewDetail } from "./terminal-path-open";
 import RosettaWarningModal from "./components/RosettaWarningModal";
 import { initTaskSoundPlayback, playTaskSoundFromPush, setTaskCompletionSoundEnabled } from "./task-sounds";
 import { offerMergeCompletion } from "./utils/offerMergeCompletion";
@@ -336,6 +338,7 @@ function App() {
 	const [launchModal, setLaunchModal] = useState<{ task: Task; targetStatus: TaskStatus; project: Project } | null>(null);
 	// Lightbox for images an agent surfaced via `dev3 show-image`, bound to a task.
 	const [imageViewer, setImageViewer] = useState<{ taskId: string; images: SharedImage[]; index: number } | null>(null);
+	const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
 	const [artifactViewer, setArtifactViewer] = useState<{ taskId: string; artifacts: SharedArtifact[]; index: number } | null>(null);
 	const markSharedItemsRead = useCallback((
 		projectId: string,
@@ -1298,6 +1301,16 @@ function App() {
 		window.addEventListener("rpc:cliToast", onCliToast);
 		return () => window.removeEventListener("rpc:cliToast", onCliToast);
 	}, [openTaskFromNotification]);
+
+	// Cmd/Ctrl+Click on a file path in any terminal (preview mode).
+	useEffect(() => {
+		function onOpenFilePreview(e: Event) {
+			const detail = (e as CustomEvent<OpenFilePreviewDetail>).detail;
+			if (detail?.path) setFilePreviewPath(detail.path);
+		}
+		window.addEventListener(OPEN_FILE_PREVIEW_EVENT, onOpenFilePreview);
+		return () => window.removeEventListener(OPEN_FILE_PREVIEW_EVENT, onOpenFilePreview);
+	}, []);
 
 	// Keep the current viewer visible to the cliShowImage listener without
 	// re-subscribing it every time the viewer opens/closes.
@@ -2646,6 +2659,11 @@ function App() {
 				/>
 			)}
 			</>
+			)}
+			{/* File preview opens from Cmd/Ctrl+Click in ANY terminal, including the
+			    immersive fullscreen one, so it lives outside the chrome conditional. */}
+			{filePreviewPath && (
+				<FilePreviewModal path={filePreviewPath} onClose={() => setFilePreviewPath(null)} />
 			)}
 			{/* Transport health is not immersive chrome either — a dropped socket must
 			    stay visible (and retryable) while the terminal is fullscreen. */}

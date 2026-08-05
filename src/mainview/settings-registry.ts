@@ -226,6 +226,15 @@ export const SETTINGS_ENTRIES = [
 		storage: "sidecar",
 	},
 	{
+		id: "terminal-path-open-mode",
+		category: "terminal",
+		titleKey: "settings.terminalPathOpenMode",
+		descriptionKey: "settings.terminalPathOpenModeDesc",
+		anchor: "terminal-path-open-mode",
+		globalField: "terminalPathOpenMode",
+		storage: "global",
+	},
+	{
 		id: "terminal-scroll-speed",
 		category: "terminal",
 		titleKey: "settings.scrollSpeed",
@@ -391,6 +400,7 @@ export const GLOBAL_SETTINGS_FIELDS = [
 	"externalApps",
 	"tipsDisabled",
 	"taskOpenMode",
+	"terminalPathOpenMode",
 	"defaultDiffViewMode",
 	"preventSleepWhileRunning",
 	"skipQuitDialog",
