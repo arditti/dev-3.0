@@ -238,7 +238,11 @@ const terminal = {
 	"terminal.filePreviewCopyPath": "Copiar ruta",
 	"terminal.filePreviewCopied": "Ruta copiada",
 	"terminal.filePreviewOpenSystem": "Abrir en la aplicación predeterminada",
-	"terminal.filePreviewReveal": "Mostrar en Finder",
+	"terminal.filePreviewOpenFolder": "Abrir carpeta",
+	"terminal.filePreviewCopyContent": "Copiar contenido",
+	"terminal.filePreviewContentCopied": "Contenido copiado",
+	"terminal.filePreviewRendered": "Renderizado",
+	"terminal.filePreviewRaw": "Sin formato",
 };
 
 export default terminal;

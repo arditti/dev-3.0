@@ -238,7 +238,11 @@ const terminal = {
 	"terminal.filePreviewCopyPath": "Copy path",
 	"terminal.filePreviewCopied": "Path copied",
 	"terminal.filePreviewOpenSystem": "Open in default app",
-	"terminal.filePreviewReveal": "Reveal in Finder",
+	"terminal.filePreviewOpenFolder": "Open folder",
+	"terminal.filePreviewCopyContent": "Copy content",
+	"terminal.filePreviewContentCopied": "Content copied",
+	"terminal.filePreviewRendered": "Rendered",
+	"terminal.filePreviewRaw": "Raw",
 } as const;
 
 export default terminal;

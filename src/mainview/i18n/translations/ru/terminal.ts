@@ -246,7 +246,11 @@ const terminal = {
 	"terminal.filePreviewCopyPath": "Скопировать путь",
 	"terminal.filePreviewCopied": "Путь скопирован",
 	"terminal.filePreviewOpenSystem": "Открыть в приложении по умолчанию",
-	"terminal.filePreviewReveal": "Показать в Finder",
+	"terminal.filePreviewOpenFolder": "Открыть папку",
+	"terminal.filePreviewCopyContent": "Скопировать содержимое",
+	"terminal.filePreviewContentCopied": "Содержимое скопировано",
+	"terminal.filePreviewRendered": "Рендер",
+	"terminal.filePreviewRaw": "Исходник",
 };
 
 export default terminal;
