@@ -141,6 +141,13 @@ export interface FilePathLinkProviderOptions {
 	term: Pick<Terminal, "buffer">;
 	resolvePaths: (paths: string[]) => Promise<Record<string, ResolvedTerminalPath | null>>;
 	onActivate: (resolved: ResolvedTerminalPath, event: MouseEvent) => void;
+	/** Fires after a fresh RPC resolution lands — the underline overlay redraws on it. */
+	onResolutionsChanged?: () => void;
+}
+
+export interface FilePathLinkProvider extends ILinkProvider {
+	/** Link ranges for one absolute buffer row, for the persistent underline overlay. */
+	linksForRow(y: number): Promise<BufferRange[]>;
 }
 
 /**
@@ -148,7 +155,7 @@ export interface FilePathLinkProviderOptions {
  * plain clicks must keep reaching tmux mouse mode (same policy as the
  * built-in URL provider).
  */
-export function createFilePathLinkProvider(options: FilePathLinkProviderOptions): ILinkProvider {
+export function createFilePathLinkProvider(options: FilePathLinkProviderOptions): FilePathLinkProvider {
 	const cache = new Map<string, { value: ResolvedTerminalPath | null; at: number }>();
 	const inFlight = new Map<string, Promise<Record<string, ResolvedTerminalPath | null>>>();
 
@@ -175,8 +182,32 @@ export function createFilePathLinkProvider(options: FilePathLinkProviderOptions)
 				cache.set(path, { value, at: Date.now() });
 				result.set(path, value);
 			}
+			options.onResolutionsChanged?.();
 		}
 		return result;
+	}
+
+	interface RowLink {
+		target: ResolvedTerminalPath;
+		raw: string;
+		range: BufferRange;
+	}
+
+	async function computeLinks(y: number): Promise<RowLink[]> {
+		const logical = getLogicalLine((row) => options.term.buffer.active.getLine(row), y);
+		if (!logical) return [];
+		const candidates = findPathCandidates(logical.text);
+		if (candidates.length === 0) return [];
+		const resolved = await resolveCached([...new Set(candidates.map((c) => c.cleanPath))]);
+		const links: RowLink[] = [];
+		for (const candidate of candidates) {
+			const target = resolved.get(candidate.cleanPath);
+			if (!target) continue;
+			const range = mapRangeToBuffer(logical.rows, candidate.start, candidate.end);
+			if (!range) continue;
+			links.push({ target, raw: candidate.raw, range });
+		}
+		return links;
 	}
 
 	return {
@@ -187,28 +218,25 @@ export function createFilePathLinkProvider(options: FilePathLinkProviderOptions)
 				done = true;
 				callback(links);
 			};
-			(async () => {
-				const logical = getLogicalLine((row) => options.term.buffer.active.getLine(row), y);
-				if (!logical) return finish(undefined);
-				const candidates = findPathCandidates(logical.text);
-				if (candidates.length === 0) return finish(undefined);
-				const resolved = await resolveCached([...new Set(candidates.map((c) => c.cleanPath))]);
-				const links: ILink[] = [];
-				for (const candidate of candidates) {
-					const target = resolved.get(candidate.cleanPath);
-					if (!target) continue;
-					const range = mapRangeToBuffer(logical.rows, candidate.start, candidate.end);
-					if (!range) continue;
-					links.push({
-						text: candidate.raw,
+			computeLinks(y)
+				.then((rowLinks) => {
+					const links: ILink[] = rowLinks.map(({ target, raw, range }) => ({
+						text: raw,
 						range,
 						activate: (event) => {
 							if (event.ctrlKey || event.metaKey) options.onActivate(target, event);
 						},
-					});
-				}
-				finish(links.length > 0 ? links : undefined);
-			})().catch(() => finish(undefined));
+					}));
+					finish(links.length > 0 ? links : undefined);
+				})
+				.catch(() => finish(undefined));
+		},
+		async linksForRow(y) {
+			try {
+				return (await computeLinks(y)).map((link) => link.range);
+			} catch {
+				return [];
+			}
 		},
 	};
 }

@@ -48,6 +48,9 @@ const {
 		onData: vi.fn(() => ({ dispose: mockOnDataDispose })),
 		onResize: vi.fn(() => ({ dispose: mockOnResizeDispose })),
 		onSelectionChange: vi.fn(() => ({ dispose: mockOnSelectionChangeDispose })),
+		onRender: vi.fn(() => ({ dispose: vi.fn() })),
+		onScroll: vi.fn(() => ({ dispose: vi.fn() })),
+		registerLinkProvider: vi.fn(),
 		attachCustomKeyEventHandler: vi.fn(),
 		attachCustomWheelEventHandler: vi.fn(),
 		hasMouseTracking: vi.fn(() => false),
@@ -117,6 +120,7 @@ vi.mock("../rpc", () => ({
 			exitCopyModeAllPanes: vi.fn().mockResolvedValue({ panesExited: 1 }),
 			logRendererDiagnostic: vi.fn().mockResolvedValue(undefined),
 			copyTerminalSelection: vi.fn().mockResolvedValue({ ok: true, tool: "pbcopy" }),
+			resolveTerminalPaths: vi.fn().mockResolvedValue({ resolved: {} }),
 		},
 	},
 }));
