@@ -65,6 +65,7 @@ export {
 } from "./rpc-handlers/tmux-pty";
 
 import { appHandlers } from "./rpc-handlers/app-handlers";
+import { terminalPathHandlers } from "./rpc-handlers/terminal-paths";
 import { settingsConfigHandlers } from "./rpc-handlers/settings-config";
 import { taskLifecycleHandlers } from "./rpc-handlers/task-lifecycle";
 import { gitOperationHandlers } from "./rpc-handlers/git-operations";
@@ -84,6 +85,7 @@ import { taskPanesHandlers } from "./rpc-handlers/task-panes";
 
 export const handlers = {
 	...appHandlers,
+	...terminalPathHandlers,
 	...settingsConfigHandlers,
 	...taskLifecycleHandlers,
 	...gitOperationHandlers,

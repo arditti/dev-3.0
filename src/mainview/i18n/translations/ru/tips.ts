@@ -221,6 +221,8 @@ const tips = {
 	"tip.terminalSearch.body": "Нажмите \u2318F (Ctrl+F в Linux) в терминале, чтобы искать по истории tmux \u2014 совпадения подсвечиваются прямо в панели.",
 	"tip.streamerMode.title": "Записывайте экран без утечек",
 	"tip.streamerMode.body": "Режим стримера (⇧⌘P или настройки внешнего вида) размывает почту, аккаунты, пути и tunnel-URL для скринкастов.",
+	"tip.terminalPathLinks.title": "Открывайте файлы из вывода агента",
+	"tip.terminalPathLinks.body": "⌘-клик (Ctrl в Linux) по пути к файлу в терминале — предпросмотр в dev3, открытие или показ в Finder.",
 };
 
 export default tips;

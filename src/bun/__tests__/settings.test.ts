@@ -157,6 +157,7 @@ describe("saveSettings", () => {
 			defaultConfigId: "codex-default",
 			taskDropPosition: "bottom",
 			updateChannel: "canary",
+			terminalPathOpenMode: "reveal",
 			theme: "light",
 			resolvedTheme: "light",
 			cloneBaseDirectory: "/tmp/clones",

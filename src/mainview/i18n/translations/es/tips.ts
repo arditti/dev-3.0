@@ -221,6 +221,8 @@ const tips = {
 	"tip.terminalSearch.body": "Pulsa \u2318F (Ctrl+F en Linux) en un terminal para buscar en el historial de tmux \u2014 las coincidencias se resaltan en el panel.",
 	"tip.streamerMode.title": "Graba sin filtrar tu identidad",
 	"tip.streamerMode.body": "El modo streamer (⇧⌘P o los ajustes de apariencia) difumina correos, cuentas, rutas y URLs de túnel para tus screencasts.",
+	"tip.terminalPathLinks.title": "Abre archivos que menciona el agente",
+	"tip.terminalPathLinks.body": "⌘-clic (Ctrl en Linux) en una ruta de archivo en el terminal: vista previa en dev3, abrir o mostrar en Finder.",
 };
 
 export default tips;

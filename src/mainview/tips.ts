@@ -912,6 +912,15 @@ const ALL_TIPS: Tip[] = [
 		contexts: ["terminal"],
 	},
 	{
+		id: "terminal-path-links",
+		titleKey: "tip.terminalPathLinks.title",
+		bodyKey: "tip.terminalPathLinks.body",
+		icon: "\u{F0219}", // nf-md-file_find
+		score: 4,
+		contexts: ["terminal"],
+		settingsSection: "terminal",
+	},
+	{
 		id: "streamer-mode",
 		titleKey: "tip.streamerMode.title",
 		bodyKey: "tip.streamerMode.body",

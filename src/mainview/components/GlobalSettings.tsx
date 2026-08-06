@@ -18,6 +18,7 @@ import type {
 	GlobalSettings as GlobalSettingsType,
 	NativeTerminalAvailability,
 	ShortcutOverrides,
+	TerminalPathOpenMode,
 } from "../../shared/types";
 import type { TerminalBackendIdentity } from "../../shared/terminal-backend-identity";
 import { invalidateAvailableApps } from "../hooks/useAvailableApps";
@@ -370,6 +371,21 @@ function GlobalSettings({ section }: { section?: SettingsSectionId } = {}) {
 		[persistSettingChange],
 	);
 
+	const handleTerminalPathOpenModeChange = useCallback(
+		(mode: TerminalPathOpenMode) => {
+			persistSettingChange(
+				{ terminalPathOpenMode: mode },
+				{
+					tracking: {
+						setting: "terminal_path_open_mode",
+						value: mode,
+					},
+				},
+			);
+		},
+		[persistSettingChange],
+	);
+
 	const handlePreventSleepToggle = useCallback(
 		(enabled: boolean) => {
 			persistSettingChange({ preventSleepWhileRunning: enabled });
@@ -620,7 +636,9 @@ function GlobalSettings({ section }: { section?: SettingsSectionId } = {}) {
 						scrollSpeed={scrollSpeed}
 						newTaskTerminalBackend={newTaskTerminalBackend}
 						nativeTerminalAvailability={nativeTerminalAvailability}
+						terminalPathOpenMode={globalSettings.terminalPathOpenMode}
 						onNewTaskTerminalBackendChange={handleNewTaskTerminalBackendChange}
+						onTerminalPathOpenModeChange={handleTerminalPathOpenModeChange}
 					/>
 				);
 			case "agents":

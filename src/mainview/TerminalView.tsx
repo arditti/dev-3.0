@@ -31,6 +31,9 @@ import { writeClipboardText } from "./utils/clipboard-write";
 import { isLargeTextPaste, uploadPastedText } from "./utils/uploadPastedText";
 import { createAnsiThemeFilter } from "./utils/ansi-theme-adapt";
 import { submitPastedText } from "./terminal-submit";
+import { createFilePathLinkProvider, type FilePathLinkProvider } from "./terminal-file-links";
+import { installFilePathUnderlines, type FilePathUnderlinesHandle } from "./terminal-link-underlines";
+import { activateTerminalPath } from "./terminal-path-open";
 import { isMac } from "./utils/platform";
 import { paneHighlightRect, type PaneRectPct } from "./utils/paneHighlight";
 import TerminalSearchBar, { type TerminalSearchBarHandle } from "./components/TerminalSearchBar";
@@ -441,6 +444,8 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 		let layoutObserver: ResizeObserver | null = null;
 		let refitTimer: ReturnType<typeof setTimeout> | null = null;
 		let mouseCleanup: (() => void) | undefined;
+		let linkUnderlines: FilePathUnderlinesHandle | null = null;
+		let filePathLinks: FilePathLinkProvider | null = null;
 		let nativeSelectionClipboardCleanup: (() => void) | undefined;
 		const termSubs: Array<{ dispose(): void }> = [];
 		const diagnosticsId = `terminal-copy-${taskId}-${Math.random().toString(36).slice(2, 8)}`;
@@ -511,6 +516,26 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 			if (getTerminalBidiEnabled() && term.renderer) {
 				installBidiRender(term.renderer);
 			}
+
+			// File paths in output become Cmd/Ctrl+Click links; open behavior is
+			// the "File path click action" global setting. The overlay draws a
+			// persistent underline under every resolved link so paths read as
+			// links without hovering.
+			filePathLinks = createFilePathLinkProvider({
+				term,
+				resolvePaths: async (paths) =>
+					(await api.request.resolveTerminalPaths({ taskId, projectId, paths })).resolved,
+				onActivate: (resolved, _event, line) => {
+					void activateTerminalPath(resolved, tRef.current, line);
+				},
+				onResolutionsChanged: () => linkUnderlines?.scheduleRedraw(),
+			});
+			term.registerLinkProvider(filePathLinks);
+			linkUnderlines = installFilePathUnderlines({
+				term,
+				container: containerRef.current,
+				linksForRows: filePathLinks.linksForRows,
+			});
 
 			// ghostty marks the container contenteditable="true", so ANY focus on
 			// it (term.focus() after fit, ghostty's own canvas mousedown →
@@ -1250,6 +1275,9 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 						// (alt-screen or primary+mouse-tracking); ghostty-web
 						// won't do it on its own.
 						clearStaleSelectionOnWrite(batchTerm);
+						// ghostty-web never fires onRender, so the write batch is
+						// the "content changed" signal for the link underlines.
+						linkUnderlines?.contentChanged();
 					} catch {
 						// Swallow ghostty-web rendering errors
 					}
@@ -1507,6 +1535,10 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 			pendingWrite = "";
 			layoutObserver?.disconnect();
 			mouseCleanup?.();
+			linkUnderlines?.dispose();
+			linkUnderlines = null;
+			filePathLinks?.dispose();
+			filePathLinks = null;
 			nativeSelectionClipboardCleanup?.();
 			// Dispose terminal event subscriptions (onData, onResize) before
 			// closing the WebSocket or disposing the terminal to prevent

@@ -225,6 +225,24 @@ const terminal = {
 	"terminal.composerScheduleLater": "Send later",
 	"terminal.rawKeyboard": "Direct keyboard input",
 	"terminal.backspace": "Backspace",
+
+	// File path links in terminal output (Cmd/Ctrl+Click)
+	"terminal.pathLinkFolderBrowser": "Folders can't be opened from the browser — use the desktop app.",
+	"terminal.pathLinkOpenFailed": "Couldn't open path: {error}",
+	"terminal.filePreviewLoading": "Loading preview…",
+	"terminal.filePreviewNotFound": "File not found — it may have been moved or deleted.",
+	"terminal.filePreviewBinary": "Binary file ({size}) — no preview available.",
+	"terminal.filePreviewTooLarge": "File is too large to preview ({size}).",
+	"terminal.filePreviewDirectory": "This path is a folder.",
+	"terminal.filePreviewTruncated": "Preview truncated — showing the first 256 KB.",
+	"terminal.filePreviewCopyPath": "Copy path",
+	"terminal.filePreviewCopied": "Path copied",
+	"terminal.filePreviewOpenSystem": "Open in default app",
+	"terminal.filePreviewOpenFolder": "Open folder",
+	"terminal.filePreviewCopyContent": "Copy content",
+	"terminal.filePreviewContentCopied": "Content copied",
+	"terminal.filePreviewRendered": "Rendered",
+	"terminal.filePreviewRaw": "Raw",
 } as const;
 
 export default terminal;
