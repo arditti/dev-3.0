@@ -13,11 +13,12 @@ import { log } from "./shared";
  * regex-detected candidates against the task worktree / project directory,
  * open them per the user's setting, and feed the in-app preview modal.
  *
- * `openTerminalPath` and `readFilePreview` take a client-supplied absolute
- * path (the modal only knows the path), so both gate on
- * {@link isTerminalPathAllowed}: the path must sit under the home directory
- * or a registered project. Same exposure class as `listDirectory` behind the
- * same auth, but bounded — see decisions/206-terminal-file-path-links.md.
+ * All three handlers take client-supplied paths, so every path they touch is
+ * gated to {@link allowedRoots} — the home directory plus registered project
+ * roots. Resolution is gated too: an out-of-scope path must never become a
+ * link that then refuses to open, and `..` segments let even a relative
+ * candidate escape its base. Same exposure class as `listDirectory` behind
+ * the same auth, but bounded — see decisions/208-terminal-file-path-links.md.
  */
 
 const RESOLVE_TERMINAL_PATHS_MAX = 64;
@@ -29,7 +30,8 @@ const PREVIEW_IMAGE_MIME: Record<string, string> = {
 	gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
 };
 
-async function statPathKind(absPath: string): Promise<ResolvedTerminalPath | null> {
+async function statPathKind(absPath: string, roots: string[]): Promise<ResolvedTerminalPath | null> {
+	if (!roots.some((root) => isUnder(absPath, root))) return null;
 	try {
 		const st = await stat(absPath);
 		if (st.isFile()) return { path: absPath, kind: "file" };
@@ -53,10 +55,13 @@ function isUnder(absPath: string, root: string): boolean {
 	return absPath === root || absPath.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
+async function allowedRoots(): Promise<string[]> {
+	return [homedir(), ...(await projectRoots())];
+}
+
 async function isTerminalPathAllowed(absPath: string): Promise<boolean> {
 	const normalized = resolvePath(absPath);
-	if (isUnder(normalized, homedir())) return true;
-	return (await projectRoots()).some((root) => isUnder(normalized, root));
+	return (await allowedRoots()).some((root) => isUnder(normalized, root));
 }
 
 async function terminalPathBases(params: { taskId?: string; projectId?: string }): Promise<string[]> {
@@ -89,16 +94,18 @@ async function resolveTerminalPaths(params: {
 	const resolved: Record<string, ResolvedTerminalPath | null> = {};
 	const candidates = params.paths.slice(0, RESOLVE_TERMINAL_PATHS_MAX);
 	const bases = await terminalPathBases(params);
+	// Hoisted: one projects.json lookup per call, not per candidate.
+	const roots = await allowedRoots();
 	for (const raw of candidates) {
 		resolved[raw] = null;
 		if (!raw || raw.length > TERMINAL_PATH_MAX_LEN || raw.includes("\0")) continue;
 		const expanded = raw === "~" || raw.startsWith("~/") ? join(homedir(), raw.slice(1)) : raw;
 		if (isAbsolute(expanded)) {
-			resolved[raw] = await statPathKind(resolvePath(expanded));
+			resolved[raw] = await statPathKind(resolvePath(expanded), roots);
 			continue;
 		}
 		for (const base of bases) {
-			const hit = await statPathKind(resolvePath(base, expanded));
+			const hit = await statPathKind(resolvePath(base, expanded), roots);
 			if (hit) {
 				resolved[raw] = hit;
 				break;

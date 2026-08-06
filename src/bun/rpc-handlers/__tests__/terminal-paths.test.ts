@@ -92,6 +92,18 @@ describe("resolveTerminalPaths", () => {
 		expect(resolved["~"]).toEqual({ path: homedir(), kind: "directory" });
 	});
 
+	it("does not resolve paths outside the home directory and project roots", async () => {
+		const { resolved } = await appHandlers.resolveTerminalPaths({
+			taskId: "task-1",
+			projectId: "proj-1",
+			// /etc/hosts exists everywhere, so null proves the scope gate rejected
+			// it rather than stat() failing. `..` escapes the base the same way.
+			paths: ["/etc/hosts", `${"../".repeat(12)}etc/hosts`],
+		});
+		expect(resolved["/etc/hosts"]).toBeNull();
+		expect(resolved[`${"../".repeat(12)}etc/hosts`]).toBeNull();
+	});
+
 	it("relative paths resolve to null without a project context", async () => {
 		const { resolved } = await appHandlers.resolveTerminalPaths({ paths: ["src/index.ts"] });
 		expect(resolved["src/index.ts"]).toBeNull();
