@@ -3,7 +3,9 @@ import {
 	createFilePathLinkProvider,
 	findPathCandidates,
 	getLogicalLine,
+	lineToText,
 	mapRangeToBuffer,
+	type CellLine,
 } from "../terminal-file-links";
 import type { ResolvedTerminalPath } from "../../shared/types";
 
@@ -32,11 +34,12 @@ describe("findPathCandidates", () => {
 		expect(found.map((c) => c.cleanPath)).toEqual(["package.json", "README.md"]);
 	});
 
-	it("keeps :line:col in raw but strips it from cleanPath", () => {
+	it("keeps :line:col in raw, strips it from cleanPath, and parses the line", () => {
 		const found = findPathCandidates("error at src/foo.ts:12:5 in build");
 		expect(found).toHaveLength(1);
 		expect(found[0].raw).toBe("src/foo.ts:12:5");
 		expect(found[0].cleanPath).toBe("src/foo.ts");
+		expect(found[0].line).toBe(12);
 		expect(found[0].end).toBe(found[0].start + "src/foo.ts:12:5".length - 1);
 	});
 
@@ -57,34 +60,63 @@ describe("findPathCandidates", () => {
 	});
 });
 
-function fakeBuffer(rows: Array<{ text: string; isWrapped?: boolean }>) {
-	return (y: number) => {
-		const row = rows[y];
-		if (!row) return undefined;
-		return {
-			isWrapped: row.isWrapped ?? false,
-			translateToString: (trimRight?: boolean) =>
-				trimRight ? row.text.replace(/\s+$/, "") : row.text,
-		};
+/**
+ * Real ghostty cell semantics: a row is exactly `cols` cells; unwritten cells
+ * have codepoint 0. `spec` maps each character to one cell; "␀" marks an
+ * explicit codepoint-0 gap and astral chars occupy TWO cells (glyph + spacer 0).
+ */
+function makeCellLine(spec: string, cols: number, isWrapped = false): CellLine {
+	const codes: number[] = [];
+	for (const ch of spec) {
+		const code = ch === "␀" ? 0 : ch.codePointAt(0)!;
+		codes.push(code);
+		if (code > 0xffff) codes.push(0); // wide-char spacer cell
+	}
+	while (codes.length < cols) codes.push(0);
+	return {
+		isWrapped,
+		length: cols,
+		getCell: (x) => (x < codes.length ? { getCode: () => codes[x] } : undefined),
 	};
 }
 
+function fakeBuffer(rows: Array<{ spec: string; cols: number; isWrapped?: boolean }>) {
+	const lines = rows.map((row) => makeCellLine(row.spec, row.cols, row.isWrapped ?? false));
+	return (y: number) => lines[y];
+}
+
+describe("lineToText", () => {
+	it("emits exactly one UTF-16 unit per cell, blanks as spaces", () => {
+		const text = lineToText(makeCellLine("ab␀cd", 8));
+		expect(text).toBe("ab cd   ");
+		expect(text.length).toBe(8);
+	});
+
+	it("keeps columns aligned after an astral emoji (glyph + spacer → two spaces)", () => {
+		// 🎉 is astral: its glyph cell and spacer cell both become spaces.
+		const line = makeCellLine("🎉 x.md", 10);
+		const text = lineToText(line);
+		expect(text.length).toBe(10);
+		expect(text.indexOf("x.md")).toBe(3); // cell-exact column, not string-shifted
+	});
+});
+
 describe("getLogicalLine", () => {
-	it("returns a single unwrapped row as-is", () => {
-		const getLine = fakeBuffer([{ text: "hello world   " }]);
+	it("returns cell-exact text for a single row", () => {
+		const getLine = fakeBuffer([{ spec: "hello world", cols: 16 }]);
 		const logical = getLogicalLine(getLine, 0);
-		expect(logical?.text).toBe("hello world");
+		expect(logical?.text).toBe("hello world     ");
 		expect(logical?.rows).toHaveLength(1);
 	});
 
-	it("stitches wrapped rows and maps offsets", () => {
+	it("stitches wrapped rows and maps offsets to exact cells", () => {
 		// A path soft-wrapped across two 20-col rows.
 		const getLine = fakeBuffer([
-			{ text: "saved kb-playbook-dr" },
-			{ text: "afts/waf.md ok", isWrapped: true },
+			{ spec: "saved kb-playbook-dr", cols: 20 },
+			{ spec: "afts/waf.md ok", cols: 20, isWrapped: true },
 		]);
 		const logical = getLogicalLine(getLine, 1);
-		expect(logical?.text).toBe("saved kb-playbook-drafts/waf.md ok");
+		expect(logical?.text.startsWith("saved kb-playbook-drafts/waf.md ok")).toBe(true);
 		expect(logical?.rows.map((r) => r.offset)).toEqual([0, 20]);
 
 		const candidates = findPathCandidates(logical!.text);
@@ -93,24 +125,40 @@ describe("getLogicalLine", () => {
 		expect(range).toEqual({ start: { x: 6, y: 0 }, end: { x: 10, y: 1 } });
 	});
 
+	it("maps columns exactly on a row with a codepoint-0 gap before the path", () => {
+		// Cursor-positioned output: cells 0-3 written, gap of unwritten cells,
+		// then the path at a known column.
+		const getLine = fakeBuffer([{ spec: "err:␀␀␀␀src/a.ts", cols: 24 }]);
+		const logical = getLogicalLine(getLine, 0)!;
+		const [candidate] = findPathCandidates(logical.text);
+		expect(candidate.cleanPath).toBe("src/a.ts");
+		const range = mapRangeToBuffer(logical.rows, candidate.start, candidate.end)!;
+		expect(range.start).toEqual({ x: 8, y: 0 }); // true screen column
+		expect(range.end).toEqual({ x: 15, y: 0 });
+	});
+
 	it("starts from the requested row when it is not wrapped", () => {
 		const getLine = fakeBuffer([
-			{ text: "first line" },
-			{ text: "second /tmp/x.txt" },
+			{ spec: "first line", cols: 20 },
+			{ spec: "second /tmp/x.txt", cols: 20 },
 		]);
 		const logical = getLogicalLine(getLine, 1);
-		expect(logical?.text).toBe("second /tmp/x.txt");
 		expect(logical?.rows[0].y).toBe(1);
 	});
 });
 
-describe("createFilePathLinkProvider", () => {
-	function makeTerm(rows: Array<{ text: string; isWrapped?: boolean }>) {
-		const getLine = fakeBuffer(rows);
-		return { buffer: { active: { getLine } } } as never;
-	}
+function makeTerm(rows: Array<{ spec: string; cols: number; isWrapped?: boolean }>) {
+	const getLine = fakeBuffer(rows);
+	return { buffer: { active: { getLine } } } as never;
+}
 
-	it("only linkifies paths that resolve on disk", async () => {
+async function settle() {
+	// Background resolve flushes on a 16ms timer.
+	await new Promise((resolve) => setTimeout(resolve, 40));
+}
+
+describe("createFilePathLinkProvider", () => {
+	it("answers synchronously; fresh candidates resolve in the background", async () => {
 		const resolvePaths = vi.fn(async (paths: string[]) => {
 			const out: Record<string, ResolvedTerminalPath | null> = {};
 			for (const p of paths) {
@@ -118,58 +166,98 @@ describe("createFilePathLinkProvider", () => {
 			}
 			return out;
 		});
+		const onResolutionsChanged = vi.fn();
 		const provider = createFilePathLinkProvider({
-			term: makeTerm([{ text: "see src/real.ts and src/fake.ts" }]),
+			term: makeTerm([{ spec: "see src/real.ts and src/fake.ts", cols: 40 }]),
 			resolvePaths,
 			onActivate: vi.fn(),
+			onResolutionsChanged,
 		});
-		const links = await new Promise<unknown[] | undefined>((resolve) => {
-			provider.provideLinks(0, (result) => resolve(result));
+
+		// First, synchronous answer: nothing cached yet.
+		let sync: unknown[] | undefined = [];
+		provider.provideLinks(0, (links) => {
+			sync = links as never;
 		});
-		expect(links).toHaveLength(1);
-		expect((links![0] as { text: string }).text).toBe("src/real.ts");
+		expect(sync).toBeUndefined();
+
+		await settle();
+		expect(onResolutionsChanged).toHaveBeenCalled();
+		// Both candidates went out in ONE batched RPC.
+		expect(resolvePaths).toHaveBeenCalledTimes(1);
+		expect(resolvePaths.mock.calls[0][0].sort()).toEqual(["src/fake.ts", "src/real.ts"]);
+
+		// Second lookup answers synchronously from the cache.
+		let cached: Array<{ text: string }> | undefined;
+		provider.provideLinks(0, (links) => {
+			cached = links as never;
+		});
+		expect(cached).toHaveLength(1);
+		expect(cached![0].text).toBe("src/real.ts");
+		provider.dispose();
 	});
 
-	it("activates only with Cmd/Ctrl held and passes the resolved target", async () => {
+	it("activates only with Cmd/Ctrl held and passes the resolved target + line", async () => {
 		const onActivate = vi.fn();
 		const target: ResolvedTerminalPath = { path: "/wt/a/b.md", kind: "file" };
 		const provider = createFilePathLinkProvider({
-			term: makeTerm([{ text: "open a/b.md" }]),
+			term: makeTerm([{ spec: "open a/b.md:7 now", cols: 30 }]),
 			resolvePaths: async () => ({ "a/b.md": target }),
 			onActivate,
 		});
-		const links = await new Promise<Array<{ activate(e: MouseEvent): void }> | undefined>(
-			(resolve) => provider.provideLinks(0, (result) => resolve(result as never)),
-		);
+		provider.provideLinks(0, () => {});
+		await settle();
+		let links: Array<{ activate(e: MouseEvent): void }> | undefined;
+		provider.provideLinks(0, (result) => {
+			links = result as never;
+		});
 		links![0].activate({ ctrlKey: false, metaKey: false } as MouseEvent);
 		expect(onActivate).not.toHaveBeenCalled();
 		links![0].activate({ ctrlKey: false, metaKey: true } as MouseEvent);
-		expect(onActivate).toHaveBeenCalledWith(target, expect.anything());
+		expect(onActivate).toHaveBeenCalledWith(target, expect.anything(), 7);
+		provider.dispose();
 	});
 
-	it("caches resolutions across rows", async () => {
+	it("linksForRows batches the whole viewport and skips sibling rows of one logical line", async () => {
 		const resolvePaths = vi.fn(async (paths: string[]) => {
 			const out: Record<string, ResolvedTerminalPath | null> = {};
 			for (const p of paths) out[p] = { path: `/wt/${p}`, kind: "file" };
 			return out;
 		});
 		const provider = createFilePathLinkProvider({
-			term: makeTerm([{ text: "see a/b.ts" }, { text: "again a/b.ts" }]),
+			term: makeTerm([
+				{ spec: "wrapped path a/very-lo", cols: 22 },
+				{ spec: "ng-name.md here", cols: 22, isWrapped: true },
+				{ spec: "and b/other.ts too", cols: 22 },
+			]),
 			resolvePaths,
 			onActivate: vi.fn(),
 		});
-		await new Promise((resolve) => provider.provideLinks(0, resolve));
-		await new Promise((resolve) => provider.provideLinks(1, resolve));
+		provider.linksForRows([0, 1, 2]);
+		await settle();
+		// One RPC for the whole viewport, both candidates in it.
 		expect(resolvePaths).toHaveBeenCalledTimes(1);
+		expect(resolvePaths.mock.calls[0][0].sort()).toEqual(["a/very-long-name.md", "b/other.ts"]);
+
+		const ranges = provider.linksForRows([0, 1, 2]);
+		expect(ranges).toHaveLength(2);
+		// The wrapped link spans rows 0→1 and is reported once, not per row.
+		expect(ranges[0].start.y).toBe(0);
+		expect(ranges[0].end.y).toBe(1);
+		provider.dispose();
 	});
 
-	it("reports no links for plain prose", async () => {
+	it("reports no links for plain prose", () => {
 		const provider = createFilePathLinkProvider({
-			term: makeTerm([{ text: "just some words here" }]),
+			term: makeTerm([{ spec: "just some words here", cols: 30 }]),
 			resolvePaths: async () => ({}),
 			onActivate: vi.fn(),
 		});
-		const links = await new Promise((resolve) => provider.provideLinks(0, resolve));
+		let links: unknown[] | undefined = [];
+		provider.provideLinks(0, (result) => {
+			links = result as never;
+		});
 		expect(links).toBeUndefined();
+		provider.dispose();
 	});
 });

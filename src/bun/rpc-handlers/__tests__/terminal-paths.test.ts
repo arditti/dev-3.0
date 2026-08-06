@@ -16,6 +16,9 @@ vi.mock("../../data", () => ({
 		if (taskId !== "task-1") throw new Error("unknown task");
 		return { id: "task-1", worktreePath: worktree };
 	}),
+	// The whole temp dir is a registered project so preview/open scope checks
+	// (home dir + project roots) pass for the fixtures created below.
+	loadProjects: vi.fn(async () => [{ id: "proj-1", kind: "git", path: tmp }]),
 }));
 
 vi.mock("../shared", () => ({
@@ -118,6 +121,15 @@ describe("readFilePreview", () => {
 		expect(await appHandlers.readFilePreview({ path: "relative/path.txt" })).toEqual({
 			kind: "not-found",
 		});
+	});
+
+	it("refuses paths outside the home dir and registered projects", async () => {
+		expect(await appHandlers.readFilePreview({ path: "/etc/hosts" })).toEqual({
+			kind: "not-found",
+		});
+		await expect(
+			appHandlers.openTerminalPath({ path: "/etc/hosts", mode: "system" }),
+		).rejects.toThrow(/outside the allowed/);
 	});
 
 	it("returns a data URL for images", async () => {

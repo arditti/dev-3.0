@@ -8,6 +8,13 @@ import type { ResolvedTerminalPath } from "../shared/types";
  * (soft-wrapped rows are stitched back together); existence is verified
  * through the `resolveTerminalPaths` RPC so dead-looking tokens never get
  * underlined.
+ *
+ * Lookups answer SYNCHRONOUSLY from a resolve cache: ghostty's LinkDetector
+ * marks a row scanned before awaiting providers, so an async answer loses the
+ * first hover/click on a fresh path. Unknown candidates are resolved in a
+ * batched background RPC; `onResolutionsChanged` then lets the underline
+ * overlay repaint, and the next cache invalidation (every write) lets hover
+ * re-scan the row.
  */
 
 export interface PathCandidate {
@@ -15,6 +22,8 @@ export interface PathCandidate {
 	raw: string;
 	/** Path with the :line[:col] suffix stripped — what gets resolved on disk. */
 	cleanPath: string;
+	/** 1-based line number from a :line[:col] suffix, if present. */
+	line?: number;
 	/** Start index in the logical line text. */
 	start: number;
 	/** Inclusive end index in the logical line text. */
@@ -35,7 +44,7 @@ const PATH_REGEX = new RegExp(
 );
 
 // file.ts:12 or file.ts:12:5 — kept in the link text, stripped for stat().
-const LINE_COL_SUFFIX = /^:\d+(?::\d+)?/;
+const LINE_COL_SUFFIX = /^:(\d+)(?::\d+)?/;
 const TRAILING_PUNCTUATION = /[.,;:!?'"`)\]}>]+$/;
 const MIN_CANDIDATE_LEN = 3;
 
@@ -61,6 +70,7 @@ export function findPathCandidates(text: string): PathCandidate[] {
 		candidates.push({
 			raw,
 			cleanPath,
+			line: suffix ? Number.parseInt(suffix[1], 10) : undefined,
 			start: match.index,
 			end: match.index + raw.length - 1,
 		});
@@ -68,10 +78,34 @@ export function findPathCandidates(text: string): PathCandidate[] {
 	return candidates;
 }
 
+/** The slice of IBufferLine the detection code reads. */
+export interface CellLine {
+	isWrapped: boolean;
+	length: number;
+	getCell(x: number): { getCode(): number } | undefined;
+}
+
+/**
+ * Cell-exact row text: exactly ONE UTF-16 unit per cell, so string index ===
+ * screen column. ghostty's `translateToString` skips codepoint-0 cells (rows
+ * come back shorter than `cols`, shifting every later index), which is why
+ * ghostty's own URL provider builds text cell-by-cell too. Blank, control,
+ * and astral codepoints (2 UTF-16 units — emoji, rare CJK) all become spaces;
+ * none of them are path characters.
+ */
+export function lineToText(line: CellLine): string {
+	const chars: string[] = [];
+	for (let x = 0; x < line.length; x++) {
+		const code = line.getCell(x)?.getCode() ?? 0;
+		chars.push(code === 0 || code < 32 || code > 0xffff ? " " : String.fromCodePoint(code));
+	}
+	return chars.join("");
+}
+
 export interface LogicalLineRow {
 	/** Absolute buffer row. */
 	y: number;
-	/** Row text; padded (non-trimmed) for all but the last row. */
+	/** Cell-exact row text (length === row length). */
 	text: string;
 	/** Offset of this row's first char within the logical line text. */
 	offset: number;
@@ -86,7 +120,7 @@ export interface LogicalLine {
 // etc.) — beyond this the tail rows just don't get links.
 const MAX_LOGICAL_ROWS = 40;
 
-type BufferLineReader = (y: number) => { isWrapped: boolean; translateToString(trimRight?: boolean): string } | undefined;
+export type BufferLineReader = (y: number) => CellLine | undefined;
 
 /**
  * Stitch the soft-wrapped logical line containing buffer row `y` back into
@@ -103,12 +137,10 @@ export function getLogicalLine(getLine: BufferLineReader, y: number): LogicalLin
 		const line = getLine(rowY);
 		if (!line) break;
 		if (rowY > startY && !line.isWrapped) break;
-		const next = getLine(rowY + 1);
-		const isLast = !next?.isWrapped;
-		const rowText = line.translateToString(isLast);
+		const rowText = lineToText(line);
 		rows.push({ y: rowY, text: rowText, offset: text.length });
 		text += rowText;
-		if (isLast) break;
+		if (!getLine(rowY + 1)?.isWrapped) break;
 	}
 	return { text, rows };
 }
@@ -136,107 +168,141 @@ export function mapRangeToBuffer(rows: LogicalLineRow[], start: number, end: num
 
 const RESOLVE_CACHE_TTL_MS = 10_000;
 const RESOLVE_CACHE_MAX = 1000;
+const RESOLVE_BATCH_MAX = 64; // matches the backend's per-call cap
+const RESOLVE_FLUSH_DELAY_MS = 16;
 
 export interface FilePathLinkProviderOptions {
 	term: Pick<Terminal, "buffer">;
 	resolvePaths: (paths: string[]) => Promise<Record<string, ResolvedTerminalPath | null>>;
-	onActivate: (resolved: ResolvedTerminalPath, event: MouseEvent) => void;
-	/** Fires after a fresh RPC resolution lands — the underline overlay redraws on it. */
+	onActivate: (resolved: ResolvedTerminalPath, event: MouseEvent, line?: number) => void;
+	/** Fires after a background RPC resolution lands — the underline overlay redraws on it. */
 	onResolutionsChanged?: () => void;
 }
 
 export interface FilePathLinkProvider extends ILinkProvider {
-	/** Link ranges for one absolute buffer row, for the persistent underline overlay. */
-	linksForRow(y: number): Promise<BufferRange[]>;
+	/**
+	 * Synchronous link ranges for a set of absolute buffer rows (the visible
+	 * viewport), from the resolve cache only. Unknown candidates are queued
+	 * for one batched background resolve.
+	 */
+	linksForRows(ys: number[]): BufferRange[];
+	dispose(): void;
 }
 
-/**
- * ghostty-web link provider for file paths. Activation requires Cmd/Ctrl —
- * plain clicks must keep reaching tmux mouse mode (same policy as the
- * built-in URL provider).
- */
 export function createFilePathLinkProvider(options: FilePathLinkProviderOptions): FilePathLinkProvider {
 	const cache = new Map<string, { value: ResolvedTerminalPath | null; at: number }>();
-	const inFlight = new Map<string, Promise<Record<string, ResolvedTerminalPath | null>>>();
+	const pending = new Set<string>();
+	const inFlight = new Set<string>();
+	let flushTimer: ReturnType<typeof setTimeout> | undefined;
+	let disposed = false;
 
-	async function resolveCached(paths: string[]): Promise<Map<string, ResolvedTerminalPath | null>> {
-		const now = Date.now();
-		const result = new Map<string, ResolvedTerminalPath | null>();
-		const missing: string[] = [];
+	function requestResolve(paths: Iterable<string>): void {
 		for (const path of paths) {
-			const hit = cache.get(path);
-			if (hit && now - hit.at < RESOLVE_CACHE_TTL_MS) result.set(path, hit.value);
-			else missing.push(path);
+			if (!inFlight.has(path)) pending.add(path);
 		}
-		if (missing.length > 0) {
-			const key = missing.join("\n");
-			let promise = inFlight.get(key);
-			if (!promise) {
-				promise = options.resolvePaths(missing).finally(() => inFlight.delete(key));
-				inFlight.set(key, promise);
-			}
-			const resolved = await promise;
-			if (cache.size > RESOLVE_CACHE_MAX) cache.clear();
-			for (const path of missing) {
-				const value = resolved[path] ?? null;
-				cache.set(path, { value, at: Date.now() });
-				result.set(path, value);
-			}
-			options.onResolutionsChanged?.();
+		if (pending.size > 0 && flushTimer === undefined) {
+			flushTimer = setTimeout(() => {
+				flushTimer = undefined;
+				void flushPending();
+			}, RESOLVE_FLUSH_DELAY_MS);
 		}
-		return result;
+	}
+
+	async function flushPending(): Promise<void> {
+		while (!disposed && pending.size > 0) {
+			const batch = [...pending].slice(0, RESOLVE_BATCH_MAX);
+			for (const path of batch) {
+				pending.delete(path);
+				inFlight.add(path);
+			}
+			try {
+				const resolved = await options.resolvePaths(batch);
+				if (cache.size > RESOLVE_CACHE_MAX) cache.clear();
+				for (const path of batch) {
+					cache.set(path, { value: resolved[path] ?? null, at: Date.now() });
+				}
+				options.onResolutionsChanged?.();
+			} catch {
+				// Transport hiccup — candidates stay unresolved and are re-requested
+				// on the next hover/redraw.
+			} finally {
+				for (const path of batch) inFlight.delete(path);
+			}
+		}
+	}
+
+	/**
+	 * Cached target for a candidate path. Stale entries are served
+	 * stale-while-revalidate; unknown ones queue a background resolve and
+	 * report undefined.
+	 */
+	function cachedTarget(path: string): ResolvedTerminalPath | null | undefined {
+		const hit = cache.get(path);
+		if (!hit) {
+			requestResolve([path]);
+			return undefined;
+		}
+		if (Date.now() - hit.at >= RESOLVE_CACHE_TTL_MS) requestResolve([path]);
+		return hit.value;
 	}
 
 	interface RowLink {
 		target: ResolvedTerminalPath;
-		raw: string;
+		candidate: PathCandidate;
 		range: BufferRange;
 	}
 
-	async function computeLinks(y: number): Promise<RowLink[]> {
+	function computeLinks(y: number): { links: RowLink[]; rowYs: number[] } {
 		const logical = getLogicalLine((row) => options.term.buffer.active.getLine(row), y);
-		if (!logical) return [];
+		if (!logical) return { links: [], rowYs: [y] };
 		const candidates = findPathCandidates(logical.text);
-		if (candidates.length === 0) return [];
-		const resolved = await resolveCached([...new Set(candidates.map((c) => c.cleanPath))]);
 		const links: RowLink[] = [];
 		for (const candidate of candidates) {
-			const target = resolved.get(candidate.cleanPath);
+			const target = cachedTarget(candidate.cleanPath);
 			if (!target) continue;
 			const range = mapRangeToBuffer(logical.rows, candidate.start, candidate.end);
 			if (!range) continue;
-			links.push({ target, raw: candidate.raw, range });
+			links.push({ target, candidate, range });
 		}
-		return links;
+		return { links, rowYs: logical.rows.map((row) => row.y) };
 	}
 
 	return {
 		provideLinks(y, callback) {
-			let done = false;
-			const finish = (links: ILink[] | undefined) => {
-				if (done) return;
-				done = true;
-				callback(links);
-			};
-			computeLinks(y)
-				.then((rowLinks) => {
-					const links: ILink[] = rowLinks.map(({ target, raw, range }) => ({
-						text: raw,
-						range,
-						activate: (event) => {
-							if (event.ctrlKey || event.metaKey) options.onActivate(target, event);
-						},
-					}));
-					finish(links.length > 0 ? links : undefined);
-				})
-				.catch(() => finish(undefined));
-		},
-		async linksForRow(y) {
 			try {
-				return (await computeLinks(y)).map((link) => link.range);
+				const links: ILink[] = computeLinks(y).links.map(({ target, candidate, range }) => ({
+					text: candidate.raw,
+					range,
+					activate: (event) => {
+						if (event.ctrlKey || event.metaKey) options.onActivate(target, event, candidate.line);
+					},
+				}));
+				callback(links.length > 0 ? links : undefined);
 			} catch {
-				return [];
+				callback(undefined);
 			}
+		},
+		linksForRows(ys) {
+			const ranges: BufferRange[] = [];
+			// A logical line spans several rows; once processed, skip its siblings.
+			const covered = new Set<number>();
+			for (const y of ys) {
+				if (covered.has(y)) continue;
+				try {
+					const { links, rowYs } = computeLinks(y);
+					for (const { range } of links) ranges.push(range);
+					for (const rowY of rowYs) covered.add(rowY);
+				} catch {
+					// skip unreadable rows
+				}
+			}
+			return ranges;
+		},
+		dispose() {
+			disposed = true;
+			clearTimeout(flushTimer);
+			pending.clear();
+			cache.clear();
 		},
 	};
 }

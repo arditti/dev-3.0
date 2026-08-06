@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { Utils } from "../electrobun-platform";
@@ -11,26 +12,51 @@ import { log } from "./shared";
  * Backend for Cmd/Ctrl+Click file-path links in terminal output: resolve
  * regex-detected candidates against the task worktree / project directory,
  * open them per the user's setting, and feed the in-app preview modal.
+ *
+ * `openTerminalPath` and `readFilePreview` take a client-supplied absolute
+ * path (the modal only knows the path), so both gate on
+ * {@link isTerminalPathAllowed}: the path must sit under the home directory
+ * or a registered project. Same exposure class as `listDirectory` behind the
+ * same auth, but bounded — see decisions/206-terminal-file-path-links.md.
  */
 
 const RESOLVE_TERMINAL_PATHS_MAX = 64;
 const TERMINAL_PATH_MAX_LEN = 1024;
 const FILE_PREVIEW_MAX_TEXT_BYTES = 256 * 1024;
-const FILE_PREVIEW_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const FILE_PREVIEW_MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const PREVIEW_IMAGE_MIME: Record<string, string> = {
 	png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
 	gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
 };
 
-function statPathKind(absPath: string): ResolvedTerminalPath | null {
+async function statPathKind(absPath: string): Promise<ResolvedTerminalPath | null> {
 	try {
-		const st = statSync(absPath);
+		const st = await stat(absPath);
 		if (st.isFile()) return { path: absPath, kind: "file" };
 		if (st.isDirectory()) return { path: absPath, kind: "directory" };
 	} catch {
 		// ENOENT / EACCES → not linkable
 	}
 	return null;
+}
+
+async function projectRoots(): Promise<string[]> {
+	try {
+		const projects = await data.loadProjects();
+		return projects.filter((p) => p.kind !== "virtual" && p.path).map((p) => p.path);
+	} catch {
+		return [];
+	}
+}
+
+function isUnder(absPath: string, root: string): boolean {
+	return absPath === root || absPath.startsWith(root.endsWith("/") ? root : `${root}/`);
+}
+
+async function isTerminalPathAllowed(absPath: string): Promise<boolean> {
+	const normalized = resolvePath(absPath);
+	if (isUnder(normalized, homedir())) return true;
+	return (await projectRoots()).some((root) => isUnder(normalized, root));
 }
 
 async function terminalPathBases(params: { taskId?: string; projectId?: string }): Promise<string[]> {
@@ -68,11 +94,11 @@ async function resolveTerminalPaths(params: {
 		if (!raw || raw.length > TERMINAL_PATH_MAX_LEN || raw.includes("\0")) continue;
 		const expanded = raw === "~" || raw.startsWith("~/") ? join(homedir(), raw.slice(1)) : raw;
 		if (isAbsolute(expanded)) {
-			resolved[raw] = statPathKind(resolvePath(expanded));
+			resolved[raw] = await statPathKind(resolvePath(expanded));
 			continue;
 		}
 		for (const base of bases) {
-			const hit = statPathKind(resolvePath(base, expanded));
+			const hit = await statPathKind(resolvePath(base, expanded));
 			if (hit) {
 				resolved[raw] = hit;
 				break;
@@ -87,7 +113,13 @@ async function openTerminalPath(params: { path: string; mode: "system" | "reveal
 	if (!isAbsolute(params.path) || params.path.includes("\0")) {
 		throw new Error("Invalid file path");
 	}
-	if (!existsSync(params.path)) {
+	if (!(await isTerminalPathAllowed(params.path))) {
+		throw new Error("Path is outside the allowed directories");
+	}
+	let st: Stats;
+	try {
+		st = await stat(params.path);
+	} catch {
 		throw new Error("File not found");
 	}
 	if (params.mode === "reveal") {
@@ -95,11 +127,20 @@ async function openTerminalPath(params: { path: string; mode: "system" | "reveal
 			spawn(["open", "-R", params.path]);
 		} else {
 			// Linux file managers have no portable "select file"; open the parent dir.
-			Utils.openPath(statSync(params.path).isDirectory() ? params.path : dirname(params.path));
+			Utils.openPath(st.isDirectory() ? params.path : dirname(params.path));
 		}
 		return;
 	}
 	Utils.openPath(params.path);
+}
+
+/** Cut a UTF-8 buffer at a char boundary so truncation never splits a code point. */
+function utf8SafeSlice(buffer: Buffer, maxBytes: number): Buffer {
+	if (buffer.length <= maxBytes) return buffer;
+	let end = maxBytes;
+	// Back off continuation bytes (0b10xxxxxx) to the start of the sequence.
+	while (end > 0 && (buffer[end] & 0xc0) === 0x80) end--;
+	return buffer.subarray(0, end);
 }
 
 async function readFilePreview(params: { path: string }): Promise<FilePreviewResult> {
@@ -107,26 +148,30 @@ async function readFilePreview(params: { path: string }): Promise<FilePreviewRes
 	if (!isAbsolute(params.path) || params.path.includes("\0")) {
 		return { kind: "not-found" };
 	}
-	let st: ReturnType<typeof statSync>;
+	if (!(await isTerminalPathAllowed(params.path))) {
+		return { kind: "not-found" };
+	}
+	let st: Stats;
 	try {
-		st = statSync(params.path);
+		st = await stat(params.path);
 	} catch {
 		return { kind: "not-found" };
 	}
 	if (st.isDirectory()) return { kind: "directory" };
+	if (!st.isFile()) return { kind: "not-found" };
 	const size = st.size;
 	const ext = params.path.split(".").pop()?.toLowerCase() ?? "";
 	const imageMime = PREVIEW_IMAGE_MIME[ext];
 	if (imageMime) {
 		if (size > FILE_PREVIEW_MAX_IMAGE_BYTES) return { kind: "too-large", size };
-		const buffer = readFileSync(params.path);
+		const buffer = await readFile(params.path);
 		return { kind: "image", dataUrl: `data:${imageMime};base64,${buffer.toString("base64")}`, size };
 	}
 	if (size > FILE_PREVIEW_MAX_TEXT_BYTES * 4) return { kind: "too-large", size };
-	const buffer = readFileSync(params.path);
+	const buffer = await readFile(params.path);
 	if (buffer.subarray(0, 8192).includes(0)) return { kind: "binary", size };
 	const truncated = buffer.length > FILE_PREVIEW_MAX_TEXT_BYTES;
-	const content = buffer.subarray(0, FILE_PREVIEW_MAX_TEXT_BYTES).toString("utf-8");
+	const content = utf8SafeSlice(buffer, FILE_PREVIEW_MAX_TEXT_BYTES).toString("utf-8");
 	return { kind: "text", content, truncated, size };
 }
 

@@ -7,6 +7,13 @@ import type { BufferRange } from "./terminal-file-links";
  * invisible until the mouse finds them — this overlay canvas (pointer-events:
  * none, stacked over the terminal canvas) underlines every resolved path link
  * in the viewport so they read as links at a glance.
+ *
+ * Refresh triggers: ghostty-web 0.4.0 never fires `onRender` (the emitter has
+ * no `.fire()` call in the bundle), so content changes are reported by
+ * TerminalView's own write batch via `contentChanged()`; `onScroll` covers
+ * viewport moves and a ResizeObserver covers layout. The canvas is cleared
+ * synchronously on every trigger so a stale underline never sits under moved
+ * text; the recompute itself is debounced.
  */
 
 // Same blue ghostty-web hardcodes for its hover underline (#4A90E2), slightly
@@ -25,6 +32,9 @@ export function viewportRowToAbsolute(viewportRow: number, viewportY: number, sc
 }
 
 export interface FilePathUnderlinesHandle {
+	/** New terminal content was written — clear now, recompute after idle. */
+	contentChanged(): void;
+	/** Recompute without an immediate clear (e.g. new resolutions landed). */
 	scheduleRedraw(): void;
 	dispose(): void;
 }
@@ -32,9 +42,9 @@ export interface FilePathUnderlinesHandle {
 export function installFilePathUnderlines(options: {
 	term: Terminal;
 	container: HTMLElement;
-	linksForRow: (absoluteRow: number) => Promise<BufferRange[]>;
+	linksForRows: (absoluteRows: number[]) => BufferRange[];
 }): FilePathUnderlinesHandle {
-	const { term, container, linksForRow } = options;
+	const { term, container, linksForRows } = options;
 	if (typeof getComputedStyle === "function" && getComputedStyle(container).position === "static") {
 		container.style.position = "relative";
 	}
@@ -49,7 +59,6 @@ export function installFilePathUnderlines(options: {
 
 	let disposed = false;
 	let redrawTimer: ReturnType<typeof setTimeout> | undefined;
-	let generation = 0;
 
 	function termCanvas(): HTMLCanvasElement | null {
 		for (const canvas of container.querySelectorAll("canvas")) {
@@ -75,9 +84,13 @@ export function installFilePathUnderlines(options: {
 		return { w, h, dpr };
 	}
 
-	async function redraw(): Promise<void> {
+	function clearNow(): void {
+		// Resizing the backing store also clears it; this covers the no-resize case.
+		ctx?.clearRect(0, 0, overlay.width, overlay.height);
+	}
+
+	function redraw(): void {
 		if (disposed || !ctx || !term.renderer) return;
-		const gen = ++generation;
 		const size = syncSize();
 		if (!size) return;
 		const charWidth = term.renderer.charWidth;
@@ -86,34 +99,27 @@ export function installFilePathUnderlines(options: {
 		const buffer = term.buffer.active;
 		const scrollback = Math.max(0, buffer.length - term.rows);
 		const viewportY = term.viewportY;
-		const rowRanges = await Promise.all(
-			Array.from({ length: term.rows }, (_, viewportRow) =>
-				linksForRow(viewportRowToAbsolute(viewportRow, viewportY, scrollback)),
-			),
+		const n = Math.max(0, Math.floor(viewportY));
+		const absoluteRows = Array.from({ length: term.rows }, (_, viewportRow) =>
+			viewportRowToAbsolute(viewportRow, viewportY, scrollback),
 		);
-		if (disposed || gen !== generation) return;
+		const ranges = linksForRows(absoluteRows);
 		ctx.setTransform(size.dpr, 0, 0, size.dpr, 0, 0);
 		ctx.clearRect(0, 0, size.w, size.h);
 		ctx.strokeStyle = UNDERLINE_COLOR;
 		ctx.lineWidth = 1;
-		const drawn = new Set<string>();
-		for (const ranges of rowRanges) {
-			for (const range of ranges) {
-				const key = `${range.start.y}:${range.start.x}-${range.end.y}:${range.end.x}`;
-				if (drawn.has(key)) continue;
-				drawn.add(key);
-				for (let absRow = range.start.y; absRow <= range.end.y; absRow++) {
-					const n = Math.max(0, Math.floor(viewportY));
-					const viewportRow = absRow < scrollback ? absRow - (scrollback - n) : absRow - scrollback + n;
-					if (viewportRow < 0 || viewportRow >= term.rows) continue;
-					const fromX = absRow === range.start.y ? range.start.x : 0;
-					const toX = absRow === range.end.y ? range.end.x : term.cols - 1;
-					const y = (viewportRow + 1) * charHeight - 1.5;
-					ctx.beginPath();
-					ctx.moveTo(fromX * charWidth, y);
-					ctx.lineTo((toX + 1) * charWidth, y);
-					ctx.stroke();
-				}
+		for (const range of ranges) {
+			for (let absRow = range.start.y; absRow <= range.end.y; absRow++) {
+				// Inverse of viewportRowToAbsolute — both branches reduce to this.
+				const viewportRow = absRow - scrollback + n;
+				if (viewportRow < 0 || viewportRow >= term.rows) continue;
+				const fromX = absRow === range.start.y ? range.start.x : 0;
+				const toX = absRow === range.end.y ? range.end.x : term.cols - 1;
+				const y = (viewportRow + 1) * charHeight - 1.5;
+				ctx.beginPath();
+				ctx.moveTo(fromX * charWidth, y);
+				ctx.lineTo((toX + 1) * charWidth, y);
+				ctx.stroke();
 			}
 		}
 	}
@@ -122,21 +128,24 @@ export function installFilePathUnderlines(options: {
 		if (disposed) return;
 		clearTimeout(redrawTimer);
 		redrawTimer = setTimeout(() => {
-			void redraw();
+			redraw();
 		}, REDRAW_DEBOUNCE_MS);
 	}
 
-	// No onResize subscription: the container ResizeObserver + the onRender
-	// that follows any reflow already cover size changes.
-	const subscriptions = [
-		term.onRender(() => scheduleRedraw()),
-		term.onScroll(() => scheduleRedraw()),
-	];
-	const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => scheduleRedraw()) : null;
+	function contentChanged(): void {
+		if (disposed) return;
+		clearNow();
+		scheduleRedraw();
+	}
+
+	const subscriptions = [term.onScroll(() => contentChanged())];
+	const resizeObserver =
+		typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => contentChanged()) : null;
 	resizeObserver?.observe(container);
 	scheduleRedraw();
 
 	return {
+		contentChanged,
 		scheduleRedraw,
 		dispose() {
 			disposed = true;
