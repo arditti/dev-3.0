@@ -512,21 +512,43 @@ button {
 	}
 }
 
-/* ---- Global 44px touch targets on coarse-pointer devices ------------------
-   §9a.1 / §12.6: the 44px minimum is the DEFAULT on touch, not opt-in per
-   surface.  `pointer: coarse` fires on any touch or stylus device regardless
-   of viewport width, so tablets in landscape are covered the same as phones.
-   We prefer this real capability query over a viewport-width gate because
-   touch target size is a device capability, not a layout breakpoint.
+/* ---- Global 24px touch-target floor on coarse-pointer devices -------------
+   `pointer: coarse` fires on any touch or stylus device regardless of viewport
+   width, so tablets in landscape are covered the same as phones — a device
+   capability, not a layout breakpoint.
+
+   The floor is the WCAG 2.5.8 minimum (24×24), NOT 44×44. A blanket 44px
+   inflated every inline control on the board — carousel dots, label chips,
+   priority badges — into oversized blobs that wrecked card layout. 44×44 stays
+   where it belongs: full-width rows in `.touch-actions` sheets and the
+   primary controls that opt into it per surface.
+
+   `:where()` (specificity 0), NOT `:is()`: with `:is()` the rule carried the
+   weight of its heaviest argument (`[role="menuitem"]`, 0-1-0) and, authored
+   after `@tailwind utilities`, silently beat every explicit `min-h-11` /
+   `h-9` a component had set for itself. A floor must lose to an author's
+   deliberate size, always.
 
    Sizing is absolute px (not rem) for the same reason as .touch-actions below:
-   the 0.67× dense-zoom factor used on the mobile task screen must not shrink
-   targets below the 44px floor. */
+   the 0.67× phone factor applied to every screen on a phone must not shrink
+   targets below the floor. */
 @media (pointer: coarse) {
-	:is(button, a[role="button"], [role="menuitem"], [role="option"], [role="tab"]) {
-		min-height: 44px;
-		min-width: 44px;
+	:where(button, a[role="button"], [role="menuitem"], [role="option"], [role="tab"]) {
+		min-height: 24px;
+		min-width: 24px;
 	}
+}
+
+/* ---- Inline chips opt out of the touch floor ------------------------------
+   A priority badge is a 15×13 painted box and a label chip a small pill; the
+   24px floor stretched both into squares with the text floating inside, and on
+   a card the label pill ended up taller than the card's own title. WCAG 2.5.8
+   exempts targets in inline flow, and these two sit inside a card whose whole
+   surface is the tap target — the same actions also live in the task-actions
+   sheet at a true 44px row. Class (0-1-0) beats the `:where()` floor (0). */
+.touch-inline {
+	min-height: 0;
+	min-width: 0;
 }
 
 /* ---- Touch action group (narrow-viewport action sheets) ----
@@ -538,7 +560,7 @@ button {
    so their menu items keep their own (already touch-sized) rows.
 
    Sizing is absolute px, NOT rem: the mobile task screen scales the root
-   font-size to 0.67× via the dense-zoom factor (see zoom.ts MOBILE_DENSE_FACTOR),
+   font-size to 0.67× on a phone (see zoom.ts MOBILE_DENSE_FACTOR),
    which is meant to pack content-heavy terminal/diff surfaces — a touch action
    sheet must keep true 44px targets and not shrink with it. */
 .touch-actions :is(button, a[role="button"], [role="menuitem"]) {
