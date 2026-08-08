@@ -1,33 +1,68 @@
 #!/bin/bash
 set -euo pipefail
 
-# Creates release artifacts for a given OS and architecture.
-# Usage: ./scripts/create-release-artifacts.sh <os> <arch>
-#   os:   macos or linux
-#   arch: arm64 or x64
+# Creates release artifacts for a given OS, architecture and update channel.
+# Usage: ./scripts/create-release-artifacts.sh <os> <arch> <channel>
+#   os:      macos or linux
+#   arch:    arm64 or x64
+#   channel: stable or unstable (must match the `electrobun build --env=` used)
 # Outputs artifacts to ./artifacts-<os>-<arch>/
 #
 # Expects:
-#   - ./build/stable-<os>-<arch>/ to contain the Electrobun build output
+#   - ./build/<channel>-<os>-<arch>/ to contain the Electrobun build output
 #   - ./artifacts/ may contain Electrobun's own artifacts (Case 1)
 #   - `bun` on PATH (used only for JSON parsing, any arch works)
+#
+# This script is the SINGLE WRITER of the published `<prefix>-update.json`: it
+# rewrites Electrobun's manifest wholesale, adding os/arch/changelog plus the `sha`
+# and `buildOrder` fields the channel logic needs. A second writer would let the feed
+# disagree with itself.
 
-OS="${1:?Usage: $0 <os> <arch> (os: macos|linux, arch: arm64|x64)}"
-ARCH="${2:?Usage: $0 <os> <arch> (os: macos|linux, arch: arm64|x64)}"
+OS="${1:?Usage: $0 <os> <arch> <channel> (os: macos|linux, arch: arm64|x64, channel: stable|unstable)}"
+ARCH="${2:?Usage: $0 <os> <arch> <channel> (os: macos|linux, arch: arm64|x64, channel: stable|unstable)}"
+# CHANNEL is REQUIRED and deliberately NOT defaulted. A default would let a future
+# caller publish unstable artifacts into the stable feed — every filename here is
+# prefixed with it — and nothing would go red, because a missing argument would read
+# as a valid choice.
+CHANNEL="${3:?missing <channel> argument (stable|unstable). Refusing to guess: the channel prefixes every artifact name and the update manifest, so guessing it would publish one channel build into the other channel feed.}"
+if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "unstable" ]; then
+  echo "::error::unknown channel '${CHANNEL}' (expected stable|unstable). The channel must match the \`electrobun build --env=\` that produced ./build/, or the artifact names will not match what the updater fetches."
+  exit 1
+fi
 APP_NAME="dev-3.0"
-BUILD_DIR="./build/stable-${OS}-${ARCH}"
-PLATFORM_PREFIX="stable-${OS}-${ARCH}"
+# Electrobun suffixes the app file name on every channel except stable
+# (api/shared/naming.ts getAppFileName), and the Updater builds its download URL from
+# that name via version.json. Get this wrong and the tarball is published under a name
+# no client asks for.
+if [ "$CHANNEL" = "stable" ]; then
+  APP_FILE_NAME="${APP_NAME}"
+else
+  APP_FILE_NAME="${APP_NAME}-${CHANNEL}"
+fi
+BUILD_DIR="./build/${CHANNEL}-${OS}-${ARCH}"
+PLATFORM_PREFIX="${CHANNEL}-${OS}-${ARCH}"
 OUTPUT_DIR="./artifacts-${OS}-${ARCH}"
 ZSTD="./node_modules/electrobun/dist-${OS}-${ARCH}/zig-zstd"
 
+# Identity and ordering for the manifest. `sha` says WHICH COMMIT (the hourly unstable
+# workflow compares it against main to decide whether to build at all); `buildOrder`
+# says WHICH BUILD IS NEWER (clients on unstable compare it, because the unstable
+# version string carries a +unstable.<sha> suffix that semver silently parses away).
+# `buildOrder` is monotonic ONLY because main is squash-merged: linear history, +1 per
+# merge. That is a property of how this repo lands PRs, not of git. See
+# decisions/2026/08/06/extract-reusable-release-build-workflows.md.
+BUILD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+BUILD_ORDER=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+echo "Manifest identity: sha=${BUILD_SHA} buildOrder=${BUILD_ORDER}"
+
 # Platform-specific settings
 if [ "$OS" = "macos" ]; then
-  APP_BUNDLE="${APP_NAME}.app"
-  TAR_NAME="${APP_NAME}.app.tar"
+  APP_BUNDLE="${APP_FILE_NAME}.app"
+  TAR_NAME="${APP_FILE_NAME}.app.tar"
   VERSION_JSON_SUBPATH="${APP_BUNDLE}/Contents/Resources/version.json"
 else
-  APP_BUNDLE="${APP_NAME}"
-  TAR_NAME="${APP_NAME}.tar"
+  APP_BUNDLE="${APP_FILE_NAME}"
+  TAR_NAME="${APP_FILE_NAME}.tar"
   # Linux bundle structure may vary; we'll use find as fallback
   VERSION_JSON_SUBPATH="${APP_BUNDLE}/resources/version.json"
 fi
@@ -67,7 +102,13 @@ create_dmg() {
   hdiutil detach "/Volumes/${VOL_NAME}" -force 2>/dev/null || true
 }
 
-# Helper: find version.json in a recovered directory
+# Helper: find version.json in a recovered directory.
+#
+# THIS FUNCTION'S STDOUT IS ITS RETURN VALUE — callers do `X=$(find_version_json ...)`.
+# Every human-readable line therefore goes to STDERR. A `::notice::` on stdout is captured
+# INTO the path, and the next `bun -e "Bun.file('<two lines>')"` dies with "Unterminated
+# string literal", which is how the fallback branch below sat dead: the notice appeared in
+# the log, so it looked exercised.
 find_version_json() {
   local SEARCH_DIR="$1"
   local EXPECTED="${SEARCH_DIR}/${VERSION_JSON_SUBPATH}"
@@ -81,12 +122,12 @@ find_version_json() {
   local FOUND
   FOUND=$(find "$SEARCH_DIR" -name "version.json" -type f 2>/dev/null | head -1)
   if [ -n "$FOUND" ]; then
-    echo "::notice::version.json found at unexpected path: $FOUND"
+    echo "::notice::version.json found at unexpected path: $FOUND" >&2
     echo "$FOUND"
     return
   fi
 
-  echo "::error::version.json not found in $SEARCH_DIR"
+  echo "::error::version.json not found in $SEARCH_DIR" >&2
   return 1
 }
 
@@ -110,11 +151,11 @@ if [ -n "$EBUN_TAR_ZST" ]; then
   echo "Electrobun created artifacts successfully, using them directly"
   ls -lh ./artifacts/
 
-  cp "$EBUN_TAR_ZST" "${OUTPUT_DIR}/${PLATFORM_PREFIX}-${APP_NAME}${TAR_NAME#${APP_NAME}}.zst"
+  cp "$EBUN_TAR_ZST" "${OUTPUT_DIR}/${PLATFORM_PREFIX}-${APP_FILE_NAME}${TAR_NAME#${APP_FILE_NAME}}.zst"
 
   # Copy Linux installer tarball if present
   if [ -n "$EBUN_SETUP_TGZ" ] && [ "$OS" = "linux" ]; then
-    cp "$EBUN_SETUP_TGZ" "${OUTPUT_DIR}/${PLATFORM_PREFIX}-${APP_NAME}Setup.tar.gz"
+    cp "$EBUN_SETUP_TGZ" "${OUTPUT_DIR}/${PLATFORM_PREFIX}-${APP_FILE_NAME}Setup.tar.gz"
   fi
 
   # Get version info from Electrobun's update.json or from the bundle
@@ -133,7 +174,7 @@ if [ -n "$EBUN_TAR_ZST" ]; then
   echo "Bundle hash: $HASH, version: $VERSION"
 
   # Create update.json with platform prefix
-  echo "{\"version\":\"${VERSION}\",\"hash\":\"${HASH}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\",\"changelog\":${CHANGELOG_JSON}}" \
+  echo "{\"version\":\"${VERSION}\",\"hash\":\"${HASH}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\",\"sha\":\"${BUILD_SHA}\",\"buildOrder\":${BUILD_ORDER},\"changelog\":${CHANGELOG_JSON}}" \
     > "${OUTPUT_DIR}/${PLATFORM_PREFIX}-update.json"
 
   # macOS: create DMG
@@ -171,11 +212,15 @@ if [ ! -f "$TAR_ZST" ] && [ ! -f "$TAR" ]; then
   exit 1
 fi
 
-# Compress tar if electrobun didn't get to it
+# Compress tar if electrobun didn't get to it. `zig-zstd` REQUIRES the `compress`
+# subcommand and `-i` for the input; called as `zig-zstd <in> -o <out>` it exits with
+# `error: InvalidArgs`, which is how this branch sat dead from PR #12 (2026-03-01) until a
+# test finally entered it — it is reachable only when electrobun dies between writing the
+# tar and compressing it.
 if [ ! -f "$TAR_ZST" ] && [ -f "$TAR" ]; then
-  "$ZSTD" "$TAR" -o "$TAR_ZST"
+  "$ZSTD" compress -i "$TAR" -o "$TAR_ZST" --no-timing
 fi
-cp "$TAR_ZST" "${OUTPUT_DIR}/${PLATFORM_PREFIX}-${APP_NAME}${TAR_NAME#${APP_NAME}}.zst"
+cp "$TAR_ZST" "${OUTPUT_DIR}/${PLATFORM_PREFIX}-${APP_FILE_NAME}${TAR_NAME#${APP_FILE_NAME}}.zst"
 
 # Extract to recover version.json and create platform-specific artifacts
 RECOVER_DIR="${BUILD_DIR}/recovered"
@@ -189,7 +234,7 @@ VERSION=$(bun -e "const j=await Bun.file('${VERSION_JSON}').json();console.log(j
 echo "Bundle hash: $HASH, version: $VERSION"
 
 # Create update.json
-echo "{\"version\":\"${VERSION}\",\"hash\":\"${HASH}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\",\"changelog\":${CHANGELOG_JSON}}" \
+echo "{\"version\":\"${VERSION}\",\"hash\":\"${HASH}\",\"os\":\"${OS}\",\"arch\":\"${ARCH}\",\"sha\":\"${BUILD_SHA}\",\"buildOrder\":${BUILD_ORDER},\"changelog\":${CHANGELOG_JSON}}" \
   > "${OUTPUT_DIR}/${PLATFORM_PREFIX}-update.json"
 
 # macOS: create DMG from recovered .app (with /Applications symlink)
