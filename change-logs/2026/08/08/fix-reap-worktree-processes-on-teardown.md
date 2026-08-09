@@ -1,0 +1,3 @@
+Short: Reclaim processes leaked by finished tasks
+
+Completing, cancelling, deleting or hibernating a task now kills every process still running inside its worktree, not just the terminal tree and the dev server — detached agent daemons, headless browsers, watchers and leftover dev builds used to survive teardown and keep burning CPU and memory for weeks. What earlier versions already leaked shows up as a new section at the bottom of the memory breakdown (the header memory pill) with a single Kill button; it appears only when there is something to reclaim, and nothing is ever killed without confirmation.

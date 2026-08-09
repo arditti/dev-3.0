@@ -1,6 +1,11 @@
-import type { MemoryPressure, SystemMemorySnapshot } from "../../shared/types";
+import { useCallback, useEffect, useState } from "react";
+import type { MemoryPressure, SystemMemorySnapshot, WorktreeOrphanGroup } from "../../shared/types";
+import { confirm } from "../confirm";
 import { useT } from "../i18n";
+import { api } from "../rpc";
+import { toast } from "../toast";
 import { formatBytes } from "../utils/formatBytes";
+import { RescanIcon } from "./HeaderIcons";
 
 /**
  * The who-took-it breakdown behind the header memory pill. Rendered inside a
@@ -35,6 +40,162 @@ interface MemoryBreakdownPanelProps {
 	snapshot: SystemMemorySnapshot;
 	/** Jump to a heavy task. Closing the overlay is the caller's job. */
 	onSelectTask: (taskId: string, projectId: string) => void;
+	/**
+	 * Dismiss the popover/sheet before a dialog opens over it. A confirm rendered
+	 * under a hover-dismissed popover reads as a dialog with no context.
+	 */
+	onCloseOverlay: () => void;
+}
+
+/**
+ * Processes still running inside worktrees of tasks that are done — the only
+ * memory in this panel the app is *wasting* rather than spending, and therefore
+ * the only row that carries an action (PRODUCT_UX_BIBLE §12.6). Conditional by
+ * design: with nothing to reclaim the section is absent, not reassuring.
+ *
+ * The scan is deliberately not part of the memory snapshot: it costs an `lsof`
+ * over the whole process table, which has no business in a 10-second poller.
+ */
+function LeftoverProcessesSection({ onCloseOverlay }: { onCloseOverlay: () => void }) {
+	const t = useT();
+	const [groups, setGroups] = useState<WorktreeOrphanGroup[] | null>(null);
+	const [scanning, setScanning] = useState(false);
+	/** Short id of the row being killed, or "all" — one in-flight kill at a time. */
+	const [busy, setBusy] = useState<string | null>(null);
+
+	const scan = useCallback(async () => {
+		setScanning(true);
+		try {
+			setGroups(await api.request.scanWorktreeOrphans());
+		} catch {
+			// A failed scan stays silent: this section is a bonus, not the panel.
+		} finally {
+			setScanning(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		void scan();
+	}, [scan]);
+
+	const processCount = groups?.reduce((sum, group) => sum + group.processCount, 0) ?? 0;
+	const rss = groups?.reduce((sum, group) => sum + group.rss, 0) ?? 0;
+
+	/**
+	 * `key` is what the button is allowed to kill: one task's short id, or "all".
+	 * The PIDs come from what is on screen, never from a fresh scan — the number
+	 * the user just read must be the number that dies.
+	 */
+	const kill = useCallback(
+		async (key: string, pids: number[]) => {
+			setBusy(key);
+			try {
+				const result = await api.request.killWorktreeOrphans({ pids });
+				setGroups((current) =>
+					key === "all" ? [] : (current ?? []).filter((group) => group.shortId !== key),
+				);
+				toast.success(t.plural("memory.leftoversKilled", result.killed));
+				if (result.leftovers > 0) toast.warning(t.plural("memory.leftoversSurvived", result.leftovers));
+			} catch (err) {
+				toast.error(t("memory.leftoversKillFailed", { error: String(err) }));
+			} finally {
+				setBusy(null);
+			}
+		},
+		[t],
+	);
+
+	/**
+	 * Killing everything asks first; killing one row does not. The confirmation is
+	 * priced by blast radius, not by the word "kill": a row is one named task's
+	 * leftovers with its count on screen, while "all" sweeps tasks the user may
+	 * have scrolled past.
+	 */
+	const killAll = useCallback(async () => {
+		const pids = (groups ?? []).flatMap((group) => group.pids);
+		onCloseOverlay();
+		const confirmed = await confirm({
+			title: t("memory.leftoversConfirmTitle"),
+			message: t("memory.leftoversConfirmBody", { count: String(processCount), size: formatBytes(rss) }),
+			confirmLabel: t("memory.leftoversKillAll"),
+			danger: true,
+		});
+		if (!confirmed) return;
+		await kill("all", pids);
+	}, [groups, kill, onCloseOverlay, processCount, rss, t]);
+
+	if (!groups || groups.length === 0) return null;
+
+	return (
+		<div className="flex flex-col gap-1.5 border-t border-edge px-3 py-2" data-testid="memory-leftovers">
+			<div className="flex items-center justify-between gap-2">
+				<SectionLabel>{t("memory.leftovers")}</SectionLabel>
+				<div className="flex shrink-0 items-center gap-1.5">
+					<button
+						type="button"
+						onClick={() => void scan()}
+						disabled={scanning || busy !== null}
+						aria-label={t("memory.leftoversRescan")}
+						title={t("memory.leftoversRescan")}
+						data-testid="memory-leftovers-rescan"
+						className={`header-anim rounded-md p-1 text-fg-3 transition-colors hover:bg-elevated-hover hover:text-fg disabled:opacity-50 ${
+							scanning ? "hdr-rescan-busy" : ""
+						}`}
+					>
+						<RescanIcon className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
+						onClick={killAll}
+						disabled={busy !== null}
+						data-testid="memory-leftovers-kill-all"
+						className="rounded-md border border-danger/30 px-2 py-0.5 text-dense font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+					>
+						{busy === "all" ? t("memory.leftoversKilling") : t("memory.leftoversKillAll")}
+					</button>
+				</div>
+			</div>
+
+			<div className="flex items-baseline justify-between gap-2">
+				<span className="min-w-0 text-fg">{t.plural("memory.leftoverProcesses", processCount)}</span>
+				<Size bytes={rss} />
+			</div>
+
+			<ul className="flex flex-col">
+				{groups.map((group) => {
+					const name = group.title || group.shortId;
+					return (
+						<li key={group.shortId} className="group/row flex items-center justify-between gap-2 py-0.5" title={group.command}>
+							<span className="min-w-0 truncate text-dense text-fg-2 streamer-private">
+								{name}
+								<span className="ml-1 text-fg-muted tabular-nums">
+									{t.plural("memory.processCount", group.processCount)}
+								</span>
+							</span>
+							<span className="flex shrink-0 items-center gap-1.5">
+								<span className="text-dense tabular-nums text-fg-muted">{formatBytes(group.rss)}</span>
+								{/* No confirmation here on purpose: one named task, its count
+								    already on screen, and the row disappears as the receipt. */}
+								<button
+									type="button"
+									onClick={() => void kill(group.shortId, group.pids)}
+									disabled={busy !== null}
+									aria-label={t("memory.leftoversKillTask", { task: name })}
+									title={t("memory.leftoversKillTask", { task: name })}
+									data-testid={`memory-leftovers-kill-${group.shortId}`}
+									className="rounded px-1 text-dense text-danger opacity-0 transition-opacity hover:bg-danger/10 focus-visible:opacity-100 group-hover/row:opacity-100 disabled:opacity-30"
+								>
+									{t("memory.leftoversKill")}
+								</button>
+							</span>
+						</li>
+					);
+				})}
+			</ul>
+
+			<div className="text-dense leading-relaxed text-fg-muted">{t("memory.leftoversNote")}</div>
+		</div>
+	);
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -47,7 +208,7 @@ function Size({ bytes }: { bytes: number }) {
 	return <span className="tabular-nums text-fg-2 shrink-0">{formatBytes(bytes)}</span>;
 }
 
-export default function MemoryBreakdownPanel({ snapshot, onSelectTask }: MemoryBreakdownPanelProps) {
+export default function MemoryBreakdownPanel({ snapshot, onSelectTask, onCloseOverlay }: MemoryBreakdownPanelProps) {
 	const t = useT();
 	const pressureClass = PRESSURE_TEXT_CLASS[snapshot.pressure];
 
@@ -170,6 +331,10 @@ export default function MemoryBreakdownPanel({ snapshot, onSelectTask }: MemoryB
 					</ul>
 				)}
 			</div>
+
+			{/* Last, and only when it exists: the memory we are wasting rather than
+			    spending, plus the one action this panel is allowed to carry. */}
+			<LeftoverProcessesSection onCloseOverlay={onCloseOverlay} />
 		</div>
 	);
 }
