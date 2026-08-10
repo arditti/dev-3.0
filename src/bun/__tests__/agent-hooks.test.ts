@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -16,6 +16,7 @@ import {
 	CODEX_DEV3_HOOK_COMMAND,
 	DEV3_BASH_PERMISSION,
 	ensureDefaultMode,
+	ensureDevPermission,
 	getCodexHookTargetStatus,
 	TOLERATE_APP_OFFLINE_FLAG,
 } from "../../shared/agent-hooks";
@@ -598,6 +599,63 @@ describe("writeClaudeHooks", () => {
 		expect(hooks.Stop).toHaveLength(1);
 	});
 
+	// A settings.local.json Claude Code wrote itself carries permissions.allow and
+	// enabledMcpjsonServers and no hooks key at all — the shape a worktree ends up
+	// with after the agent answers a permission or .mcp.json prompt.
+	it("installs hooks into a settings.local.json Claude Code wrote itself", () => {
+		const claudeDir = join(tmp, ".claude");
+		mkdirSync(claudeDir, { recursive: true });
+		writeFileSync(
+			join(claudeDir, "settings.local.json"),
+			JSON.stringify({
+				permissions: { allow: ["WebFetch(domain:developers.openai.com)", "Bash(gh:*)"] },
+				enabledMcpjsonServers: ["local-trino", "playwright"],
+			}, null, 2),
+		);
+
+		writeClaudeHooks(tmp, { permissionMode: "auto" });
+
+		const content = JSON.parse(readFileSync(join(claudeDir, "settings.local.json"), "utf-8"));
+		const hooks = content.hooks as Record<string, MatcherGroup[]>;
+		expect(Object.keys(hooks)).toEqual([
+			"UserPromptSubmit",
+			"PreToolUse",
+			"PostToolUse",
+			"PermissionRequest",
+			"Stop",
+			"StopFailure",
+		]);
+		expect(content.permissions.allow).toEqual([
+			"WebFetch(domain:developers.openai.com)",
+			"Bash(gh:*)",
+			DEV3_BASH_PERMISSION,
+		]);
+		expect(content.permissions.defaultMode).toBe("auto");
+		expect(content.enabledMcpjsonServers).toEqual(["local-trino", "playwright"]);
+	});
+
+	// Claude Code rewrites settings.local.json from its own in-memory snapshot, so
+	// a snapshot taken before the hooks landed drops them. The next agent launch
+	// runs setupAgentHooks again and must put them back.
+	it("restores hooks after an external writer replaced the file without them", () => {
+		writeClaudeHooks(tmp);
+		const settingsPath = join(tmp, ".claude", "settings.local.json");
+
+		writeFileSync(
+			settingsPath,
+			JSON.stringify({
+				permissions: { allow: ["Bash(gh:*)"] },
+				enabledMcpjsonServers: ["playwright"],
+			}, null, 2),
+		);
+
+		writeClaudeHooks(tmp);
+
+		const content = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		expect(content.hooks?.Stop).toHaveLength(1);
+		expect(content.enabledMcpjsonServers).toEqual(["playwright"]);
+	});
+
 	it("produces identical output on repeated writes (no task-specific content)", () => {
 		writeClaudeHooks(tmp);
 		const settingsPath = join(tmp, ".claude", "settings.local.json");
@@ -938,5 +996,264 @@ describe("Windows hook output", () => {
 		expect(commands).not.toContain(broken);
 		expect(commands.every((c) => !c.includes("\\"))).toBe(true);
 		expect(commands.some((c) => c.startsWith(WIN_SPACES.cli))).toBe(true);
+	});
+});
+
+// A settings file is hand-edited and also rewritten by the agent itself, so any
+// slot can hold a shape the merge does not expect. None of these may throw: the
+// caller (applyAgentHooksToCommand) swallows the error and launches the agent
+// with no hooks at all, which looks exactly like "dev3 hooks did not fire".
+describe("mergeClaudeHooks with malformed settings", () => {
+	const hookEvents = (result: unknown) =>
+		Object.keys((result as { hooks: Record<string, unknown> }).hooks);
+	const DEV3_EVENTS = [
+		"UserPromptSubmit",
+		"PreToolUse",
+		"PostToolUse",
+		"PermissionRequest",
+		"Stop",
+		"StopFailure",
+	];
+
+	it.each([
+		["hooks is an array", { hooks: [{ type: "command", command: "x" }] }],
+		["hooks is a string", { hooks: "nope" }],
+		["hooks is null", { hooks: null }],
+		["hooks is a number", { hooks: 7 }],
+		["an event holds a matcher group instead of an array", { hooks: { PreToolUse: { hooks: [] } } }],
+		["an event holds a string", { hooks: { PreToolUse: "x" } }],
+		["an event holds null", { hooks: { Stop: null } }],
+	])("installs every dev3 event when %s", (_label, existing) => {
+		const merged = mergeClaudeHooks(existing as Record<string, unknown>);
+		expect(hookEvents(merged)).toEqual(expect.arrayContaining(DEV3_EVENTS));
+	});
+
+	it("does not leak numeric keys from a spread string or array", () => {
+		for (const existing of [{ hooks: "nope" }, { hooks: ["a", "b"] }]) {
+			const merged = mergeClaudeHooks(existing as Record<string, unknown>);
+			expect(hookEvents(merged)).toEqual(DEV3_EVENTS);
+		}
+	});
+
+	it.each([
+		["the root is null", null],
+		["the root is an array", [1, 2, 3]],
+		["the root is a number", 42],
+		["the root is a string", "settings"],
+	])("installs hooks when %s", (_label, existing) => {
+		const merged = mergeClaudeHooks(existing as unknown as Record<string, unknown>);
+		expect(hookEvents(merged)).toEqual(DEV3_EVENTS);
+	});
+
+	it("keeps a user hook on an event dev3 also writes, even next to a broken sibling", () => {
+		const userHook = { hooks: [{ type: "command", command: ".claude/hooks/auto-approve.sh" }] };
+		const merged = mergeClaudeHooks({
+			hooks: { PreToolUse: [userHook], Stop: "broken" },
+		}) as { hooks: Record<string, MatcherGroup[]> };
+
+		expect(merged.hooks.PreToolUse[0]).toEqual(userHook);
+		expect(merged.hooks.Stop).toHaveLength(1);
+	});
+
+	it("leaves an unrelated event alone even when its value is malformed", () => {
+		const merged = mergeClaudeHooks({
+			hooks: { SessionEnd: "whatever" },
+		}) as { hooks: Record<string, unknown> };
+
+		expect(merged.hooks.SessionEnd).toBe("whatever");
+	});
+
+	it("drops a malformed group without dropping the rest of the event", () => {
+		const merged = mergeClaudeHooks({
+			hooks: { PreToolUse: [null, "x", { hooks: "not-an-array" }] },
+		}) as { hooks: Record<string, unknown[]> };
+
+		// Nothing here mentions dev3, so all three survive, and dev3 is appended.
+		expect(merged.hooks.PreToolUse).toHaveLength(4);
+	});
+
+	it("tolerates a non-string command inside an otherwise valid group", () => {
+		const merged = mergeClaudeHooks({
+			hooks: { Stop: [{ hooks: [{ type: "command", command: 42 }] }, { hooks: [null] }] },
+		}) as { hooks: Record<string, unknown[]> };
+
+		expect(merged.hooks.Stop).toHaveLength(3);
+	});
+
+	it("replaces an old dev3 hook stored in the legacy flat format", () => {
+		const merged = mergeClaudeHooks({
+			hooks: { Stop: [{ type: "command", command: `${DEV3_CLI} task move --status review-by-user` }] },
+		}) as { hooks: Record<string, unknown[]> };
+
+		expect(merged.hooks.Stop).toHaveLength(1);
+	});
+});
+
+describe("ensureDevPermission / ensureDefaultMode with malformed settings", () => {
+	it.each([
+		["permissions is a string", { permissions: "all" }],
+		["permissions is an array", { permissions: ["a"] }],
+		["permissions is null", { permissions: null }],
+		["permissions is a number", { permissions: 1 }],
+	])("writes a clean permissions object when %s", (_label, settings) => {
+		const result = ensureDevPermission(settings as Record<string, unknown>) as {
+			permissions: Record<string, unknown>;
+		};
+		expect(Object.keys(result.permissions)).toEqual(["allow"]);
+		expect(result.permissions.allow).toEqual([DEV3_BASH_PERMISSION]);
+	});
+
+	it("replaces a non-array allow rather than throwing", () => {
+		const result = ensureDevPermission({ permissions: { allow: "Bash(gh:*)" } }) as {
+			permissions: { allow: string[] };
+		};
+		expect(result.permissions.allow).toEqual([DEV3_BASH_PERMISSION]);
+	});
+
+	it("keeps sibling permission keys", () => {
+		const result = ensureDevPermission({
+			permissions: { allow: ["Bash(gh:*)"], deny: ["Bash(rm:*)"], defaultMode: "auto" },
+		}) as { permissions: Record<string, unknown> };
+
+		expect(result.permissions.deny).toEqual(["Bash(rm:*)"]);
+		expect(result.permissions.defaultMode).toBe("auto");
+		expect(result.permissions.allow).toEqual(["Bash(gh:*)", DEV3_BASH_PERMISSION]);
+	});
+
+	it.each([
+		["the root is null", null],
+		["the root is an array", []],
+	])("does not throw when %s", (_label, settings) => {
+		expect(() => ensureDevPermission(settings as unknown as Record<string, unknown>)).not.toThrow();
+		expect(() => ensureDefaultMode(settings as unknown as Record<string, unknown>, "auto")).not.toThrow();
+	});
+});
+
+describe("writeClaudeHooks with a hostile file on disk", () => {
+	let tmp: string;
+
+	beforeEach(() => {
+		tmp = mkdtempSync(join(tmpdir(), "dev3-hooks-hostile-"));
+		mkdirSync(join(tmp, ".claude"), { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	const settingsPath = () => join(tmp, ".claude", "settings.local.json");
+	const read = () => JSON.parse(readFileSync(settingsPath(), "utf-8"));
+
+	it("survives a UTF-8 byte-order mark and keeps the user's keys", () => {
+		writeFileSync(
+			settingsPath(),
+			"﻿" + JSON.stringify({ permissions: { allow: ["Bash(gh:*)"] } }),
+		);
+
+		writeClaudeHooks(tmp);
+
+		const content = read();
+		expect(content.hooks?.Stop).toHaveLength(1);
+		expect(content.permissions.allow).toEqual(["Bash(gh:*)", DEV3_BASH_PERMISSION]);
+	});
+
+	it("installs hooks over a file whose hooks key is the wrong shape", () => {
+		writeFileSync(
+			settingsPath(),
+			JSON.stringify({ enabledMcpjsonServers: ["playwright"], hooks: { PreToolUse: {} } }),
+		);
+
+		writeClaudeHooks(tmp);
+
+		const content = read();
+		expect(content.hooks.PreToolUse).toHaveLength(1);
+		expect(content.enabledMcpjsonServers).toEqual(["playwright"]);
+	});
+
+	it("installs hooks over a file that parses to a non-object", () => {
+		writeFileSync(settingsPath(), "[1,2,3]");
+
+		writeClaudeHooks(tmp);
+
+		const content = read();
+		expect(content.hooks?.Stop).toHaveLength(1);
+		expect(content["0"]).toBeUndefined();
+	});
+
+	it("installs hooks over an empty file", () => {
+		writeFileSync(settingsPath(), "");
+
+		writeClaudeHooks(tmp);
+
+		expect(read().hooks?.Stop).toHaveLength(1);
+	});
+
+	it("does not write the dev3 permission into a malformed shared settings.json", () => {
+		writeFileSync(join(tmp, ".claude", "settings.json"), "null");
+
+		writeClaudeHooks(tmp);
+
+		const shared = JSON.parse(readFileSync(join(tmp, ".claude", "settings.json"), "utf-8"));
+		expect(shared.permissions.allow).toEqual([DEV3_BASH_PERMISSION]);
+		expect(read().hooks?.Stop).toHaveLength(1);
+	});
+});
+
+// Claude Code holds settings.local.json open, so the periodic re-assertion in
+// agent-hooks-refresh.ts must not churn its mtime when nothing changed.
+describe("writeClaudeHooks write suppression", () => {
+	let tmp: string;
+
+	beforeEach(() => {
+		tmp = mkdtempSync(join(tmpdir(), "dev3-hooks-idem-"));
+	});
+
+	afterEach(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	const settingsPath = () => join(tmp, ".claude", "settings.local.json");
+
+	it("reports a write on the first install and none on the second", () => {
+		expect(writeClaudeHooks(tmp)).toBe(true);
+		expect(writeClaudeHooks(tmp)).toBe(false);
+	});
+
+	it("leaves the file untouched when nothing changed", () => {
+		writeClaudeHooks(tmp);
+		const before = statSync(settingsPath()).mtimeMs;
+
+		writeClaudeHooks(tmp);
+
+		expect(statSync(settingsPath()).mtimeMs).toBe(before);
+	});
+
+	it("writes again once an external rewrite dropped the hooks", () => {
+		writeClaudeHooks(tmp);
+		writeFileSync(settingsPath(), JSON.stringify({ permissions: { allow: ["Bash(gh:*)"] } }));
+
+		expect(writeClaudeHooks(tmp)).toBe(true);
+		expect(JSON.parse(readFileSync(settingsPath(), "utf-8")).hooks?.Stop).toHaveLength(1);
+	});
+
+	it("writes again when the stop target changes", () => {
+		writeClaudeHooks(tmp, { stopTarget: "review-by-user" });
+		expect(writeClaudeHooks(tmp, { stopTarget: "review-by-ai" })).toBe(true);
+	});
+
+	// With only a shared settings.json present, the permission lands there and the
+	// hooks create settings.local.json. From the second run on, the local file
+	// exists and owns the permission too, so that run still writes — the third is
+	// the first quiet one.
+	it("settles after the shared settings.json hands the permission over to the local one", () => {
+		mkdirSync(join(tmp, ".claude"), { recursive: true });
+		writeFileSync(join(tmp, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: [] } }));
+
+		expect(writeClaudeHooks(tmp)).toBe(true);
+		expect(writeClaudeHooks(tmp)).toBe(true);
+		expect(writeClaudeHooks(tmp)).toBe(false);
+
+		const shared = JSON.parse(readFileSync(join(tmp, ".claude", "settings.json"), "utf-8"));
+		expect(shared.permissions.allow).toEqual([DEV3_BASH_PERMISSION]);
 	});
 });
