@@ -163,6 +163,7 @@ describe("saveSettings", () => {
 			updateChannel: "canary",
 			terminalPathOpenMode: "reveal",
 			theme: "light",
+			analyticsDistinctId: "11111111-2222-3333-4444-555555555555",
 			resolvedTheme: "light",
 			cloneBaseDirectory: "/tmp/clones",
 			customBinaryPaths: { git: "/usr/bin/git" },
@@ -198,6 +199,14 @@ describe("saveSettings", () => {
 		const loaded = await loadSettings();
 		for (const key of Object.keys(full) as (keyof GlobalSettings)[]) {
 			expect(loaded[key], `field "${key}" was dropped by loadSettings`).toEqual(full[key]);
+		}
+
+		// Both readers or neither: the sync one used to be a hand-kept twin missing
+		// `analyticsDistinctId`, so the value sat on disk and every synchronous
+		// caller (webview preload, served HTML) got undefined.
+		const loadedSync = loadSettingsSync();
+		for (const key of Object.keys(full) as (keyof GlobalSettings)[]) {
+			expect(loadedSync[key], `field "${key}" was dropped by loadSettingsSync`).toEqual(full[key]);
 		}
 	});
 
