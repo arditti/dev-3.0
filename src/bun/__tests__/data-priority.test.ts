@@ -22,7 +22,7 @@ beforeEach(() => {
 	mkdirSync(TEST_HOME, { recursive: true });
 });
 
-import { addTask, setTaskPriority, reorderTasksInColumn } from "../data";
+import { addTask, setTaskPriority, updateTask } from "../data";
 
 const testProject: Project = {
 	id: "proj-1",
@@ -138,83 +138,53 @@ describe("setTaskPriority", () => {
 });
 
 // ============================================================
-// reorderTasksInColumn — drag re-prioritization
+// Column moves never touch priority
 // ============================================================
 
-describe("reorderTasksInColumn — drag re-prioritization", () => {
-	// Column, band-sorted (P0 on top): p0(idx0), then p2a(idx1), p2b(idx2).
-	function seedBandColumn(): void {
-		seedTasks([
-			makeTask({ id: "p0", seq: 1, status: "in-progress", priority: "P0", columnOrder: 0 }),
-			makeTask({ id: "p2a", seq: 2, status: "in-progress", priority: "P2", columnOrder: 1 }),
-			makeTask({ id: "p2b", seq: 3, status: "in-progress", priority: "P2", columnOrder: 2 }),
-		]);
-	}
-
-	it("dropping a P2 card at the very top adopts the top (P0) band", async () => {
-		seedBandColumn();
-		// Drop p2b at index 0 (above p0) → neighbor-below is p0 → adopt P0.
-		await reorderTasksInColumn(testProject, "p2b", 0);
-		expect(readSavedTasks().find((t) => t.id === "p2b")!.priority).toBe("P0");
+/**
+ * Priority is set deliberately (badge menu, inspector, `dev3 task update
+ * --priority`) and must survive every column move. It used to not: vertical
+ * drag inside a column re-prioritized a card to the band it landed in
+ * (`reorderTasksInColumn`, removed together with the drag). Every column move
+ * funnels through `updateTask`, so guarding it here covers the board, the
+ * sidebar, the CLI and the lifecycle machine at once.
+ */
+describe("column moves preserve priority", () => {
+	it("keeps the priority when the built-in status changes", async () => {
+		seedTasks([makeTask({ id: "a", seq: 1, priority: "P0" })]);
+		const moved = await updateTask(testProject, "a", { status: "in-progress" });
+		expect(moved.priority).toBe("P0");
+		expect(readSavedTasks()[0].priority).toBe("P0");
 	});
 
-	it("a same-band reorder never mutates priority", async () => {
-		seedBandColumn();
-		// Move p2b above p2a but still within the P2 band (index 1, below p0).
-		await reorderTasksInColumn(testProject, "p2b", 1);
+	it("keeps the priority when the task moves into a custom column", async () => {
+		seedTasks([makeTask({ id: "a", seq: 1, priority: "P1" })]);
+		const moved = await updateTask(testProject, "a", { customColumnId: "col-hold" });
+		expect(moved.customColumnId).toBe("col-hold");
+		expect(moved.priority).toBe("P1");
+	});
+
+	it("keeps the priority when the task leaves a custom column", async () => {
+		seedTasks([makeTask({ id: "a", seq: 1, priority: "P4", customColumnId: "col-hold" })]);
+		const moved = await updateTask(testProject, "a", { customColumnId: null });
+		expect(moved.customColumnId).toBeNull();
+		expect(moved.priority).toBe("P4");
+	});
+
+	it("keeps the priority on a terminal move", async () => {
+		seedTasks([makeTask({ id: "a", seq: 1, priority: "P0" })]);
+		const moved = await updateTask(testProject, "a", { status: "completed" });
+		expect(moved.priority).toBe("P0");
+	});
+
+	it("leaves the rest of a variant group's priority alone when one member moves", async () => {
+		seedTasks([
+			makeTask({ id: "v1", seq: 1, groupId: "g1", variantIndex: 1, priority: "P1" }),
+			makeTask({ id: "v2", seq: 1, groupId: "g1", variantIndex: 2, priority: "P1" }),
+		]);
+		await updateTask(testProject, "v1", { status: "review-by-user" });
 		const saved = readSavedTasks();
-		expect(saved.find((t) => t.id === "p2b")!.priority).toBe("P2");
-		expect(saved.find((t) => t.id === "p2a")!.priority).toBe("P2");
-	});
-
-	it("dropping a P0 card into the P2 band re-prioritizes it to P2", async () => {
-		seedBandColumn();
-		// Drop p0 at the bottom (index 2, after both P2s) → neighbor-above is a P2 → adopt P2.
-		await reorderTasksInColumn(testProject, "p0", 2);
-		expect(readSavedTasks().find((t) => t.id === "p0")!.priority).toBe("P2");
-	});
-
-	it("re-prioritizes the whole variant group on a cross-band drop", async () => {
-		seedTasks([
-			makeTask({ id: "p0", seq: 1, status: "in-progress", priority: "P0", columnOrder: 0 }),
-			makeTask({ id: "g1", seq: 2, status: "in-progress", groupId: "grp", variantIndex: 1, priority: "P2", columnOrder: 1 }),
-			makeTask({ id: "g2", seq: 2, status: "in-progress", groupId: "grp", variantIndex: 2, priority: "P2", columnOrder: 2 }),
-		]);
-		// Drag the group to the very top → both members adopt P0.
-		await reorderTasksInColumn(testProject, "g1", 0);
-		const saved = readSavedTasks();
-		expect(saved.find((t) => t.id === "g1")!.priority).toBe("P0");
-		expect(saved.find((t) => t.id === "g2")!.priority).toBe("P0");
-	});
-
-	it("never promotes a card to a hibernated neighbor's band", async () => {
-		// The hibernated P0 sinks to the bottom of the column, so a card dropped at
-		// the very bottom lands next to it — and must keep the lowest LIVE band.
-		seedTasks([
-			makeTask({ id: "p2", seq: 1, status: "in-progress", priority: "P2", columnOrder: 0 }),
-			makeTask({ id: "p3", seq: 2, status: "in-progress", priority: "P3", columnOrder: 1 }),
-			makeTask({ id: "parked", seq: 3, status: "in-progress", priority: "P0", hibernated: true, columnOrder: 2 }),
-		]);
-		await reorderTasksInColumn(testProject, "p2", 2);
-		const saved = readSavedTasks();
-		expect(saved.find((t) => t.id === "p2")!.priority).toBe("P3");
-		expect(saved.find((t) => t.id === "parked")!.priority).toBe("P0");
-	});
-
-	it("keeps a hibernated card at the bottom of the server's own column order", async () => {
-		seedTasks([
-			makeTask({ id: "parked", seq: 1, status: "in-progress", priority: "P0", hibernated: true, columnOrder: 0 }),
-			makeTask({ id: "live", seq: 2, status: "in-progress", priority: "P4", columnOrder: 1 }),
-		]);
-		// Drop `live` at index 0 — with the sink band it is already first, so its
-		// priority must not change to the parked card's P0.
-		await reorderTasksInColumn(testProject, "live", 0);
-		expect(readSavedTasks().find((t) => t.id === "live")!.priority).toBe("P4");
-	});
-
-	it("keeps priority when the column has no other tasks", async () => {
-		seedTasks([makeTask({ id: "only", seq: 1, status: "in-progress", priority: "P3", columnOrder: 0 })]);
-		await reorderTasksInColumn(testProject, "only", 0);
-		expect(readSavedTasks().find((t) => t.id === "only")!.priority).toBe("P3");
+		expect(saved.find((t) => t.id === "v1")!.priority).toBe("P1");
+		expect(saved.find((t) => t.id === "v2")!.priority).toBe("P1");
 	});
 });

@@ -31,8 +31,6 @@ export interface MoveTaskToStatusOptions {
 	alwaysConfirm?: boolean;
 	/** Toggle a per-card "moving" spinner while the background RPC is in flight. */
 	onMovingChange?: (moving: boolean) => void;
-	/** Record an in-session move (kanban column ordering). */
-	onMoved?: () => void;
 	/** Run right after the optimistic update commits (e.g. navigate away from the task screen). */
 	afterOptimistic?: () => void;
 	/** Run only after the server confirms the move (after both RPC attempts succeed). Not called on failure. */
@@ -83,7 +81,6 @@ export async function moveTaskToStatus({
 	confirm = true,
 	alwaysConfirm = false,
 	onMovingChange,
-	onMoved,
 	afterOptimistic,
 	onSuccess,
 	onFailure,
@@ -98,9 +95,11 @@ export async function moveTaskToStatus({
 
 	const fromStatus = task.status;
 
-	// Optimistic update. For terminal moves mirror the server's end-state
-	// (worktree/branch cleared, movedAt stamped, column order reset) so the card
-	// doesn't flicker when the real task comes back.
+	// Optimistic update mirroring the server's end-state so the card doesn't
+	// flicker when the real task comes back. `statusEnteredAt` is stamped on every
+	// move, not just terminal ones: it is what both the board and the sidebar sort
+	// by, so without it the card would sit in its old slot until the RPC returns.
+	const movedNow = new Date().toISOString();
 	const optimisticTask: Task = terminal
 		? {
 			...task,
@@ -108,10 +107,10 @@ export async function moveTaskToStatus({
 			worktreePath: null,
 			branchName: null,
 			customColumnId: null,
-			movedAt: new Date().toISOString(),
-			columnOrder: undefined,
+			movedAt: movedNow,
+			statusEnteredAt: movedNow,
 		}
-		: { ...task, status: newStatus, customColumnId: null };
+		: { ...task, status: newStatus, customColumnId: null, movedAt: movedNow, statusEnteredAt: movedNow };
 	dispatch({ type: "updateTask", task: optimisticTask });
 	// When the UI plays the completion sound here, tell the backend to skip its
 	// own `taskSound` push — otherwise it fans out to every other connected
@@ -121,7 +120,6 @@ export async function moveTaskToStatus({
 		dispatch({ type: "clearBell", taskId: task.id });
 		clientPlayedSound = playTaskCompletionSound(newStatus as "completed" | "cancelled");
 	}
-	onMoved?.();
 	afterOptimistic?.();
 
 	onMovingChange?.(true);
