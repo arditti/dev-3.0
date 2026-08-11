@@ -14,6 +14,7 @@ import {
 } from "./updater";
 import { loadSettings, loadSettingsSync } from "./settings";
 import { distinctIdBootstrapScript } from "./analytics-identity";
+import { shouldAutoOpenDevTools } from "./devtools-auto-open";
 import { installSignalQuitConfirmation, isQuitConfirmed, markQuitConfirmed, markQuitDialogPending } from "./quit-manager";
 import { initNativeNotifications } from "./native-notifications";
 import { markPendingNotificationNav } from "./notification-nav";
@@ -409,10 +410,7 @@ async function openMainWindow() {
 			// actually rendered, so it is the one signal that proves a renderer.
 			// The first report writes the proof marker (see the watchdog's onReady).
 			readiness.markReady("dom-ready");
-			// Opt-in only: auto-attaching the inspector here blanks the WKWebView
-			// content layer on macOS 26 — the window stays black while the renderer
-			// runs. See decisions/2026/08/11/dev-devtools-auto-open-blacks-wkwebview.md.
-			if (buildChannel === "dev" && process.env.DEV3_DEVTOOLS === "1") {
+			if (buildChannel === "dev" && shouldAutoOpenDevTools()) {
 				win.webview.openDevTools();
 			}
 			log.info(`DOM ready [${lastBuildTime}]`);

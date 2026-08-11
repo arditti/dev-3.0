@@ -27,33 +27,44 @@ and window were fine; the content layer specifically never painted. Rebuilding
 with the auto-open removed made the window render normally on macOS 26.6
 (first controlled A/B on 2026-08-11).
 
+This turned out to be a **known Electrobun bug**: blackboardsh/electrobun#357
+(docked Web Inspector corrupts WKWebView content on macOS — shift/gray-out on
+earlier versions, with #475 closed as its duplicate) — "fixed in the next
+stable release", but as of 2026-08-11 the fix exists only in `1.18.4-beta.x`
+while the latest stable (and dev3's pin) is 1.18.1.
+
 ## Decision
 
-DevTools no longer auto-opens on the dev channel. The call is kept behind an
-explicit opt-in: `DEV3_DEVTOOLS=1 bun run dev` restores the old behavior for
-platforms/macOS versions where the attached inspector still composites
-correctly. There is deliberately no other entry point (no menu item or
-shortcut existed before either); browser-mode QA via the task dev-server
-remains the way to get a console on macOS 26.
+DevTools auto-open is platform-gated: `shouldAutoOpenDevTools()`
+(`src/bun/devtools-auto-open.ts`) keeps the dom-ready auto-open on Linux and
+Windows and skips it on macOS, where the docked inspector is broken across
+versions per the upstream issues. `DEV3_DEVTOOLS=1` forces it on (e.g. to
+re-test after an Electrobun upgrade), `DEV3_DEVTOOLS=0` forces it off. There
+is deliberately no other entry point (no menu item or shortcut existed before
+either); browser-mode QA via the task dev-server remains the way to get a
+console on macOS.
 
 ## Risks
 
-- Losing the auto-opened console on dev builds where it *did* work (Linux,
-  older macOS) unless developers know the env var; the trade is one-line
-  opt-in vs. a black window that cost multiple debugging sessions.
+- Losing the auto-opened console on macOS dev builds unless developers know
+  the env var; the trade is a one-line override vs. a black window that cost
+  multiple debugging sessions.
 - Untested whether opening the inspector *after* first paint (rather than at
   `dom-ready`) also blanks the layer; if a manual toggle is ever added, test
   that on macOS 26 first.
-- The underlying compositing bug lives in Electrobun/WebKit, not here; a dev3
-  code comment and this record are the only local breadcrumbs.
+- Once an Electrobun stable ships the upstream fix and dev3 upgrades, the
+  macOS gate should be re-evaluated (verify with `DEV3_DEVTOOLS=1` first).
 
 ## Alternatives considered
 
-- Platform-gating (`process.platform !== "darwin"`): rejected — the failure is
-  macOS-*version*-specific and silently flips with OS updates; an explicit
-  opt-in fails loud instead of black.
+- Darwin-version gating (skip only on Darwin >= 25 / macOS 26): rejected —
+  upstream reports show the docked inspector misbehaving on earlier macOS too
+  (#197, #357, #469), so the whole platform is the honest boundary.
+- Pure env opt-in with no platform default: rejected — Linux/Windows lose the
+  working auto-open for no reason.
+- Upgrading Electrobun to `1.18.4-beta.x` for the upstream fix: rejected for
+  this change — a native-wrapper bump on a beta channel is its own risk and
+  deserves its own tested change.
 - A startup self-check that detects "renderer ready but never painted":
   rejected as scope creep — there is no reliable paint signal exposed through
   Electrobun, and removing the trigger eliminates the known failure mode.
-- Reporting upstream and waiting: the Electrobun issue should be filed, but
-  local dev on macOS 26 cannot stay broken meanwhile.
