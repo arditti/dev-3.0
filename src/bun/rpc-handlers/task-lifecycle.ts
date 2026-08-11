@@ -2,6 +2,7 @@ import type { LaunchVariant, NativeTerminalAvailability, Project, Task, TaskPrio
 import type { TerminalBackendIdentity } from "../../shared/terminal-backend-identity";
 import { ACTIVE_STATUSES, DRAFT_TASK_ACTIVATION_ERROR, titleFromDescription } from "../../shared/types";
 import * as data from "../data";
+import * as git from "../git";
 import { resolveAgentRequest, type AgentLaunchChoice } from "../agent-requests";
 import { loadSettings, loadSettingsSync, recordFavoriteUsages } from "../settings";
 import { emitTaskSound } from "../lifecycle/executor";
@@ -128,8 +129,17 @@ async function createTask(params: { projectId: string; description: string; stat
 	// agent, the prompt is blanked (the placeholder is NOT sent to the agent).
 	const status = isScratch ? "todo" : (params.status || "todo");
 	const description = isScratch ? scratchPlaceholder() : params.description;
+	// Whose code is this task about? Decided once, here, from the ref the task starts
+	// on — a remote or fork branch means the commits are someone else's, so dev3 must
+	// not run that branch's own config (see Task.foreignCode). Asked now rather than at
+	// each launch because a merged pull request's branch disappears upstream, and a
+	// later check would silently promote the task back to "my own work".
+	const foreignCode = project.kind === "virtual"
+		? false
+		: await git.isForeignBranchRef(project.path, params.existingBranch);
 	const extras: Parameters<typeof data.addTask>[3] = {
 		...(params.existingBranch ? { existingBranch: params.existingBranch } : {}),
+		...(foreignCode ? { foreignCode: true } : {}),
 		...(isScratch ? { scratch: true } : {}),
 		...(isDraft ? { draft: true } : {}),
 		...(isDraft && !params.description.trim() ? { title: draftPlaceholderTitle() } : {}),
@@ -448,6 +458,9 @@ async function spawnVariants(params: {
 				accountId: variant.accountId,
 				seq: sharedSeq,
 				existingBranch: srcBranch,
+				// Whose code the group is about is a property of the branch, so every
+				// sibling inherits it — never re-derived per variant.
+				foreignCode: sourceTask.foreignCode,
 				watched: sourceTask.watched,
 				// Scratch tasks keep the `Scratch — HH:mm` placeholder as title
 				// on every variant, but the flag tells the launch path (see
@@ -577,6 +590,9 @@ async function addAttempts(params: {
 				accountId: variant.accountId,
 				seq: sharedSeq,
 				existingBranch: srcBranch,
+				// Whose code the group is about is a property of the branch, so every
+				// sibling inherits it — never re-derived per variant.
+				foreignCode: sourceTask.foreignCode,
 				watched: sourceTask.watched,
 				// Carry the scratch flag onto every added attempt — otherwise the
 				// launch path keeps the `Scratch — HH:mm` placeholder as the prompt
@@ -775,6 +791,21 @@ async function toggleTaskWatch(params: { taskId: string; projectId: string; watc
 	const updated = await data.updateTask(project, params.taskId, { watched: params.watched });
 	getPushMessage()?.("taskUpdated", { projectId: project.id, task: updated });
 	log.info("← toggleTaskWatch done", { taskId: params.taskId });
+	return updated;
+}
+
+/**
+ * Own or disown the code a task is about. Set automatically at creation from the
+ * branch; the user may clear it to deliberately run a reviewed branch's own
+ * config, which is their risk to take — dev3 warns, it does not refuse. Applies
+ * on the next launch, since config is re-resolved per launch by design.
+ */
+async function setTaskForeignCode(params: { taskId: string; projectId: string; foreignCode: boolean }): Promise<Task> {
+	log.info("→ setTaskForeignCode", { taskId: params.taskId, foreignCode: params.foreignCode });
+	const project = await data.getProject(params.projectId);
+	const updated = await data.updateTask(project, params.taskId, { foreignCode: params.foreignCode });
+	getPushMessage()?.("taskUpdated", { projectId: project.id, task: updated });
+	log.info("← setTaskForeignCode done", { taskId: params.taskId });
 	return updated;
 }
 
@@ -1055,6 +1086,7 @@ export const taskLifecycleHandlers = {
 	setUserOverview,
 	clearUserOverview,
 	toggleTaskWatch,
+	setTaskForeignCode,
 	setTaskManualCompletion,
 	scheduleTaskLaunch,
 	cancelScheduledLaunch,
