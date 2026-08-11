@@ -9807,7 +9807,7 @@ describe("launchTaskPty", () => {
 			const startupCall = writeSpy.mock.calls.find(([path]) => String(path).endsWith("-startup.sh"));
 			const script = String(startupCall?.[1] ?? "");
 			const setupIndex = script.indexOf(`'${process.env.SHELL}' -x '${process.env.DEV3_TEST_ROOT}/dev3-task-1-setup.sh'`);
-			const splitIndex = script.indexOf(`tmux split-window -v -c "/tmp/wt" "'${process.env.SHELL}' '${process.env.DEV3_TEST_ROOT}/dev3-task-1-cmd.sh'"`);
+			const splitIndex = script.indexOf(`tmux split-window -v -b -c "/tmp/wt" "'${process.env.SHELL}' '${process.env.DEV3_TEST_ROOT}/dev3-task-1-cmd.sh'"`);
 
 			expect(setupIndex).toBeGreaterThanOrEqual(0);
 			expect(splitIndex).toBeGreaterThanOrEqual(0);
@@ -9831,7 +9831,7 @@ describe("launchTaskPty", () => {
 
 			const startupCall = writeSpy.mock.calls.find(([path]) => String(path).endsWith("-startup.sh"));
 			const script = String(startupCall?.[1] ?? "");
-			const splitIndex = script.indexOf(`tmux split-window -v -c "/tmp/wt" "'${process.env.SHELL}' '${process.env.DEV3_TEST_ROOT}/dev3-task-1-cmd.sh'"`);
+			const splitIndex = script.indexOf(`tmux split-window -v -b -c "/tmp/wt" "'${process.env.SHELL}' '${process.env.DEV3_TEST_ROOT}/dev3-task-1-cmd.sh'"`);
 			const setupIndex = script.indexOf(`'${process.env.SHELL}' -x '${process.env.DEV3_TEST_ROOT}/dev3-task-1-setup.sh'`);
 
 			expect(splitIndex).toBeGreaterThanOrEqual(0);
