@@ -1,0 +1,1 @@
+Fixed locally built dev-channel apps opening a permanently black window on macOS 26: the dev-only DevTools auto-open at dom-ready (Apple's private inspector API via the native wrapper) blanked the WKWebView content layer while the renderer kept running. DevTools now opens only with an explicit `DEV3_DEVTOOLS=1`, restoring native-window development on macOS 26.
