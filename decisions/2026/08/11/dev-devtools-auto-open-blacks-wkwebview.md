@@ -35,14 +35,17 @@ while the latest stable (and dev3's pin) is 1.18.1.
 
 ## Decision
 
-DevTools auto-open is platform-gated: `shouldAutoOpenDevTools()`
-(`src/bun/devtools-auto-open.ts`) keeps the dom-ready auto-open on Linux and
-Windows and skips it on macOS, where the docked inspector is broken across
-versions per the upstream issues. `DEV3_DEVTOOLS=1` forces it on (e.g. to
-re-test after an Electrobun upgrade), `DEV3_DEVTOOLS=0` forces it off. There
-is deliberately no other entry point (no menu item or shortcut existed before
-either); browser-mode QA via the task dev-server remains the way to get a
-console on macOS.
+DevTools auto-open is version-gated: `shouldAutoOpenDevTools()`
+(`src/bun/devtools-auto-open.ts`) keeps the dom-ready auto-open on Linux,
+Windows, and macOS below 26 — where it demonstrably worked since the feature
+shipped — and skips it on macOS 26 and newer (Darwin kernel 25+; macOS 26
+reports Darwin 25), where the black window is confirmed and the Electrobun-
+side bug stays present regardless of future macOS majors until the pinned
+Electrobun is upgraded. An unparseable Darwin release counts as affected.
+`DEV3_DEVTOOLS=1` forces it on (e.g. to re-test after an Electrobun upgrade),
+`DEV3_DEVTOOLS=0` forces it off. There is deliberately no other entry point
+(no menu item or shortcut existed before either); browser-mode QA via the
+task dev-server remains the way to get a console on affected systems.
 
 ## Risks
 
@@ -57,11 +60,16 @@ console on macOS.
 
 ## Alternatives considered
 
-- Darwin-version gating (skip only on Darwin >= 25 / macOS 26): rejected —
-  upstream reports show the docked inspector misbehaving on earlier macOS too
-  (#197, #357, #469), so the whole platform is the honest boundary.
-- Pure env opt-in with no platform default: rejected — Linux/Windows lose the
-  working auto-open for no reason.
+- Gating all of macOS: rejected — the black window is only confirmed on
+  macOS 26 (upstream #357 is Darwin 25 too, despite its "Sequoia" label), the
+  auto-open worked productively on earlier macOS for months, and the milder
+  upstream symptoms there (#197, #469: shift/gray on inspector focus) are
+  annoyances, not blockers.
+- Gating exactly macOS 26 (`== 25`): rejected — the bug lives in the pinned
+  Electrobun, not in one macOS build, so newer majors must stay gated until
+  the dependency is upgraded; `>= 25` fails safe forward.
+- Pure env opt-in with no platform default: rejected — unaffected systems
+  lose the working auto-open for no reason.
 - Upgrading Electrobun to `1.18.4-beta.x` for the upstream fix: rejected for
   this change — a native-wrapper bump on a beta channel is its own risk and
   deserves its own tested change.
