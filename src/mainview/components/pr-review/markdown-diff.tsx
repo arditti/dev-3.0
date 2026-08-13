@@ -1,18 +1,15 @@
 import { useMemo } from "react";
 import { marked } from "marked";
-import { renderMarkdownDocument } from "./markdown";
-import { useDiskMarkdownImages } from "./markdown-images";
+import { MarkdownContent, useMarkdownRendererConfig } from "./markdown";
+import { MarkdownImageProvider } from "./markdown-images";
 
 export type MarkdownDiffKind = "context" | "added" | "removed";
 
-export type MarkdownDiffBlock = { kind: MarkdownDiffKind; html: string };
+export type MarkdownDiffBlock = { kind: MarkdownDiffKind; source: string };
 
 /** One diffable unit of a markdown document: a top-level block, or a single
  * item of a list (so adding one bullet does not repaint the whole list). */
 type Chunk = { raw: string; listItem: boolean };
-
-/** Joins block HTML for the one-pass image resolve; sanitized HTML has no NULs. */
-const BLOCK_SEPARATOR = "\u0000";
 
 // LCS is O(old × new); a pathological pair of huge documents would freeze the
 // webview, so past this many cells the renderer falls back to a plain preview.
@@ -116,7 +113,7 @@ export function buildMarkdownDiffBlocks(oldSource: string, newSource: string): M
 	if (!ops.some((op) => op.kind !== "context")) {
 		return null;
 	}
-	return groupOps(ops).map(({ kind, source }) => ({ kind, html: renderMarkdownDocument(source) }));
+	return groupOps(ops);
 }
 
 export function MarkdownRichDiff({ blocks, imageBaseDir, imageRootDir }: {
@@ -126,25 +123,29 @@ export function MarkdownRichDiff({ blocks, imageBaseDir, imageRootDir }: {
 	/** Checkout root, for root-relative image paths (`/docs/shot.png`). */
 	imageRootDir?: string | null;
 }) {
-	// One resolve pass for the whole diff: the blocks travel as a single string
-	// joined by a separator no HTML can contain, then split back apart.
-	const joined = useMemo(() => blocks.map((block) => block.html).join(BLOCK_SEPARATOR), [blocks]);
-	const resolvedHtml = useDiskMarkdownImages(joined, imageBaseDir, imageRootDir);
-	const htmls = useMemo(() => resolvedHtml.split(BLOCK_SEPARATOR), [resolvedHtml]);
+	const rendererConfig = useMarkdownRendererConfig();
 	return (
 		<div
 			className="dev3-pr-md dev3-md-doc dev3-md-diff min-w-0 text-sm leading-relaxed text-fg"
 			data-testid="markdown-rich-diff"
 		>
-			{blocks.map((block, index) => (
-				<div
-					key={index}
-					className={`dev3-md-diff-block dev3-md-diff-${block.kind}`}
-					data-diff-kind={block.kind}
-					// eslint-disable-next-line react/no-danger -- sanitized in renderMarkdownDocument
-					dangerouslySetInnerHTML={{ __html: htmls[index] ?? block.html }}
-				/>
-			))}
+			<MarkdownImageProvider resetKey={blocks}>
+				{blocks.map((block, index) => (
+					<div
+						key={index}
+						className={`dev3-md-diff-block dev3-md-diff-${block.kind}`}
+						data-diff-kind={block.kind}
+					>
+						<MarkdownContent
+							body={block.source}
+							document
+							imageBaseDir={imageBaseDir}
+							imageRootDir={imageRootDir}
+							rendererConfig={rendererConfig}
+						/>
+					</div>
+				))}
+			</MarkdownImageProvider>
 		</div>
 	);
 }

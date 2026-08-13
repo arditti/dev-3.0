@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-	content: ["./src/mainview/**/*.{html,js,ts,jsx,tsx}"],
+	content: [
+		"./src/mainview/**/*.{html,js,ts,jsx,tsx}",
+		"./node_modules/streamdown/dist/*.js",
+	],
 	theme: {
 		extend: {
 			// Closed type scale — arbitrary text-[…] sizes are banned (they carry
@@ -40,6 +43,19 @@ export default {
 			backgroundColor: { base: "rgb(var(--surface-base) / <alpha-value>)" },
 			ringColor: { base: "rgb(var(--surface-base) / <alpha-value>)" },
 			colors: {
+				// Streamdown's semantic utility names mapped onto dev3 tokens.
+				background: "rgb(var(--surface-base) / <alpha-value>)",
+				foreground: "rgb(var(--text-primary) / <alpha-value>)",
+				border: "rgb(var(--border-default) / <alpha-value>)",
+				sidebar: "rgb(var(--surface-raised) / <alpha-value>)",
+				muted: {
+					DEFAULT: "rgb(var(--surface-elevated) / <alpha-value>)",
+					foreground: "rgb(var(--text-tertiary) / <alpha-value>)",
+				},
+				primary: {
+					DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+					foreground: "rgb(var(--surface-base) / <alpha-value>)",
+				},
 				// Knocked-out ink for text sitting on a solid accent/success fill —
 				// the base surface colour under a name that cannot collide with the
 				// `text-base` font-size rung.

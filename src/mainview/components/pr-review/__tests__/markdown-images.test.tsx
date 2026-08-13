@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import type { FilePreviewResult } from "../../../../shared/types";
 import { isDiskImageSrc, resolveDiskImagePath } from "../markdown-images";
-import { MarkdownDocument, renderMarkdownDocument } from "../markdown";
+import { MarkdownDocument } from "../markdown";
 import { MarkdownRichDiff, buildMarkdownDiffBlocks } from "../markdown-diff";
 
 const readFilePreview = vi.fn<(params: { path: string }) => Promise<FilePreviewResult>>();
@@ -70,7 +70,13 @@ describe("resolveDiskImagePath", () => {
 
 describe("markdown image sanitization", () => {
 	it("keeps a repo-relative img src through the sanitizer", () => {
-		expect(renderMarkdownDocument("![board](docs/screenshots/board.png)")).toContain('src="docs/screenshots/board.png"');
+		render(<MarkdownDocument body={"![board](docs/screenshots/board.png)"} />);
+		expect(screen.getByAltText("board")).toHaveAttribute("src", "docs/screenshots/board.png");
+	});
+
+	it("keeps reference-style repo images through the sanitizer", () => {
+		render(<MarkdownDocument body={"![board][shot]\n\n[shot]: docs/screenshots/board.png"} />);
+		expect(screen.getByAltText("board")).toHaveAttribute("src", "docs/screenshots/board.png");
 	});
 });
 
@@ -82,8 +88,6 @@ describe("MarkdownDocument images", () => {
 		expect(screen.getByAltText("board").dataset.dev3MdImage).toBe("loaded");
 	});
 
-	// The swap lives in the HTML, not in the rendered <img> nodes: React rebuilds
-	// that subtree on re-render, which would silently discard a DOM-level edit.
 	it("keeps the resolved image across a re-render", async () => {
 		const { rerender } = render(<MarkdownDocument body={"![board](screenshots/board.png)"} imageBaseDir="/wt/docs" />);
 		await waitFor(() => expect(screen.getByAltText("board")).toHaveAttribute("src", PNG_DATA_URL));

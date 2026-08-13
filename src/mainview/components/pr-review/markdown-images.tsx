@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+	createContext,
+	useContext,
+	useEffect,
+	useMemo,
+	useState,
+	type ComponentProps,
+	type ReactNode,
+} from "react";
 import { api } from "../../rpc";
 
 /**
@@ -8,14 +16,16 @@ import { api } from "../../rpc";
  * in as a data URL. Same handler the terminal path preview uses, so the path is
  * gated to the home dir plus registered project roots on the bun side.
  *
- * The swap happens in the HTML *before* React inserts it, not by mutating the
- * rendered `<img>` nodes: React owns that subtree and rebuilds it whenever the
- * document re-renders, which silently discards any DOM edit made in an effect.
+ * Markdown images are React components, so resolved data URLs remain stable
+ * across parent renders without mutating renderer-owned DOM.
  */
 
 const MAX_IMAGES_PER_DOCUMENT = 40;
 /** Data URLs are heavy (up to 4 MB each), so the cache stays deliberately small. */
 const MAX_CACHED_IMAGES = 24;
+const allowEveryImage = () => true;
+const DiskImageBudgetContext = createContext<(absPath: string) => boolean>(allowEveryImage);
+const DISK_IMAGE_URL_PREFIX = "https://dev3.invalid/__markdown_image__/";
 
 /** Absolute path → data URL, or null for "read failed / not an image". */
 const cache = new Map<string, string | null>();
@@ -24,6 +34,20 @@ const inflight = new Map<string, Promise<string | null>>();
 /** True for a markdown image src that must be read off disk rather than fetched. */
 export function isDiskImageSrc(src: string): boolean {
 	return Boolean(src) && !src.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(src);
+}
+
+/** Keep relative sources intact while they pass through Streamdown's URL hardener. */
+export function protectDiskImageSrc(src: string): string {
+	return `${DISK_IMAGE_URL_PREFIX}${encodeURIComponent(src)}`;
+}
+
+function unprotectDiskImageSrc(src: string): string {
+	if (!src.startsWith(DISK_IMAGE_URL_PREFIX)) return src;
+	try {
+		return decodeURIComponent(src.slice(DISK_IMAGE_URL_PREFIX.length));
+	} catch {
+		return "";
+	}
 }
 
 /**
@@ -78,70 +102,80 @@ function readImage(absPath: string): Promise<string | null> {
 	return request;
 }
 
-const IMG_TAG = /<img\b[^>]*>/gi;
-const SRC_ATTR = /\ssrc="([^"]*)"/i;
+type MarkdownImageProps = ComponentProps<"img"> & {
+	imageBaseDir?: string | null;
+	imageRootDir?: string | null;
+};
 
-/** Disk-backed image sources of a rendered document, in document order, deduped. */
-function collectDiskImageSrcs(html: string): string[] {
-	const found: string[] = [];
-	for (const tag of html.match(IMG_TAG) ?? []) {
-		const src = SRC_ATTR.exec(tag)?.[1];
-		if (!src || !isDiskImageSrc(src) || found.includes(src)) continue;
-		found.push(src);
-		if (found.length >= MAX_IMAGES_PER_DOCUMENT) break;
-	}
-	return found;
+export function MarkdownImageProvider({
+	children,
+	resetKey,
+}: {
+	children: ReactNode;
+	resetKey: unknown;
+}) {
+	const claimPath = useMemo(() => {
+		const claimedPaths = new Set<string>();
+		return (absPath: string) => {
+			if (claimedPaths.has(absPath)) return true;
+			if (claimedPaths.size >= MAX_IMAGES_PER_DOCUMENT) return false;
+			claimedPaths.add(absPath);
+			return true;
+		};
+	}, [resetKey]);
+
+	return (
+		<DiskImageBudgetContext.Provider value={claimPath}>
+			{children}
+		</DiskImageBudgetContext.Provider>
+	);
 }
 
-/**
- * Replace every disk-backed `<img src>` with what `resolved` knows about it:
- * a data URL once read, otherwise no src at all plus a state marker, so the
- * webview shows the alt text instead of a broken-image icon.
- */
-function applyDiskImages(
-	html: string,
-	baseDir: string,
-	rootDir: string | null | undefined,
-	resolved: Record<string, string | null>,
-): string {
-	return html.replace(IMG_TAG, (tag) => {
-		const match = SRC_ATTR.exec(tag);
-		if (!match || !isDiskImageSrc(match[1])) return tag;
-		const absPath = resolveDiskImagePath(match[1], baseDir, rootDir);
-		const dataUrl = absPath ? resolved[absPath] : null;
-		const state = dataUrl ? "loaded" : absPath && !(absPath in resolved) ? "loading" : "missing";
-		const src = dataUrl ? ` src="${dataUrl}"` : "";
-		return `${tag.slice(0, match.index)}${src} data-dev3-md-image="${state}" title="${match[1]}"${tag.slice(match.index + match[0].length)}`;
-	});
-}
-
-/**
- * Rendered markdown HTML with repo-relative images swapped for data URLs read
- * off disk. Returns the HTML unchanged when there is no directory to resolve
- * against (no worktree) or the document has no disk-backed images.
- */
-export function useDiskMarkdownImages(html: string, baseDir?: string | null, rootDir?: string | null): string {
-	const srcs = useMemo(() => (baseDir ? collectDiskImageSrcs(html) : []), [html, baseDir]);
-	const [resolved, setResolved] = useState<Record<string, string | null>>({});
+export function MarkdownImage({
+	src,
+	imageBaseDir,
+	imageRootDir,
+	...props
+}: MarkdownImageProps) {
+	const claimPath = useContext(DiskImageBudgetContext);
+	const originalSrc = unprotectDiskImageSrc(src ?? "");
+	const diskBacked = Boolean(imageBaseDir && originalSrc && isDiskImageSrc(originalSrc));
+	const absPath = useMemo(
+		() => (diskBacked ? resolveDiskImagePath(originalSrc, imageBaseDir!, imageRootDir) : null),
+		[diskBacked, originalSrc, imageBaseDir, imageRootDir],
+	);
+	const [resolved, setResolved] = useState<string | null | undefined>(undefined);
 
 	useEffect(() => {
-		if (!baseDir || !srcs.length) return;
-		let stale = false;
-		for (const src of srcs) {
-			const absPath = resolveDiskImagePath(src, baseDir, rootDir);
-			if (!absPath) continue;
-			void readImage(absPath).then((dataUrl) => {
-				if (stale) return;
-				setResolved((prev) => (absPath in prev && prev[absPath] === dataUrl ? prev : { ...prev, [absPath]: dataUrl }));
-			});
+		if (!diskBacked || !absPath) {
+			setResolved(absPath === null && diskBacked ? null : undefined);
+			return;
 		}
+		if (!claimPath(absPath)) {
+			setResolved(null);
+			return;
+		}
+		let stale = false;
+		setResolved(undefined);
+		void readImage(absPath).then((dataUrl) => {
+			if (!stale) setResolved(dataUrl);
+		});
 		return () => {
 			stale = true;
 		};
-	}, [srcs, baseDir, rootDir]);
+	}, [diskBacked, absPath, claimPath]);
 
-	return useMemo(
-		() => (baseDir && srcs.length ? applyDiskImages(html, baseDir, rootDir, resolved) : html),
-		[html, baseDir, rootDir, srcs, resolved],
+	if (!diskBacked) {
+		return <img {...props} src={originalSrc || undefined} />;
+	}
+
+	const state = resolved === undefined ? "loading" : resolved ? "loaded" : "missing";
+	return (
+		<img
+			{...props}
+			src={resolved ?? undefined}
+			title={originalSrc}
+			data-dev3-md-image={state}
+		/>
 	);
 }
