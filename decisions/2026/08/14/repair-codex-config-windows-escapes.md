@@ -55,3 +55,46 @@ so an already-broken file stayed broken forever.
   line in the file.
 - Leave existing files broken and only fix new writes: leaves every current
   Windows install with a codex that will not start.
+
+## Follow-up: who else writes `[projects."<path>"]`
+
+Verified on the reporter's Windows box after the fix landed. Two facts the next
+agent should not have to re-derive:
+
+- **`codex-config.ts` is the only writer in THIS repo, but not the only writer of
+  the file.** The `[projects.*]` trust table is Codex's own feature — dev3 merely
+  pre-seeds it so the trust dialog never appears. Anything reasoning about that
+  table must expect entries dev3 never wrote.
+- **The pre-fix writer re-broke healthy files.** `ensureCodexConfig` before this
+  change re-emitted values it had just PARSED — a correctly escaped
+  `"C:\\Users\\user\\.dev3.0\\sockets"` decodes to a native path and was written
+  straight back raw, so a hand-repaired config stopped parsing again on the next
+  launch. Demonstrated by running the pre-fix function on a healthy config: its
+  output carries both spellings and does not parse, the current one carries a
+  single escaped line and does. This, not two different build vintages, explains
+  a key changing from mixed separators to all-backslash on the reporter's box —
+  every sha live that day composed the path identically, by concatenation.
+  **Consequence:** hand-repairing while running a pre-fix build is futile.
+
+- **One rewrite stayed unexplained.** Between two runs on the reporter's machine
+  the same key changed from `C:\Users\user/.dev3.0/worktrees` (mixed separators)
+  to `C:\Users\user\.dev3.0\worktrees` (native), still unescaped. Ruled out: the
+  hand repair we gave him (it doubles backslashes and never touches `/`, and it
+  ran afterwards), and Codex itself (it aborts on the parse error before writing,
+  and it would have written a correctly escaped string). What remains is a dev3
+  build composing the path natively without escaping — most plausibly a dev build
+  from a parallel branch. The falsifiable check for whoever sees this next: a
+  freshly written *unescaped* entry produced by a build that already contains
+  `tomlBasicString`. That would mean a second writing path exists in our code.
+
+## Follow-up: the Windows job the merge could not gate
+
+`windows-proof` runs POST-MERGE, so #1369 merged on green REQUIRED checks and only
+then turned `main` red — and because that workflow gates the publishers, the canary
+channel published nothing until the follow-up landed. The defect it caught was real
+and macOS could not see it: paths were composed with node's `join`, which answers in
+the HOST's dialect, so a POSIX fixture became `\Users\x\.codex\skills` on
+windows-latest. `joinLike()` now joins in the dialect of the path being extended;
+node's `join` stays only where a real filesystem path is needed. Anything added to
+that Windows job inherits the same gap: green required checks do NOT mean the
+Windows leg passed.
