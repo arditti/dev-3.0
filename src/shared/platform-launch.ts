@@ -81,6 +81,24 @@ export interface LaunchDialect {
 	print(text: string, options?: LaunchPrintOptions): string;
 	/** Announce a command line and run it in the current view. */
 	announceAndRun(label: string, command: string): string[];
+	/** Run one command given as argv, quoting every word. */
+	runCommand(argv: string[]): string;
+	/** Human-readable rendering of an argv, for printing before it runs. */
+	describeCommand(argv: string[]): string;
+	/** Pause for whole seconds. */
+	sleepSeconds(seconds: number): string;
+	/**
+	 * Write the number held in `varName` to `filePath` as plain ASCII digits.
+	 *
+	 * NOT a redirection. Windows PowerShell 5.1's `>` is `Out-File`, which writes
+	 * UTF-16LE with a byte-order mark. Measured on windows-latest: Bun's text
+	 * decoder copes with that, so the verdict would in fact still read back — which
+	 * is the point. Whether dev3 learns that a push succeeded must not rest on an
+	 * undocumented decoder behaviour. `.NET WriteAllText` writes UTF-8, no BOM.
+	 */
+	writeExitCodeFile(varName: string, filePath: string): string;
+	/** Leave the script with the code held in `varName`. */
+	exitWith(varName: string): string;
 	/** Store the previous exit code into `varName`. */
 	captureExitCode(varName: string): string;
 	/** Reference `varName` as a `print` argument expression. */
@@ -175,6 +193,15 @@ export function posixEscapeForDoubleQuotes(value: string): string {
 	return value.replace(/[\\"$`!]/g, "\\$&");
 }
 
+/**
+ * An argv rendered for a HUMAN reading the pane, not for a parser: only the
+ * words that need it are quoted, so the echoed line looks like the git command
+ * the user would have typed (`git rebase origin/main`, not `'git' 'rebase' …`).
+ */
+function describeArgv(argv: string[], quote: (value: string) => string): string {
+	return argv.map((word) => (/^[A-Za-z0-9._/\\:@=+-]+$/.test(word) ? word : quote(word))).join(" ");
+}
+
 const posixDialect: LaunchDialect = {
 	id: "posix-shell",
 	scriptExtension: ".sh",
@@ -195,6 +222,11 @@ const posixDialect: LaunchDialect = {
 		return `printf '${before}${text}\\n${after}'${args}`;
 	},
 	announceAndRun: (label, command) => [`echo "${posixEscapeForDoubleQuotes(label)}" && ${command}`],
+	runCommand: (argv) => argv.map(posixShellQuote).join(" "),
+	describeCommand: (argv) => describeArgv(argv, posixShellQuote),
+	sleepSeconds: (seconds) => `sleep ${seconds}`,
+	writeExitCodeFile: (varName, filePath) => `printf '%s' "$${varName}" > ${posixShellQuote(filePath)}`,
+	exitWith: (varName) => `exit $${varName}`,
 	captureExitCode: (varName) => `${varName}=$?`,
 	exitCodeArg: (varName) => `"$${varName}"`,
 	branchOnFailure: (varName, arms) => [
@@ -301,6 +333,21 @@ const windowsDialect: LaunchDialect = {
 		`Write-Host "${powerShellEscapeDoubleQuoted(label)}"`,
 		`Invoke-Expression ${powerShellQuote(command)}`,
 	],
+	// `&` (the call operator) runs a native executable with each element as one
+	// argument — never `Invoke-Expression`, which would re-parse the whole line.
+	//
+	// The `$LASTEXITCODE = $null` is load-bearing, not tidiness. If the executable
+	// cannot be LAUNCHED at all (not on PATH), PowerShell raises a
+	// CommandNotFoundException and leaves `$LASTEXITCODE` at the PREVIOUS command's
+	// value — a stale 0 there reports a push that never happened as successful.
+	// Clearing it first makes `captureExitCode` fall through to `$?`, which is false.
+	runCommand: (argv) => `$global:LASTEXITCODE = $null; & ${argv.map(powerShellQuote).join(" ")}`,
+	describeCommand: (argv) => describeArgv(argv, powerShellQuote),
+	sleepSeconds: (seconds) => `Start-Sleep -Seconds ${seconds}`,
+	// See the interface doc: `>` here would be UTF-16LE with a BOM.
+	writeExitCodeFile: (varName, filePath) =>
+		`[System.IO.File]::WriteAllText(${powerShellQuote(filePath)}, [string]$${varName})`,
+	exitWith: (varName) => `exit $${varName}`,
 	captureExitCode: (varName) =>
 		`$${varName} = if ($null -eq $LASTEXITCODE) { if ($?) { 0 } else { 1 } } else { $LASTEXITCODE }`,
 	exitCodeArg: (varName) => `$${varName}`,
@@ -323,14 +370,22 @@ const windowsDialect: LaunchDialect = {
 	interactiveShell: (shellPath) => powerShellPath(shellPath),
 	interactiveShellCommand: (shellPath) => `& ${powerShellQuote(powerShellPath(shellPath))} -NoLogo -NoProfile -NoExit`,
 	readKey: (options) => {
+		// `RawUI.ReadKey` and `[Console]::KeyAvailable` both THROW when console
+		// input is redirected — which is every non-interactive run, including the
+		// CI proof that drives these scripts. Redirected input reads a line
+		// instead, so a script never blocks forever on a prompt nobody can answer.
 		const t = options?.timeoutSeconds;
 		if (typeof t !== "number") {
-			return "$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') | Out-Null";
+			return (
+				"if ([Console]::IsInputRedirected) { Read-Host | Out-Null } " +
+				"else { $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') | Out-Null }"
+			);
 		}
 		return (
 			`$__deadline = (Get-Date).AddSeconds(${t}); ` +
+			"if ([Console]::IsInputRedirected) { Start-Sleep -Seconds " + t + " } else { " +
 			"while (-not [Console]::KeyAvailable -and (Get-Date) -lt $__deadline) { Start-Sleep -Milliseconds 100 }; " +
-			"if ([Console]::KeyAvailable) { [Console]::ReadKey($true) | Out-Null }"
+			"if ([Console]::KeyAvailable) { [Console]::ReadKey($true) | Out-Null } }"
 		);
 	},
 	readLine: () => "Read-Host | Out-Null",
