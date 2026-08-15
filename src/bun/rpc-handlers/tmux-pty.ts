@@ -12,6 +12,7 @@ import { getPidCwd, terminatePidsVerified } from "../process-reaper";
 import { getResourceUsage } from "../resource-monitor";
 import { loadSettings, recordFavoriteUsages } from "../settings";
 import { getUserShell } from "../shell-env";
+import { agentBinaryPathOverride } from "../executable";
 import { spawn } from "../spawn";
 import { setupAgentHooks } from "../agent-hooks";
 import { resolveResumableSessionId } from "../agent-transcripts";
@@ -741,8 +742,10 @@ export async function launchTaskPty(
 	if (resolvedBaseCmd && resolvedBaseCmd !== "bash") {
 		const binaryName = resolvedBaseCmd.split("/").pop() ?? resolvedBaseCmd;
 		const settings = await loadSettings();
-		const customPath = settings.agentBinaryPaths?.[task.agentId ?? ""];
-		const { resolvedPath: binaryPath } = resolveBinaryPath(binaryName, customPath);
+		// A path cached for a previous base command must not vouch for the new
+		// one; a path the user set is theirs and always counts.
+		const overridePath = agentBinaryPathOverride(task.agentId ?? "", binaryName, settings.agentBinaryPaths, settings.agentCustomBinaryPaths);
+		const { resolvedPath: binaryPath } = resolveBinaryPath(binaryName, overridePath);
 		if (!binaryPath) {
 			const allAgents = await agents.getAllAgents();
 			const matchedAgent = allAgents.find((agent) => agent.baseCommand === resolvedBaseCmd || agent.baseCommand === binaryName);
