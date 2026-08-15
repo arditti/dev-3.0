@@ -1,0 +1,186 @@
+/**
+ * Trust registrations dev3 writes into agent CLI config files outside
+ * `~/.dev3.0/`, and the pruning that keeps them from growing forever.
+ *
+ * Every task launch registers its worktree as trusted so the agent skips its
+ * "do you trust this folder?" dialog. Worktrees are disposable; without a
+ * matching removal the file accumulates one dead entry per task, permanently.
+ */
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { resolveUserHome } from "../shared/user-home";
+import { forgetClaudeTrustEntries, sweepStaleClaudeTrustEntries } from "./claude-json-prune";
+import { isDev3TrustPath, pruneCodexTrustEntries } from "./codex-config";
+import { createLogger } from "./logger";
+import { DEV3_HOME } from "./paths";
+
+const log = createLogger("worktree-trust");
+
+const USER_HOME = resolveUserHome();
+
+/** `~/.gemini/trustedFolders.json` — flat map of absolute path → trust verdict. */
+export const GEMINI_TRUSTED_FOLDERS = `${USER_HOME}/.gemini/trustedFolders.json`;
+
+/**
+ * The roots dev3 creates disposable working directories under: git worktrees for
+ * ordinary projects, `ops/<slug>/<taskId>/work` for virtual ones. Both get trust
+ * registered the same way at launch, so both need forgetting. The roots
+ * themselves are never candidates — only paths strictly inside them.
+ */
+const DEV3_MANAGED_ROOTS = [`${DEV3_HOME}/worktrees`, `${DEV3_HOME}/ops`];
+
+/** Case- and separator-insensitive: keys were written by other OS installs too. */
+function normalize(path: string): string {
+	return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function isDev3ManagedPath(path: string): boolean {
+	const target = normalize(path);
+	return DEV3_MANAGED_ROOTS.some((root) => target.startsWith(`${normalize(root)}/`));
+}
+
+/**
+ * Run one agent's prune in isolation. The three files are unrelated; a throw
+ * while editing one must not cost the user the other two — Claude Code's is the
+ * big one and it runs last.
+ */
+function step(agent: string, run: () => void): void {
+	try {
+		run();
+	} catch (err) {
+		log.warn("Trust prune step failed", { agent, error: String(err) });
+	}
+}
+
+/**
+ * Resolve symlinks the way `ensureGeminiTrust` did when it wrote the key, but
+ * survive the directory already being gone: only the parent is resolved.
+ */
+async function resolvedVariants(dirPath: string): Promise<string[]> {
+	const variants = new Set([dirPath]);
+	try {
+		variants.add(await realpath(dirPath));
+	} catch {
+		try {
+			variants.add(join(await realpath(dirname(dirPath)), basename(dirPath)));
+		} catch { /* parent gone too — the raw path is all we have */ }
+	}
+	return [...variants];
+}
+
+/** Read the trust map, apply `mutate`, write back only if something changed. */
+function updateGeminiTrustedFolders(
+	mutate: (data: Record<string, string>) => string[],
+): string[] {
+	if (!existsSync(GEMINI_TRUSTED_FOLDERS)) return [];
+
+	let data: Record<string, string>;
+	try {
+		data = JSON.parse(readFileSync(GEMINI_TRUSTED_FOLDERS, "utf-8"));
+	} catch (err) {
+		// Fail closed: a file we cannot parse is a file we must not rewrite.
+		log.warn("Skipping ~/.gemini/trustedFolders.json prune (unparsable)", { error: String(err) });
+		return [];
+	}
+	if (data == null || typeof data !== "object" || Array.isArray(data)) return [];
+
+	const removed = mutate(data);
+	if (removed.length === 0) return [];
+
+	writeFileSync(GEMINI_TRUSTED_FOLDERS, JSON.stringify(data, null, 2));
+	return removed;
+}
+
+/**
+ * Drop every trust registration for a worktree dev3 just removed. Best-effort:
+ * a failure here must never block teardown.
+ *
+ * This is the "forget this worktree everywhere" step — agents that gain their
+ * own trust pruning belong here, next to Gemini.
+ */
+export async function forgetWorktreeTrust(worktreePath: string | null | undefined): Promise<void> {
+	if (!worktreePath) return;
+	try {
+		const targets = (await resolvedVariants(worktreePath))
+			.filter(isDev3ManagedPath)
+			.map(normalize);
+		if (targets.length === 0) return;
+
+		step("gemini", () => {
+			const removed = updateGeminiTrustedFolders((data) => {
+				const keys = Object.keys(data).filter((key) => targets.includes(normalize(key)));
+				for (const key of keys) delete data[key];
+				return keys;
+			});
+			if (removed.length > 0) {
+				log.info("Pruned worktree from ~/.gemini/trustedFolders.json", { paths: removed });
+			}
+		});
+
+		// Codex: the entry was written as a `realpath`, and on Windows the task's own
+		// path may spell its separators differently — so a dead directory counts too,
+		// not just an exact match.
+		step("codex", () => {
+			const codexRemoved = pruneCodexTrustEntries(
+				USER_HOME,
+				(projectPath) =>
+					isDev3TrustPath(projectPath, DEV3_HOME)
+					&& (targets.includes(normalize(projectPath)) || !existsSync(projectPath)),
+			);
+			if (codexRemoved > 0) {
+				log.info("Pruned worktree trust from ~/.codex/config.toml", { count: codexRemoved });
+			}
+		});
+
+		step("claude", () => {
+			const claudeRemoved = forgetClaudeTrustEntries(targets, normalize)
+				.reduce((sum, result) => sum + result.removed, 0);
+			if (claudeRemoved > 0) {
+				log.info("Pruned worktree from Claude Code's .claude.json", { count: claudeRemoved });
+			}
+		});
+	} catch (err) {
+		log.warn("Failed to prune worktree trust", { error: String(err) });
+	}
+}
+
+/**
+ * One-time startup sweep for entries left behind by app versions that never
+ * pruned. Only touches keys that are BOTH inside a dev3-managed root AND point
+ * at a directory that no longer exists — a user's own trusted folder, and a live
+ * worktree, are never candidates.
+ */
+export function sweepStaleWorktreeTrust(): void {
+	step("gemini", () => {
+		const removed = updateGeminiTrustedFolders((data) => {
+			const keys = Object.keys(data).filter((key) => isDev3ManagedPath(key) && !existsSync(key));
+			for (const key of keys) delete data[key];
+			return keys;
+		});
+		if (removed.length > 0) {
+			log.info("Swept dead worktrees from ~/.gemini/trustedFolders.json", { count: removed.length });
+		}
+	});
+
+	step("codex", () => {
+		const codexRemoved = pruneCodexTrustEntries(
+			USER_HOME,
+			(projectPath) => isDev3TrustPath(projectPath, DEV3_HOME) && !existsSync(projectPath),
+		);
+		if (codexRemoved > 0) {
+			log.info("Swept dead worktrees from ~/.codex/config.toml", { count: codexRemoved });
+		}
+	});
+
+	// Claude Code's file is the big one: 2 130 dead entries, 48% of 1.9 MB on one
+	// machine. Median 8.6 ms, so it runs every launch rather than behind a flag.
+	step("claude", () => {
+		const claudeRemoved = sweepStaleClaudeTrustEntries(isDev3ManagedPath)
+			.reduce((sum, result) => sum + result.removed, 0);
+		if (claudeRemoved > 0) {
+			log.info("Swept dead worktrees from Claude Code's .claude.json", { count: claudeRemoved });
+		}
+	});
+}
