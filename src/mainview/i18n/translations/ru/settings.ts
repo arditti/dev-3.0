@@ -659,6 +659,7 @@ const settings = {
 	"spaces.autoDeleted": "Пространство «{name}» удалено — из него ушёл последний проект",
 	"spaces.failedCreate": "Не удалось создать пространство: {error}",
 	"spaces.failedUpdate": "Не удалось обновить пространства: {error}",
+	"spaces.reorderSpace": "Перетащите, чтобы изменить порядок пространств",
 };
 
 export default settings;

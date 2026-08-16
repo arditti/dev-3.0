@@ -6,6 +6,9 @@ import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
 import { useT } from "../i18n";
 import { useProjectPrivacy } from "../sensitive-projects";
+import { useSpaces } from "../useSpaces";
+import { groupProjectsForDashboard } from "../utils/spaceGroups";
+import SpaceGroupedProjects, { type RowReorderCtx } from "./SpaceGroupedProjects";
 import { getStatusLabel } from "../utils/statusLabel";
 import { statusKey } from "../i18n/status";
 import { useStatusColors } from "../hooks/useStatusColors";
@@ -120,6 +123,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 	const [completingTasks, setCompletingTasks] = useState<Set<string>>(new Set());
 
 	const privacy = useProjectPrivacy();
+	const { file: spacesFile } = useSpaces();
 
 	function openProject(projectId: string) {
 		navigate({ screen: "project", projectId });
@@ -254,6 +258,9 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 
 	// The built-in Operations board is pinned first; ordinary projects keep order.
 	const visibleProjects = orderProjectsForDisplay(projects.filter((p) => !p.deleted));
+	// null with zero spaces — the legacy flat render below stays byte-identical.
+	const spaceGroups = groupProjectsForDashboard(visibleProjects, spacesFile);
+	const sensitiveProjectIds = new Set(projects.filter((p) => p.sensitive).map((p) => p.id));
 	const hasPinnedBuiltin = visibleProjects.length > 0 && isBuiltinOpsProject(visibleProjects[0]);
 	const totalActive = Array.from(tasksByProject.values()).reduce((sum, tasks) => sum + tasks.length, 0);
 
@@ -310,6 +317,415 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 		reorderProject(projectId, target.id, step < 0 ? "before" : "after");
 	}
 
+	function renderProjectRow(project: Project, index: number, reorder?: RowReorderCtx) {
+		const tasks = tasksByProject.get(project.id) ?? [];
+		const hasActiveTasks = tasks.length > 0;
+		const isDragged = reorder ? reorder.isDragged : draggedProjectId === project.id;
+		const isBuiltinOps = isBuiltinOpsProject(project);
+		const locked = privacy.isLocked(project);
+		// Virtual boards (builtin and user-created) cannot be reordered:
+		// reorderProjects only persists git project order; dragging a virtual
+		// board would silently snap back after the API call. The project right
+		// below the pinned builtin also cannot move above the pin.
+		const cannotReorder = project.kind === "virtual";
+		// Grouped rows reorder within their space (RowReorderCtx); flat rows keep
+		// the global projects.json order machinery below.
+		const dragEnabled = reorder ? reorder.dragEnabled : !!onReorderProjects && !cannotReorder;
+		const cannotMoveUp = reorder
+			? !reorder.canMoveUp
+			: index === 0 || (hasPinnedBuiltin && index === 1) || cannotReorder;
+		const cannotMoveDown = reorder
+			? !reorder.canMoveDown
+			: !onReorderProjects || index === visibleProjects.length - 1 || cannotReorder;
+		const showDropBefore = reorder
+			? reorder.showDropBefore
+			: dropTarget?.projectId === project.id && dropTarget.side === "before";
+		const showDropAfter = reorder
+			? reorder.showDropAfter
+			: dropTarget?.projectId === project.id && dropTarget.side === "after";
+
+		// A task is "in" a custom column only when its customColumnId still
+		// resolves to a live column; a dangling id (deleted column) falls back
+		// to status-based bucketing, mirroring the kanban (PR #737).
+		const customColumnById = new Map((project.customColumns ?? []).map((c) => [c.id, c] as const));
+		const columnOf = (task: Task) =>
+			task.customColumnId ? customColumnById.get(task.customColumnId) ?? null : null;
+
+		// Rows shown individually: attention statuses (questions / your review /
+		// PR review) plus any task parked in a custom column. Custom-column
+		// tasks carry the column's identity, not their underlying status, and
+		// are never collapsed into the summary line below.
+		const rowTasks = tasks.filter(
+			(task) => columnOf(task) !== null || ATTENTION_STATUSES.includes(task.status),
+		);
+		const backgroundTasks = tasks.filter(
+			(task) => columnOf(task) === null && BACKGROUND_STATUSES.includes(task.status),
+		);
+
+		// Build summary segments: "3 in-progress · 2 AI review"
+		const summarySegments: { status: TaskStatus; count: number }[] = [];
+		for (const status of BACKGROUND_STATUSES) {
+			const count = backgroundTasks.filter((t) => t.status === status).length;
+			if (count > 0) {
+				summarySegments.push({ status, count });
+			}
+		}
+
+		// Order every visible row by priority first (hibernated tasks sink
+		// below every live band). On narrow viewports, keep
+		// "your turn" ahead of colleague reviews within the same priority band,
+		// then cap the list to NARROW_ROW_CAP behind a "show more" fold.
+		const rankOf = (task: Task) =>
+			columnOf(task) !== null ? 3 : ATTENTION_RANK[task.status] ?? 3;
+		const orderedRowTasks = [...rowTasks].sort((a, b) => {
+			const byPriority = compareTaskSortRank(a, b);
+			if (byPriority !== 0) return byPriority;
+			return narrow ? rankOf(a) - rankOf(b) : 0;
+		});
+		const isExpanded = expandedProjects.has(project.id);
+		const canCollapse = narrow && orderedRowTasks.length > NARROW_ROW_CAP;
+		const visibleRowTasks =
+			canCollapse && !isExpanded ? orderedRowTasks.slice(0, NARROW_ROW_CAP) : orderedRowTasks;
+		const hiddenRowCount = orderedRowTasks.length - visibleRowTasks.length;
+
+		return (
+			<div
+				key={project.id}
+				data-help-id="dashboard.project-row"
+				className={`relative bg-raised rounded-2xl border border-edge overflow-hidden transition-opacity ${isDragged ? "opacity-60" : ""}`}
+				onDragOver={reorder ? reorder.onDragOver : (event) => handleDragOver(event, project.id)}
+				onDragLeave={reorder ? reorder.onDragLeave : () => setDropTarget((current) => current?.projectId === project.id ? null : current)}
+				onDrop={reorder ? reorder.onDrop : (event) => handleDrop(event, project.id)}
+			>
+				{showDropBefore && <div className="absolute top-0 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />}
+				{showDropAfter && <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />}
+				{/* Project header */}
+				<div className={`group flex items-center gap-2 px-3 md:px-5 ${hasActiveTasks ? "py-3" : "py-2.5"} hover:bg-raised-hover transition-colors`}>
+					{/* Reorder cluster — desktop only. On touch, drag and the
+					    step buttons are unusable; reorder lives in the action sheet. */}
+					<div className="hidden md:flex -ml-1.5 items-center gap-0.5">
+						{/* Pointer-only drag affordance. Deliberately NOT a button: it has
+						    no click or key handler, and the step buttons beside it are the
+						    keyboard path, so a focusable control here would be a dead tab
+						    stop telling keyboard users to perform a gesture. */}
+						<span
+							role="presentation"
+							draggable={dragEnabled}
+							onDragStart={(event) => {
+								if (!dragEnabled) return;
+								if (reorder) {
+									reorder.onDragStart(event);
+									return;
+								}
+								setDraggedProjectId(project.id);
+								event.dataTransfer.setData("text/plain", `project:${project.id}`);
+								event.dataTransfer.effectAllowed = "move";
+							}}
+							onDragEnd={() => {
+								if (reorder) {
+									reorder.onDragEnd();
+									return;
+								}
+								setDraggedProjectId(null);
+								setDropTarget(null);
+							}}
+							className={`p-1.5 rounded-lg text-fg-3 transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing hover:text-fg hover:bg-elevated" : "cursor-default opacity-60"}`}
+							title={dragEnabled ? t("dashboard.reorderProject") : undefined}
+						>
+							<span
+								aria-hidden="true"
+								className="text-base leading-none"
+								style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
+							>
+								{"\u{F01DB}"}
+							</span>
+						</span>
+						<button
+							type="button"
+							onClick={() => (reorder ? reorder.onMoveUp() : moveProjectByStep(project.id, -1))}
+							className="hidden md:flex text-fg-3 hover:text-fg transition-colors p-1.5 rounded-lg hover:bg-elevated disabled:opacity-60 disabled:hover:text-fg-3 disabled:hover:bg-transparent"
+							title={t("dashboard.moveProjectUp")}
+							aria-label={t("dashboard.moveProjectUp")}
+							disabled={reorder ? cannotMoveUp : !onReorderProjects || cannotMoveUp}
+						>
+							<span
+								aria-hidden="true"
+								className="text-sm leading-none"
+								style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
+							>
+								{"\uF062"}
+							</span>
+						</button>
+						<button
+							type="button"
+							onClick={() => (reorder ? reorder.onMoveDown() : moveProjectByStep(project.id, 1))}
+							className="hidden md:flex text-fg-3 hover:text-fg transition-colors p-1.5 rounded-lg hover:bg-elevated disabled:opacity-60 disabled:hover:text-fg-3 disabled:hover:bg-transparent"
+							title={t("dashboard.moveProjectDown")}
+							aria-label={t("dashboard.moveProjectDown")}
+							disabled={cannotMoveDown}
+						>
+							<span
+								aria-hidden="true"
+								className="text-sm leading-none"
+								style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
+							>
+								{"\uF063"}
+							</span>
+						</button>
+					</div>
+					<button
+						type="button"
+						data-hint-id={`project:${project.id}`}
+						onClick={() => openProject(project.id)}
+						aria-disabled={locked || undefined}
+						title={locked ? t("streamer.projectLocked") : undefined}
+						className={`min-w-0 flex-1 flex items-center gap-3 text-left ${locked ? "cursor-not-allowed" : ""}`}
+					>
+						<div className={`${hasActiveTasks ? "w-8 h-8" : "w-6 h-6"} rounded-lg bg-accent/15 flex items-center justify-center flex-shrink-0`}>
+							<svg aria-hidden="true" focusable="false" className={`${hasActiveTasks ? "w-4 h-4" : "w-3 h-3"} text-accent`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+							</svg>
+						</div>
+						<div className="min-w-0 flex-1">
+							<div className={`${hasActiveTasks ? "text-fg font-semibold" : "text-fg-3"} text-sm truncate flex items-center gap-2`}>
+								{isBuiltinOps && (
+									<span aria-hidden="true" className="text-accent flex-shrink-0" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
+								)}
+								{locked && (
+							<span
+								aria-hidden="true"
+								className="text-fg-muted flex-shrink-0"
+								style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
+							>
+								{"\u{F033E}"}
+							</span>
+						)}
+						<span className={`truncate select-text ${privacy.maskClass(project)}`} title={locked || isBuiltinOps ? undefined : project.name}>{isBuiltinOps ? t("ops.boardName") : project.name}</span>
+								{project.kind === "virtual" && (
+									<span className="px-1.5 py-0.5 rounded bg-raised text-fg-3 text-dense font-medium uppercase tracking-[0.06em] flex items-center gap-1 flex-shrink-0">
+										<span aria-hidden="true" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
+										{isBuiltinOps ? t("ops.badgeSystem") : t("ops.badge")}
+									</span>
+								)}
+								{isBuiltinOps && (
+									<span className="hidden md:inline-flex text-fg-3 text-nano font-mono border border-edge rounded px-1 py-0.5 leading-none flex-shrink-0">⌘0</span>
+								)}
+							</div>
+							{/* Subtitle (path / virtual hint) is dead weight on a phone —
+							    name + badge already identify the board. Desktop only. */}
+							{project.kind === "virtual" ? (
+								<div className="hidden md:block text-fg-3 text-xs mt-0.5 truncate">{t("ops.tileSubtitle")}</div>
+							) : (
+								<div className="hidden md:block text-fg-3 text-xs mt-0.5 truncate font-mono select-text streamer-private" title={project.path}>{project.path}</div>
+							)}
+						</div>
+					</button>
+					{/* Desktop: resting-visible inline icon cluster, hover-emphasised. */}
+					<div className="hidden md:flex">
+						<ProjectActionButtons
+							project={project}
+							navigate={navigate}
+							onRemove={onRemoveProject}
+						/>
+					</div>
+					<span className="flex items-center gap-3">
+						{hasActiveTasks ? (
+							<span className="text-fg-3 text-xs tabular-nums whitespace-nowrap">{t.plural(narrow ? "activity.taskCountShort" : "activity.taskCount", tasks.length)}</span>
+						) : (
+							<span className="hidden md:inline text-fg-3 text-xs whitespace-nowrap">{t("activity.noActiveInProject")}</span>
+						)}
+						{/* Chevron is redundant on narrow — the name + count already
+						    navigate, so it only crowds the row end where the kebab sits. */}
+						<svg aria-hidden="true" focusable="false" className="hidden md:block w-4 h-4 text-fg-muted group-hover:text-fg-3 transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
+						</svg>
+					</span>
+					{/* Narrow: a single kebab folds every per-project action + reorder
+					    into a bottom sheet. Rendered last so it sits at the true row end. */}
+					{narrow && (
+						<button
+							type="button"
+							onClick={(event) => {
+								event.stopPropagation();
+								setActionSheetProjectId(project.id);
+							}}
+							className="flex h-11 w-11 items-center justify-center rounded-lg text-fg-3 hover:text-fg hover:bg-elevated transition-colors flex-shrink-0"
+							title={t("activity.projectActions")}
+							aria-label={t("activity.projectActions")}
+							aria-haspopup="dialog"
+						>
+							<span aria-hidden="true" className="text-lg leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\u{F01D9}"}</span>
+						</button>
+					)}
+				</div>
+
+				{hasActiveTasks && (
+					<div className="border-t border-edge">
+						{/* Attention + custom-column tasks — shown individually. On narrow
+						    each row stacks (title on its own line, meta below) so the title
+						    is readable instead of squeezed by the status + time cluster. */}
+						{visibleRowTasks.map((task) => {
+							const col = columnOf(task);
+							const rowColor = col ? col.color : statusColors[task.status];
+							const rowLabel = col ? col.name : getStatusLabel(task.status, t, project);
+							// A user-picked column colour has no per-theme variant, so it is
+							// shown as a swatch instead of as text colour (see comment above).
+							const labelAsSwatch = col !== null;
+							const needsMe = !col && NEEDS_ME_STATUSES.includes(task.status);
+							// The row's single object action. A hibernated task refuses column
+							// changes in the lifecycle machine, so it gets no ✓ at all.
+							// A locked project's rows are blurred, so completing from one would
+							// mutate a task the user cannot read.
+							const canComplete = !task.hibernated && !locked;
+							const completing = completingTasks.has(task.id);
+							return (
+							<div
+								key={task.id}
+								className={`group/row relative flex items-stretch hover:bg-raised-hover transition-colors border-b border-edge last:border-b-0 ${task.hibernated || isTaskDisconnected(task) ? "grayscale" : ""}`}
+							>
+							<button
+								data-hint-id={`task:${task.id}`}
+								onClick={() => navigate({ screen: "project", projectId: project.id, activeTaskId: task.id })}
+								className={`min-w-0 flex-1 flex items-start md:items-center gap-3 pl-3 md:pl-5 py-3 md:py-2.5 min-h-[44px] text-left ${canComplete ? "pr-1" : "pr-3 md:pr-5"}`}
+							>
+								{/* "Your turn" accent strip — narrow only (keeps desktop intact). */}
+								{narrow && needsMe && (
+									<span
+										className="absolute left-0 top-0 bottom-0 w-0.5"
+										style={{ backgroundColor: rowColor }}
+									/>
+								)}
+								{/* Priority replaces the status dot in the leading marker slot. */}
+								<PriorityBadge
+									priority={task.priority}
+									className={`flex-shrink-0 ${narrow ? "mt-0.5" : ""}`}
+								/>
+								<span className="min-w-0 flex-1 flex flex-col md:flex-row md:items-center gap-0.5 md:gap-3">
+									<span
+										title={getTaskTitle(task)}
+										className={`text-fg-2 text-sm min-w-0 md:flex-1 select-text ${narrow ? "line-clamp-2" : "truncate"} ${privacy.maskClass(project)}`}
+									>
+										{getTaskTitle(task)}
+									</span>
+									<span className="flex items-center gap-2 md:gap-3 flex-shrink-0">
+										{task.hibernated && (
+											<span
+												data-testid="activity-hibernated-badge"
+												className="inline-flex flex-shrink-0 items-center rounded border border-dashed border-edge-active px-1 py-px text-nano font-semibold uppercase tracking-[0.06em] text-fg-3"
+											>
+												{t("task.hibernatedBadge")}
+											</span>
+										)}
+										{isTaskDisconnected(task) && (
+											<span
+												data-testid="activity-disconnected-badge"
+												title={t("task.disconnectedHint")}
+												className="inline-flex flex-shrink-0 items-center rounded border border-dashed border-edge-active px-1 py-px text-nano font-semibold uppercase tracking-[0.06em] text-fg-3"
+											>
+												{t("task.disconnectedBadge")}
+											</span>
+										)}
+										{bellCounts.has(task.id) && (
+											<>
+												<span className="sr-only">
+													{t.plural("activity.unreadUpdates", bellCounts.get(task.id) ?? 1)}
+												</span>
+												<span
+													aria-hidden="true"
+													className="w-2 h-2 rounded-full bg-accent motion-safe:animate-pulse flex-shrink-0"
+												/>
+											</>
+										)}
+										{labelAsSwatch ? (
+											<span className="flex items-center gap-1.5 min-w-0 flex-shrink">
+												<span
+													aria-hidden="true"
+													className="w-2 h-2 rounded-full flex-shrink-0"
+													style={{ backgroundColor: rowColor }}
+												/>
+												<span className="text-fg-3 text-xs truncate max-w-[8rem]" title={rowLabel}>
+													{rowLabel}
+												</span>
+											</span>
+										) : (
+											<span className="text-xs flex-shrink-0" style={{ color: rowColor }}>
+												{rowLabel}
+											</span>
+										)}
+										{task.movedAt && (
+											<span className="text-fg-3 text-xs flex-shrink-0 tabular-nums whitespace-nowrap md:w-16 md:text-right">
+												{timeAgo(task.movedAt, t)}
+											</span>
+										)}
+									</span>
+								</span>
+							</button>
+							{canComplete && (
+								<Tooltip content={t("pipeline.completeTooltip")} disabled={completing}>
+									<button
+										type="button"
+										data-testid="activity-row-complete"
+										onClick={() => void completeTask(task, project)}
+										disabled={completing}
+										aria-label={`${t("pipeline.completeTooltip")} — ${getTaskTitle(task)}`}
+										className={`flex flex-shrink-0 items-center justify-center self-stretch pr-1 md:pr-2 text-success transition-[opacity,background-color,transform] duration-150 ease-out hover:bg-success/10 motion-safe:active:scale-[0.96] ${narrow ? "w-11" : "w-9"} ${
+											completing ? "opacity-100" : "md:opacity-0 md:group-hover/row:opacity-100 md:group-focus-within/row:opacity-100"
+										}`}
+									>
+										{/* Both glyphs stay mounted and cross-fade — a hard swap on a
+										    14px target reads as a flicker. */}
+										<span className="relative flex h-4 w-4 items-center justify-center rounded-md">
+											<span
+												className={`absolute inset-0 h-4 w-4 animate-spin rounded-full border-2 border-success/30 border-t-success transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${completing ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-[0.25] blur-[4px]"}`}
+											/>
+											<CompleteCheckIcon
+												className={`absolute inset-0 h-4 w-4 transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${completing ? "opacity-0 scale-[0.25] blur-[4px]" : "opacity-100 scale-100 blur-0"}`}
+											/>
+										</span>
+									</button>
+								</Tooltip>
+							)}
+							</div>
+							);
+						})}
+
+						{/* Narrow: fold the long tail behind a touch-sized toggle. */}
+						{canCollapse && (
+							<button
+								type="button"
+								onClick={() => toggleProjectExpanded(project.id)}
+								aria-expanded={isExpanded}
+								className="w-full flex items-center justify-center gap-2 px-3 md:px-5 py-3 min-h-[44px] text-xs text-fg-3 hover:text-fg hover:bg-raised-hover transition-colors border-b border-edge last:border-b-0"
+							>
+								{isExpanded
+									? t("activity.showFewerTasks")
+									: t.plural("activity.showMoreTasks", hiddenRowCount)}
+							</button>
+						)}
+
+						{/* Background tasks — collapsed summary line */}
+						{summarySegments.length > 0 && (
+							<div className="flex items-center gap-2 px-3 md:px-5 py-2 border-b border-edge last:border-b-0">
+								<div className="flex-1 flex items-center gap-3">
+									{summarySegments.map(({ status, count }) => (
+										<span key={status} className="flex items-center gap-1.5 text-xs text-fg-3">
+											<span
+												aria-hidden="true"
+												className="w-2 h-2 rounded-full"
+												style={{ backgroundColor: statusColors[status] }}
+											/>
+											<span className="tabular-nums">{summaryLabel(status, count, project)}</span>
+										</span>
+									))}
+								</div>
+							</div>
+						)}
+					</div>
+				)}
+			</div>
+		);
+	}
+
 	return (
 		<div className="h-full overflow-y-auto p-3 md:p-7">
 			<div className="max-w-5xl mx-auto space-y-4">
@@ -349,395 +765,21 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						</button>
 					)}
 				</div>
-				{visibleProjects.map((project, index) => {
-					const tasks = tasksByProject.get(project.id) ?? [];
-					const hasActiveTasks = tasks.length > 0;
-					const isDragged = draggedProjectId === project.id;
-					const isBuiltinOps = isBuiltinOpsProject(project);
-					const locked = privacy.isLocked(project);
-					// Virtual boards (builtin and user-created) cannot be reordered:
-					// reorderProjects only persists git project order; dragging a virtual
-					// board would silently snap back after the API call. The project right
-					// below the pinned builtin also cannot move above the pin.
-					const cannotReorder = project.kind === "virtual";
-						const dragEnabled = !!onReorderProjects && !cannotReorder;
-					const cannotMoveUp = index === 0 || (hasPinnedBuiltin && index === 1) || cannotReorder;
-					const showDropBefore = dropTarget?.projectId === project.id && dropTarget.side === "before";
-					const showDropAfter = dropTarget?.projectId === project.id && dropTarget.side === "after";
-
-					// A task is "in" a custom column only when its customColumnId still
-					// resolves to a live column; a dangling id (deleted column) falls back
-					// to status-based bucketing, mirroring the kanban (PR #737).
-					const customColumnById = new Map((project.customColumns ?? []).map((c) => [c.id, c] as const));
-					const columnOf = (task: Task) =>
-						task.customColumnId ? customColumnById.get(task.customColumnId) ?? null : null;
-
-					// Rows shown individually: attention statuses (questions / your review /
-					// PR review) plus any task parked in a custom column. Custom-column
-					// tasks carry the column's identity, not their underlying status, and
-					// are never collapsed into the summary line below.
-					const rowTasks = tasks.filter(
-						(task) => columnOf(task) !== null || ATTENTION_STATUSES.includes(task.status),
-					);
-					const backgroundTasks = tasks.filter(
-						(task) => columnOf(task) === null && BACKGROUND_STATUSES.includes(task.status),
-					);
-
-					// Build summary segments: "3 in-progress · 2 AI review"
-					const summarySegments: { status: TaskStatus; count: number }[] = [];
-					for (const status of BACKGROUND_STATUSES) {
-						const count = backgroundTasks.filter((t) => t.status === status).length;
-						if (count > 0) {
-							summarySegments.push({ status, count });
-						}
-					}
-
-					// Order every visible row by priority first (hibernated tasks sink
-					// below every live band). On narrow viewports, keep
-					// "your turn" ahead of colleague reviews within the same priority band,
-					// then cap the list to NARROW_ROW_CAP behind a "show more" fold.
-					const rankOf = (task: Task) =>
-						columnOf(task) !== null ? 3 : ATTENTION_RANK[task.status] ?? 3;
-					const orderedRowTasks = [...rowTasks].sort((a, b) => {
-						const byPriority = compareTaskSortRank(a, b);
-						if (byPriority !== 0) return byPriority;
-						return narrow ? rankOf(a) - rankOf(b) : 0;
-					});
-					const isExpanded = expandedProjects.has(project.id);
-					const canCollapse = narrow && orderedRowTasks.length > NARROW_ROW_CAP;
-					const visibleRowTasks =
-						canCollapse && !isExpanded ? orderedRowTasks.slice(0, NARROW_ROW_CAP) : orderedRowTasks;
-					const hiddenRowCount = orderedRowTasks.length - visibleRowTasks.length;
-
-					return (
-						<div
-							key={project.id}
-							data-help-id="dashboard.project-row"
-							className={`relative bg-raised rounded-2xl border border-edge overflow-hidden transition-opacity ${isDragged ? "opacity-60" : ""}`}
-							onDragOver={(event) => handleDragOver(event, project.id)}
-							onDragLeave={() => setDropTarget((current) => current?.projectId === project.id ? null : current)}
-							onDrop={(event) => handleDrop(event, project.id)}
-						>
-							{showDropBefore && <div className="absolute top-0 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />}
-							{showDropAfter && <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />}
-							{/* Project header */}
-							<div className={`group flex items-center gap-2 px-3 md:px-5 ${hasActiveTasks ? "py-3" : "py-2.5"} hover:bg-raised-hover transition-colors`}>
-								{/* Reorder cluster — desktop only. On touch, drag and the
-								    step buttons are unusable; reorder lives in the action sheet. */}
-								<div className="hidden md:flex -ml-1.5 items-center gap-0.5">
-									{/* Pointer-only drag affordance. Deliberately NOT a button: it has
-									    no click or key handler, and the step buttons beside it are the
-									    keyboard path, so a focusable control here would be a dead tab
-									    stop telling keyboard users to perform a gesture. */}
-									<span
-										role="presentation"
-										draggable={dragEnabled}
-										onDragStart={(event) => {
-											if (!dragEnabled) return;
-											setDraggedProjectId(project.id);
-											event.dataTransfer.setData("text/plain", `project:${project.id}`);
-											event.dataTransfer.effectAllowed = "move";
-										}}
-										onDragEnd={() => {
-											setDraggedProjectId(null);
-											setDropTarget(null);
-										}}
-										className={`p-1.5 rounded-lg text-fg-3 transition-colors ${dragEnabled ? "cursor-grab active:cursor-grabbing hover:text-fg hover:bg-elevated" : "cursor-default opacity-60"}`}
-										title={dragEnabled ? t("dashboard.reorderProject") : undefined}
-									>
-										<span
-											aria-hidden="true"
-											className="text-base leading-none"
-											style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
-										>
-											{"\u{F01DB}"}
-										</span>
-									</span>
-									<button
-										type="button"
-										onClick={() => moveProjectByStep(project.id, -1)}
-										className="hidden md:flex text-fg-3 hover:text-fg transition-colors p-1.5 rounded-lg hover:bg-elevated disabled:opacity-60 disabled:hover:text-fg-3 disabled:hover:bg-transparent"
-										title={t("dashboard.moveProjectUp")}
-										aria-label={t("dashboard.moveProjectUp")}
-										disabled={!onReorderProjects || cannotMoveUp}
-									>
-										<span
-											aria-hidden="true"
-											className="text-sm leading-none"
-											style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
-										>
-											{"\uF062"}
-										</span>
-									</button>
-									<button
-										type="button"
-										onClick={() => moveProjectByStep(project.id, 1)}
-										className="hidden md:flex text-fg-3 hover:text-fg transition-colors p-1.5 rounded-lg hover:bg-elevated disabled:opacity-60 disabled:hover:text-fg-3 disabled:hover:bg-transparent"
-										title={t("dashboard.moveProjectDown")}
-										aria-label={t("dashboard.moveProjectDown")}
-										disabled={!onReorderProjects || index === visibleProjects.length - 1 || cannotReorder}
-									>
-										<span
-											aria-hidden="true"
-											className="text-sm leading-none"
-											style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
-										>
-											{"\uF063"}
-										</span>
-									</button>
-								</div>
-								<button
-									type="button"
-									data-hint-id={`project:${project.id}`}
-									onClick={() => openProject(project.id)}
-									aria-disabled={locked || undefined}
-									title={locked ? t("streamer.projectLocked") : undefined}
-									className={`min-w-0 flex-1 flex items-center gap-3 text-left ${locked ? "cursor-not-allowed" : ""}`}
-								>
-									<div className={`${hasActiveTasks ? "w-8 h-8" : "w-6 h-6"} rounded-lg bg-accent/15 flex items-center justify-center flex-shrink-0`}>
-										<svg aria-hidden="true" focusable="false" className={`${hasActiveTasks ? "w-4 h-4" : "w-3 h-3"} text-accent`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-										</svg>
-									</div>
-									<div className="min-w-0 flex-1">
-										<div className={`${hasActiveTasks ? "text-fg font-semibold" : "text-fg-3"} text-sm truncate flex items-center gap-2`}>
-											{isBuiltinOps && (
-												<span aria-hidden="true" className="text-accent flex-shrink-0" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
-											)}
-											{locked && (
-										<span
-											aria-hidden="true"
-											className="text-fg-muted flex-shrink-0"
-											style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
-										>
-											{"\u{F033E}"}
-										</span>
-									)}
-									<span className={`truncate select-text ${privacy.maskClass(project)}`} title={locked || isBuiltinOps ? undefined : project.name}>{isBuiltinOps ? t("ops.boardName") : project.name}</span>
-											{project.kind === "virtual" && (
-												<span className="px-1.5 py-0.5 rounded bg-raised text-fg-3 text-dense font-medium uppercase tracking-[0.06em] flex items-center gap-1 flex-shrink-0">
-													<span aria-hidden="true" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
-													{isBuiltinOps ? t("ops.badgeSystem") : t("ops.badge")}
-												</span>
-											)}
-											{isBuiltinOps && (
-												<span className="hidden md:inline-flex text-fg-3 text-nano font-mono border border-edge rounded px-1 py-0.5 leading-none flex-shrink-0">⌘0</span>
-											)}
-										</div>
-										{/* Subtitle (path / virtual hint) is dead weight on a phone —
-										    name + badge already identify the board. Desktop only. */}
-										{project.kind === "virtual" ? (
-											<div className="hidden md:block text-fg-3 text-xs mt-0.5 truncate">{t("ops.tileSubtitle")}</div>
-										) : (
-											<div className="hidden md:block text-fg-3 text-xs mt-0.5 truncate font-mono select-text streamer-private" title={project.path}>{project.path}</div>
-										)}
-									</div>
-								</button>
-								{/* Desktop: resting-visible inline icon cluster, hover-emphasised. */}
-								<div className="hidden md:flex">
-									<ProjectActionButtons
-										project={project}
-										navigate={navigate}
-										onRemove={onRemoveProject}
-									/>
-								</div>
-								<span className="flex items-center gap-3">
-									{hasActiveTasks ? (
-										<span className="text-fg-3 text-xs tabular-nums whitespace-nowrap">{t.plural(narrow ? "activity.taskCountShort" : "activity.taskCount", tasks.length)}</span>
-									) : (
-										<span className="hidden md:inline text-fg-3 text-xs whitespace-nowrap">{t("activity.noActiveInProject")}</span>
-									)}
-									{/* Chevron is redundant on narrow — the name + count already
-									    navigate, so it only crowds the row end where the kebab sits. */}
-									<svg aria-hidden="true" focusable="false" className="hidden md:block w-4 h-4 text-fg-muted group-hover:text-fg-3 transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
-									</svg>
-								</span>
-								{/* Narrow: a single kebab folds every per-project action + reorder
-								    into a bottom sheet. Rendered last so it sits at the true row end. */}
-								{narrow && (
-									<button
-										type="button"
-										onClick={(event) => {
-											event.stopPropagation();
-											setActionSheetProjectId(project.id);
-										}}
-										className="flex h-11 w-11 items-center justify-center rounded-lg text-fg-3 hover:text-fg hover:bg-elevated transition-colors flex-shrink-0"
-										title={t("activity.projectActions")}
-										aria-label={t("activity.projectActions")}
-										aria-haspopup="dialog"
-									>
-										<span aria-hidden="true" className="text-lg leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\u{F01D9}"}</span>
-									</button>
-								)}
-							</div>
-
-							{hasActiveTasks && (
-								<div className="border-t border-edge">
-									{/* Attention + custom-column tasks — shown individually. On narrow
-									    each row stacks (title on its own line, meta below) so the title
-									    is readable instead of squeezed by the status + time cluster. */}
-									{visibleRowTasks.map((task) => {
-										const col = columnOf(task);
-										const rowColor = col ? col.color : statusColors[task.status];
-										const rowLabel = col ? col.name : getStatusLabel(task.status, t, project);
-										// A user-picked column colour has no per-theme variant, so it is
-										// shown as a swatch instead of as text colour (see comment above).
-										const labelAsSwatch = col !== null;
-										const needsMe = !col && NEEDS_ME_STATUSES.includes(task.status);
-										// The row's single object action. A hibernated task refuses column
-										// changes in the lifecycle machine, so it gets no ✓ at all.
-										// A locked project's rows are blurred, so completing from one would
-										// mutate a task the user cannot read.
-										const canComplete = !task.hibernated && !locked;
-										const completing = completingTasks.has(task.id);
-										return (
-										<div
-											key={task.id}
-											className={`group/row relative flex items-stretch hover:bg-raised-hover transition-colors border-b border-edge last:border-b-0 ${task.hibernated || isTaskDisconnected(task) ? "grayscale" : ""}`}
-										>
-										<button
-											data-hint-id={`task:${task.id}`}
-											onClick={() => navigate({ screen: "project", projectId: project.id, activeTaskId: task.id })}
-											className={`min-w-0 flex-1 flex items-start md:items-center gap-3 pl-3 md:pl-5 py-3 md:py-2.5 min-h-[44px] text-left ${canComplete ? "pr-1" : "pr-3 md:pr-5"}`}
-										>
-											{/* "Your turn" accent strip — narrow only (keeps desktop intact). */}
-											{narrow && needsMe && (
-												<span
-													className="absolute left-0 top-0 bottom-0 w-0.5"
-													style={{ backgroundColor: rowColor }}
-												/>
-											)}
-											{/* Priority replaces the status dot in the leading marker slot. */}
-											<PriorityBadge
-												priority={task.priority}
-												className={`flex-shrink-0 ${narrow ? "mt-0.5" : ""}`}
-											/>
-											<span className="min-w-0 flex-1 flex flex-col md:flex-row md:items-center gap-0.5 md:gap-3">
-												<span
-													title={getTaskTitle(task)}
-													className={`text-fg-2 text-sm min-w-0 md:flex-1 select-text ${narrow ? "line-clamp-2" : "truncate"} ${privacy.maskClass(project)}`}
-												>
-													{getTaskTitle(task)}
-												</span>
-												<span className="flex items-center gap-2 md:gap-3 flex-shrink-0">
-													{task.hibernated && (
-														<span
-															data-testid="activity-hibernated-badge"
-															className="inline-flex flex-shrink-0 items-center rounded border border-dashed border-edge-active px-1 py-px text-nano font-semibold uppercase tracking-[0.06em] text-fg-3"
-														>
-															{t("task.hibernatedBadge")}
-														</span>
-													)}
-													{isTaskDisconnected(task) && (
-														<span
-															data-testid="activity-disconnected-badge"
-															title={t("task.disconnectedHint")}
-															className="inline-flex flex-shrink-0 items-center rounded border border-dashed border-edge-active px-1 py-px text-nano font-semibold uppercase tracking-[0.06em] text-fg-3"
-														>
-															{t("task.disconnectedBadge")}
-														</span>
-													)}
-													{bellCounts.has(task.id) && (
-														<>
-															<span className="sr-only">
-																{t.plural("activity.unreadUpdates", bellCounts.get(task.id) ?? 1)}
-															</span>
-															<span
-																aria-hidden="true"
-																className="w-2 h-2 rounded-full bg-accent motion-safe:animate-pulse flex-shrink-0"
-															/>
-														</>
-													)}
-													{labelAsSwatch ? (
-														<span className="flex items-center gap-1.5 min-w-0 flex-shrink">
-															<span
-																aria-hidden="true"
-																className="w-2 h-2 rounded-full flex-shrink-0"
-																style={{ backgroundColor: rowColor }}
-															/>
-															<span className="text-fg-3 text-xs truncate max-w-[8rem]" title={rowLabel}>
-																{rowLabel}
-															</span>
-														</span>
-													) : (
-														<span className="text-xs flex-shrink-0" style={{ color: rowColor }}>
-															{rowLabel}
-														</span>
-													)}
-													{task.movedAt && (
-														<span className="text-fg-3 text-xs flex-shrink-0 tabular-nums whitespace-nowrap md:w-16 md:text-right">
-															{timeAgo(task.movedAt, t)}
-														</span>
-													)}
-												</span>
-											</span>
-										</button>
-										{canComplete && (
-											<Tooltip content={t("pipeline.completeTooltip")} disabled={completing}>
-												<button
-													type="button"
-													data-testid="activity-row-complete"
-													onClick={() => void completeTask(task, project)}
-													disabled={completing}
-													aria-label={`${t("pipeline.completeTooltip")} — ${getTaskTitle(task)}`}
-													className={`flex flex-shrink-0 items-center justify-center self-stretch pr-1 md:pr-2 text-success transition-[opacity,background-color,transform] duration-150 ease-out hover:bg-success/10 motion-safe:active:scale-[0.96] ${narrow ? "w-11" : "w-9"} ${
-														completing ? "opacity-100" : "md:opacity-0 md:group-hover/row:opacity-100 md:group-focus-within/row:opacity-100"
-													}`}
-												>
-													{/* Both glyphs stay mounted and cross-fade — a hard swap on a
-													    14px target reads as a flicker. */}
-													<span className="relative flex h-4 w-4 items-center justify-center rounded-md">
-														<span
-															className={`absolute inset-0 h-4 w-4 animate-spin rounded-full border-2 border-success/30 border-t-success transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${completing ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-[0.25] blur-[4px]"}`}
-														/>
-														<CompleteCheckIcon
-															className={`absolute inset-0 h-4 w-4 transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${completing ? "opacity-0 scale-[0.25] blur-[4px]" : "opacity-100 scale-100 blur-0"}`}
-														/>
-													</span>
-												</button>
-											</Tooltip>
-										)}
-										</div>
-										);
-									})}
-
-									{/* Narrow: fold the long tail behind a touch-sized toggle. */}
-									{canCollapse && (
-										<button
-											type="button"
-											onClick={() => toggleProjectExpanded(project.id)}
-											aria-expanded={isExpanded}
-											className="w-full flex items-center justify-center gap-2 px-3 md:px-5 py-3 min-h-[44px] text-xs text-fg-3 hover:text-fg hover:bg-raised-hover transition-colors border-b border-edge last:border-b-0"
-										>
-											{isExpanded
-												? t("activity.showFewerTasks")
-												: t.plural("activity.showMoreTasks", hiddenRowCount)}
-										</button>
-									)}
-
-									{/* Background tasks — collapsed summary line */}
-									{summarySegments.length > 0 && (
-										<div className="flex items-center gap-2 px-3 md:px-5 py-2 border-b border-edge last:border-b-0">
-											<div className="flex-1 flex items-center gap-3">
-												{summarySegments.map(({ status, count }) => (
-													<span key={status} className="flex items-center gap-1.5 text-xs text-fg-3">
-														<span
-															aria-hidden="true"
-															className="w-2 h-2 rounded-full"
-															style={{ backgroundColor: statusColors[status] }}
-														/>
-														<span className="tabular-nums">{summaryLabel(status, count, project)}</span>
-													</span>
-												))}
-											</div>
-										</div>
-									)}
-								</div>
-							)}
-						</div>
-					);
-				})}
+				{spaceGroups === null ? (
+					visibleProjects.map((project, index) => renderProjectRow(project, index))
+				) : (
+					<>
+						{visibleProjects.filter(isBuiltinOpsProject).map((p) => renderProjectRow(p, 0))}
+						<SpaceGroupedProjects
+							groups={spaceGroups}
+							spaceOrder={spaceGroups.filter((g) => g.space !== null).map((g) => g.space!.id)}
+							sensitiveProjectIds={sensitiveProjectIds}
+							taskCountOf={(projectId) => (tasksByProject.get(projectId) ?? []).length}
+							renderProject={(p, ctx) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id), ctx)}
+							renderBottomBlockProject={(p) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id))}
+						/>
+					</>
+				)}
 
 				{/* Narrow-viewport per-project action sheet — the touch surface for
 				    actions that are hover-only / drag-only on desktop. */}

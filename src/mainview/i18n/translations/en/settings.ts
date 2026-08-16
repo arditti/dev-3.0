@@ -655,6 +655,7 @@ const settings = {
 	"spaces.autoDeleted": "Space “{name}” was removed — its last project left",
 	"spaces.failedCreate": "Failed to create space: {error}",
 	"spaces.failedUpdate": "Failed to update spaces: {error}",
+	"spaces.reorderSpace": "Drag to reorder spaces",
 } as const;
 
 export default settings;

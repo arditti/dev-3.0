@@ -212,6 +212,7 @@ const dashboard = {
 	"memory.bannerLoaded_other": "Esta máquina ya está cargada: {count} tareas más le costarán.",
 	"memory.bannerOutOfRoom_one": "Esta máquina se ha quedado sin memoria: una tarea más la ralentizará.",
 	"memory.bannerOutOfRoom_other": "Esta máquina se ha quedado sin memoria: {count} tareas más la ralentizarán.",
+	"dashboard.noSpaceGroup": "Otros proyectos",
 };
 
 export default dashboard;

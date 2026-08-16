@@ -215,6 +215,7 @@ const dashboard = {
 	"memory.bannerLoaded_other": "This machine is already loaded — {count} more tasks are a lot to ask of it.",
 	"memory.bannerOutOfRoom_one": "This machine is out of memory — one more task will likely make it crawl.",
 	"memory.bannerOutOfRoom_other": "This machine is out of memory — {count} more tasks will likely make it crawl.",
+	"dashboard.noSpaceGroup": "Other projects",
 } as const;
 
 export default dashboard;
