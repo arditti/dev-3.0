@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { atomicWriteFile } from "./data";
 import { withFileLock } from "./file-lock";
 import { DEV3_HOME } from "./paths";
-import { EMPTY_SPACES_FILE, type Space, type SpacesFile } from "../shared/types";
+import type { Space, SpacesFile } from "../shared/types";
 
 // Additive sibling file (AGENTS.md on-disk rule 5): older app versions never
 // read it, and it is not created until the user makes the first space.
