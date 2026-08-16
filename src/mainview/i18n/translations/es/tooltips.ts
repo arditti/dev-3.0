@@ -66,7 +66,6 @@ export const tooltips = {
 	// Active tasks sidebar
 	"ttip.sidebar.scopeProject": "Mostrar solo las tareas activas de este proyecto.",
 	"ttip.sidebar.scopeGlobal": "Mostrar tareas activas de todos los proyectos — las tarjetas llevan la insignia del proyecto.",
-	"ttip.sidebar.scopeAttention": "Solo tareas esperando tu respuesta — revisiones y preguntas — en todos los proyectos.",
 	"ttip.sidebar.hide": "La terminal ocupa todo el ancho. Recupera el panel con el mismo icono en la esquina superior derecha de la barra de la tarea.",
 	"ttip.filter.funnel": "Filtra la lista por prioridad, estado, etiquetas o agente. Los valores marcados se convierten en tokens del campo de búsqueda.",
 

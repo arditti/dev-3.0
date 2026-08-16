@@ -68,7 +68,6 @@ export const tooltips = {
 	// Active tasks sidebar
 	"ttip.sidebar.scopeProject": "Show active tasks from this project only.",
 	"ttip.sidebar.scopeGlobal": "Show active tasks from every project — cards get a project badge.",
-	"ttip.sidebar.scopeAttention": "Only tasks waiting for your input — reviews and questions — across all projects.",
 	"ttip.sidebar.hide": "The terminal takes the full width. Bring the panel back with the same icon at the top right of the task toolbar.",
 	"ttip.filter.funnel": "Filter the list by priority, status, labels or agent. Checked values become tokens in the search field.",
 
