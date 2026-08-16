@@ -13,6 +13,7 @@ import { addAutomation, deleteAutomation, loadAutomations, updateAutomation } fr
 import { createAgentRequest, type AgentLaunchChoice } from "./agent-requests";
 import { deliverLaunchHandoff } from "./agent-launch-handoff";
 import * as data from "./data";
+import { loadSpacesFile } from "./spaces-data";
 import { createScratchTask, deleteTask, getPushMessage, getPushMessageLocal, launchTaskWithAgentChoice, moveTask, notifyFromCliDesktop, isAppForeground, getActiveContext, isNotificationSuppressed, pushCliAttention, pushCliToast, pushCliShowImage, pushCliShowArtifact, setFocusMode, clearMergeNotification } from "./rpc-handlers";
 import { getDevServerStatus, runDevServer, stopDevServer, restartDevServer } from "./rpc-handlers/tmux-pty";
 import { getTmuxLayout } from "./pty-server";
@@ -429,6 +430,10 @@ const handlers: Record<string, Handler> = {
 			} else if (event === "projectUpdated" && projectId) {
 				const project = await data.getProject(projectId);
 				localPush("projectUpdated", { project });
+			} else if (event === "spacesUpdated") {
+				// Re-read locally: the identity-checked cache sees the peer's write.
+				const file = await loadSpacesFile();
+				localPush("spacesUpdated", { file });
 			}
 		} catch (err) {
 			log.debug("_notify handler error (non-fatal)", { event, error: String(err) });

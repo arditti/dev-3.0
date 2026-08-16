@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { atomicWriteFile } from "./data";
 import { withFileLock } from "./file-lock";
@@ -11,7 +11,9 @@ const SPACES_FILE = `${DEV3_HOME}/spaces.json`;
 
 export class SpaceValidationError extends Error {}
 
-let cached: SpacesFile | null = null;
+// Identity-validated cache (same idea as data.ts): another running instance
+// may rewrite the file, so a hit is only valid while mtime+size match.
+let cached: { value: SpacesFile; mtimeMs: number; size: number } | null = null;
 
 /** Test-only. */
 export function _resetSpacesCache(): void {
@@ -23,19 +25,22 @@ function emptyFile(): SpacesFile {
 }
 
 async function rawLoad(): Promise<SpacesFile> {
-	if (cached) return structuredClone(cached);
-	let content: string;
+	let identity: { mtimeMs: number; size: number };
 	try {
-		content = await readFile(SPACES_FILE, "utf8");
+		const s = await stat(SPACES_FILE);
+		identity = { mtimeMs: s.mtimeMs, size: s.size };
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyFile();
 		throw err;
 	}
-	const parsed = JSON.parse(content) as SpacesFile;
+	if (cached && cached.mtimeMs === identity.mtimeMs && cached.size === identity.size) {
+		return structuredClone(cached.value);
+	}
+	const parsed = JSON.parse(await readFile(SPACES_FILE, "utf8")) as SpacesFile;
 	if (parsed.version !== 1 || !Array.isArray(parsed.spaces) || !Array.isArray(parsed.order)) {
 		throw new Error(`Unsupported spaces.json shape (version ${String(parsed.version)})`);
 	}
-	cached = parsed;
+	cached = { value: parsed, ...identity };
 	return structuredClone(parsed);
 }
 

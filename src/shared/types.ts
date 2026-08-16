@@ -3331,6 +3331,34 @@ export type AppRPCSchema = {
 				params: { projectIds: string[] };
 				response: Project[];
 			};
+			getSpaces: {
+				params: Record<string, never>;
+				response: SpacesFile;
+			};
+			createSpace: {
+				params: { name: string; projectIds: string[] };
+				response: Space;
+			};
+			renameSpace: {
+				params: { spaceId: string; name: string };
+				response: Space;
+			};
+			deleteSpace: {
+				params: { spaceId: string };
+				response: void;
+			};
+			setProjectSpaces: {
+				params: { projectId: string; spaceIds: string[] };
+				response: { file: SpacesFile; autoDeleted: Space[] };
+			};
+			reorderSpaces: {
+				params: { order: string[] };
+				response: SpacesFile;
+			};
+			reorderSpaceProjects: {
+				params: { spaceId: string; projectIds: string[] };
+				response: Space;
+			};
 			listDirectory: {
 				params: { path?: string | null; includeFiles?: boolean; showHidden?: boolean };
 				response: FolderListing;
@@ -4531,6 +4559,7 @@ export type AppRPCSchema = {
 		messages: {
 			taskUpdated: { projectId: string; task: Task };
 			projectUpdated: { project: Project };
+			spacesUpdated: { file: SpacesFile };
 			taskSound: { status: "completed" | "cancelled"; taskId: string };
 			ptyDied: { taskId: string };
 			projectPtyDied: { projectId: string };
