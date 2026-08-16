@@ -637,6 +637,24 @@ const settings = {
 	"catalog.roleSubagentHint": "What Codex hands its parallel subagents.",
 	"catalog.roleReview": "Review model",
 	"catalog.roleReviewHint": "Used by Codex's /review command.",
+	// Spaces
+	"spaces.sectionTitle": "Spaces",
+	"spaces.sectionDesc": "Group this project into one or more Spaces. Spaces organize the dashboard; they never move files or change the board.",
+	"spaces.fieldLabel": "Spaces",
+	"spaces.none": "No spaces",
+	"spaces.edit": "Edit…",
+	"spaces.newSpace": "New Space",
+	"spaces.namePlaceholder": "Space name",
+	"spaces.selectProjects": "Projects in this space",
+	"spaces.noProjects": "No projects to add",
+	"spaces.create": "Create",
+	"spaces.cancel": "Cancel",
+	"spaces.searchPlaceholder": "Search or create…",
+	"spaces.noSpaces": "No spaces yet — type a name to create one",
+	"spaces.createSpace": "Create space “{name}”",
+	"spaces.autoDeleted": "Space “{name}” was removed — its last project left",
+	"spaces.failedCreate": "Failed to create space: {error}",
+	"spaces.failedUpdate": "Failed to update spaces: {error}",
 } as const;
 
 export default settings;

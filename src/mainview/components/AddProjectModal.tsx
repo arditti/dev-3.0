@@ -10,6 +10,7 @@ import posthog from "../posthog";
 import { openFolderPicker, openFolderPickerMulti } from "../folder-picker";
 import { toast } from "../toast";
 import { useFocusTrap } from "../utils/useFocusTrap";
+import ProjectSpacesField from "./ProjectSpacesField";
 
 interface AddProjectModalProps {
 	dispatch: Dispatch<AppAction>;
@@ -31,8 +32,20 @@ function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
 	const [initializing, setInitializing] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [cloneOutput, setCloneOutput] = useState<string[]>([]);
+	const [pendingSpaceIds, setPendingSpaceIds] = useState<string[]>([]);
 	const cloneProgressIdRef = useRef<string | null>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
+
+	// Membership is applied after the project exists; failures only toast —
+	// the project itself was created fine.
+	async function applyPendingSpaces(projectId: string) {
+		if (pendingSpaceIds.length === 0) return;
+		try {
+			await api.request.setProjectSpaces({ projectId, spaceIds: pendingSpaceIds });
+		} catch (err) {
+			toast.error(t("spaces.failedUpdate", { error: String(err) }), { source: "dashboard" });
+		}
+	}
 
 	useEffect(() => {
 		function onCloneProgress(e: Event) {
@@ -82,6 +95,7 @@ function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
 					const result = await api.request.addProject({ path: folder });
 					if (result.ok) {
 						dispatch({ type: "addProject", project: result.project });
+						void applyPendingSpaces(result.project.id);
 						trackEvent("project_added", { source: "local" });
 						posthog.capture("project_added", { source: "local" });
 						anySucceeded = true;
@@ -127,6 +141,7 @@ function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
 			const result = await api.request.initAndAddProject({ path: folder });
 			if (result.ok) {
 				dispatch({ type: "addProject", project: result.project });
+				void applyPendingSpaces(result.project.id);
 				trackEvent("project_added", { source: "init" });
 				posthog.capture("project_added", { source: "init" });
 				onClose();
@@ -177,6 +192,7 @@ function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
 			});
 			if (result.ok) {
 				dispatch({ type: "addProject", project: result.project });
+				void applyPendingSpaces(result.project.id);
 				trackEvent("project_added", { source: "clone" });
 				posthog.capture("project_added", { source: "clone" });
 				onClose();
@@ -416,6 +432,12 @@ function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
 						)}
 					</div>
 				)}
+
+				{/* Optional space memberships, applied after the project is created */}
+				<div className="flex items-center gap-3">
+					<span className="text-fg-2 text-sm font-medium flex-shrink-0">{t("spaces.fieldLabel")}</span>
+					<ProjectSpacesField mode="deferred" value={pendingSpaceIds} onChange={setPendingSpaceIds} />
+				</div>
 				</>
 				)}
 

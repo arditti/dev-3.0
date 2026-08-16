@@ -640,6 +640,25 @@ const settings = {
 	"catalog.roleSubagentHint": "То, что Codex отдаёт параллельным сабагентам.",
 	"catalog.roleReview": "Модель ревью",
 	"catalog.roleReviewHint": "Используется командой /review в Codex.",
+
+	// Spaces
+	"spaces.sectionTitle": "Пространства",
+	"spaces.sectionDesc": "Сгруппируйте проект в одно или несколько пространств. Пространства организуют дашборд; они не перемещают файлы и не меняют доску.",
+	"spaces.fieldLabel": "Пространства",
+	"spaces.none": "Без пространства",
+	"spaces.edit": "Изменить…",
+	"spaces.newSpace": "Новое пространство",
+	"spaces.namePlaceholder": "Название пространства",
+	"spaces.selectProjects": "Проекты в этом пространстве",
+	"spaces.noProjects": "Нет проектов для добавления",
+	"spaces.create": "Создать",
+	"spaces.cancel": "Отмена",
+	"spaces.searchPlaceholder": "Найти или создать…",
+	"spaces.noSpaces": "Пространств пока нет — введите название, чтобы создать",
+	"spaces.createSpace": "Создать пространство «{name}»",
+	"spaces.autoDeleted": "Пространство «{name}» удалено — из него ушёл последний проект",
+	"spaces.failedCreate": "Не удалось создать пространство: {error}",
+	"spaces.failedUpdate": "Не удалось обновить пространства: {error}",
 };
 
 export default settings;

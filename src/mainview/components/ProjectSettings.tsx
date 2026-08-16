@@ -13,6 +13,7 @@ import AgentConfigPicker from "./AgentConfigPicker";
 import AutomationsPanel from "./AutomationsPanel";
 import ColorSwatchPicker from "./ColorSwatchPicker";
 import SettingsSection from "./global-settings/SettingsSection";
+import ProjectSpacesField from "./ProjectSpacesField";
 import { matchesBranchQuery } from "./BranchSelector";
 import type { NavigationGuard } from "../navigation-guard";
 
@@ -1874,6 +1875,13 @@ function ProjectSettings({
 									{t("labels.addLabel")}
 								</AddRowButton>
 							</div>
+							</SettingsSection>
+
+							<SettingsSection
+								title={t("spaces.sectionTitle")}
+								description={t("spaces.sectionDesc")}
+							>
+							<ProjectSpacesField projectId={project.id} />
 							</SettingsSection>
 
 							<SettingsSection

@@ -637,6 +637,25 @@ const settings = {
 	"catalog.roleSubagentHint": "Lo que Codex entrega a sus subagentes paralelos.",
 	"catalog.roleReview": "Modelo de revisión",
 	"catalog.roleReviewHint": "Lo usa el comando /review de Codex.",
+
+	// Spaces
+	"spaces.sectionTitle": "Espacios",
+	"spaces.sectionDesc": "Agrupa este proyecto en uno o varios Espacios. Los Espacios organizan el panel; nunca mueven archivos ni cambian el tablero.",
+	"spaces.fieldLabel": "Espacios",
+	"spaces.none": "Sin espacios",
+	"spaces.edit": "Editar…",
+	"spaces.newSpace": "Nuevo espacio",
+	"spaces.namePlaceholder": "Nombre del espacio",
+	"spaces.selectProjects": "Proyectos en este espacio",
+	"spaces.noProjects": "No hay proyectos para añadir",
+	"spaces.create": "Crear",
+	"spaces.cancel": "Cancelar",
+	"spaces.searchPlaceholder": "Buscar o crear…",
+	"spaces.noSpaces": "Aún no hay espacios — escribe un nombre para crear uno",
+	"spaces.createSpace": "Crear espacio “{name}”",
+	"spaces.autoDeleted": "El espacio “{name}” se eliminó — su último proyecto lo dejó",
+	"spaces.failedCreate": "No se pudo crear el espacio: {error}",
+	"spaces.failedUpdate": "No se pudieron actualizar los espacios: {error}",
 };
 
 export default settings;
