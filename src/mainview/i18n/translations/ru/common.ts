@@ -129,6 +129,7 @@ const common = {
 	"sidebar.hide": "Скрыть активные задачи",
 	"sidebar.scopeProject": "Только этот проект",
 	"sidebar.scopeGlobal": "Все проекты",
+	"sidebar.scopeSpace": "Пространства этого проекта",
 	"sidebar.scopeToggleTitle": "Переключить область задач (этот проект / все проекты)",
 	"sidebar.globalLoading": "Загрузка задач изо всех проектов…",
 	"sidebar.unknownProject": "Неизвестный проект",

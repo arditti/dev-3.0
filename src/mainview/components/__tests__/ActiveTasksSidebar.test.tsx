@@ -30,6 +30,7 @@ vi.mock("../../rpc", () => ({
 		request: {
 			getTerminalPreview: vi.fn(),
 			getAllProjectTasks: vi.fn(() => Promise.resolve([])),
+			getSpaces: vi.fn(() => Promise.resolve({ version: 1, spaces: [], order: [] })),
 			setTaskPriority: vi.fn(() => Promise.resolve([])),
 			// Feature-discovery tip rotation (useTipRotation).
 			getGlobalSettings: vi.fn(() => Promise.resolve({ tipsDisabled: true })),
@@ -1138,5 +1139,104 @@ describe("ActiveTasksSidebar — native terminal backend mark", () => {
 		renderSidebar(makeTask());
 		expect(screen.queryByTestId("sidebar-native-backend-t1")).toBeNull();
 		expect(screen.getByRole("button", { name: "Привет! как сам?" })).toBeInTheDocument();
+	});
+});
+
+describe("ActiveTasksSidebar — space scope", () => {
+	const otherProject: Project = {
+		id: "p2",
+		name: "Sibling Project",
+		path: "/tmp/sibling",
+		setupScript: "",
+		devScript: "",
+		cleanupScript: "",
+		defaultBaseBranch: "main",
+		createdAt: "2025-01-01T00:00:00Z",
+	};
+	const strangerProject: Project = { ...otherProject, id: "p3", name: "Stranger Project", path: "/tmp/stranger" };
+
+	function mockSpaces(projectIds: string[][]) {
+		return {
+			version: 1 as const,
+			spaces: projectIds.map((ids, i) => ({
+				id: `sp_${i}`,
+				name: `Space ${i}`,
+				parentId: null,
+				projectIds: ids,
+				createdAt: 1,
+			})),
+			order: projectIds.map((_, i) => `sp_${i}`),
+		};
+	}
+
+	function renderSidebarWith(allProjects: Project[]) {
+		return render(
+			<I18nProvider>
+				<ActiveTasksSidebar
+					project={project}
+					tasks={[makeTask()]}
+					allProjects={allProjects}
+					activeTaskId="t1"
+					dispatch={vi.fn()}
+					navigate={vi.fn()}
+					agents={[claudeAgent]}
+					bellCounts={new Map()}
+					taskPorts={new Map()}
+				/>
+			</I18nProvider>,
+		);
+	}
+
+	it("shows tasks only from projects sharing a space with the current one", async () => {
+		const user = userEvent.setup();
+		const { api } = await import("../../rpc");
+		(api.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockSpaces([["p1", "p2"]]));
+		const siblingTask = makeTask({
+			id: "t-sib", seq: 200, projectId: "p2",
+			title: "Sibling task", description: "Sibling task",
+			groupId: null as unknown as string, variantIndex: null,
+		});
+		const strangerTask = makeTask({
+			id: "t-str", seq: 201, projectId: "p3",
+			title: "Stranger task", description: "Stranger task",
+			groupId: null as unknown as string, variantIndex: null,
+		});
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask()] },
+			{ projectId: "p2", tasks: [siblingTask] },
+			{ projectId: "p3", tasks: [strangerTask] },
+		]);
+
+		renderSidebarWith([project, otherProject, strangerProject]);
+
+		const spaceBtn = await screen.findByTestId("sidebar-scope-space");
+		await waitFor(() => expect(spaceBtn).not.toHaveAttribute("aria-disabled"));
+		await user.click(spaceBtn);
+
+		await waitFor(() => expect(screen.getByText("Sibling task")).toBeInTheDocument());
+		expect(screen.queryByText("Stranger task")).not.toBeInTheDocument();
+		// Foreign rows carry the project badge.
+		expect(screen.getByTestId("sidebar-project-badge-t-sib")).toHaveTextContent("Sibling Project");
+		expect(localStorage.getItem("dev3-sidebar-scope")).toBe("space");
+	});
+
+	it("disables the space button when the current project is in no space", async () => {
+		const { api } = await import("../../rpc");
+		(api.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockSpaces([["p2"]]));
+		renderSidebarWith([project, otherProject]);
+		const spaceBtn = await screen.findByTestId("sidebar-scope-space");
+		await waitFor(() => expect(spaceBtn).toHaveAttribute("aria-disabled", "true"));
+	});
+
+	it("falls back to the project scope when the stored scope is space but the project has no memberships", async () => {
+		const { api } = await import("../../rpc");
+		(api.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockSpaces([["p2"]]));
+		localStorage.setItem("dev3-sidebar-scope", "space");
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask()] },
+		]);
+		renderSidebarWith([project, otherProject]);
+		// The project's own task list (the props-driven project scope) renders.
+		await waitFor(() => expect(screen.getByText("Привет! как сам?")).toBeInTheDocument());
 	});
 });

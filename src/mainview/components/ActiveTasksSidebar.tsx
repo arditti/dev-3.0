@@ -21,8 +21,10 @@ import { getTaskAgentMeta } from "../utils/taskAgentMeta";
 import Tooltip from "./Tooltip";
 import { PanelLeftIcon } from "./TaskIcons";
 import ActiveTaskRow from "./ActiveTaskRow";
+import { useSpaces } from "../useSpaces";
+import { spaceSiblingProjectIds } from "../utils/spaceScope";
 
-type SidebarScope = "project" | "global";
+type SidebarScope = "project" | "global" | "space";
 const LS_SIDEBAR_SCOPE = "dev3-sidebar-scope";
 
 /** Build a translucent fill from a "#rrggbb" status color for subtle tints. */
@@ -36,7 +38,7 @@ function statusTint(hex: string, alpha: number): string {
 function readScope(): SidebarScope {
 	try {
 		const v = localStorage.getItem(LS_SIDEBAR_SCOPE);
-		if (v === "global" || v === "project") return v;
+		if (v === "global" || v === "project" || v === "space") return v;
 	} catch { /* ignore */ }
 	return "project";
 }
@@ -130,11 +132,18 @@ function ActiveTasksSidebar({
 	const [globalTasks, setGlobalTasks] = useState<Task[]>([]);
 	const [globalLoading, setGlobalLoading] = useState(false);
 	const searchRef = useRef<HTMLInputElement>(null);
+	const { spaces, loading: spacesLoading } = useSpaces();
+
+	// null = the current project is in no space → the button disables and a
+	// stored "space" scope falls back to project below.
+	const siblingIds = useMemo(() => spaceSiblingProjectIds(spaces, project.id), [spaces, project.id]);
 
 	const setScope = useCallback((next: SidebarScope) => {
 		setScopeState(next);
 		writeScope(next);
 	}, []);
+
+	const effectiveScope: SidebarScope = scope === "space" && siblingIds === null && !spacesLoading ? "project" : scope;
 
 	// Ctrl/Cmd+F focuses the search input when sidebar is visible
 	useEffect(() => {
@@ -156,7 +165,7 @@ function ActiveTasksSidebar({
 	// Loading spinner only shows in scoped views so project-scope mounts are silent.
 	useEffect(() => {
 		let cancelled = false;
-		const isScoped = scope === "global";
+		const isScoped = effectiveScope !== "project";
 		if (isScoped) setGlobalLoading(true);
 		(async () => {
 			try {
@@ -178,11 +187,11 @@ function ActiveTasksSidebar({
 		return () => {
 			cancelled = true;
 		};
-	}, [scope]);
+	}, [effectiveScope]);
 
 	// Keep global tasks live across all projects.
 	useEffect(() => {
-		if (scope !== "global") return;
+		if (effectiveScope === "project") return;
 		function onTaskUpdated(e: Event) {
 			const { task } = (e as CustomEvent).detail as { task: Task };
 			setGlobalTasks((prev) => {
@@ -206,11 +215,14 @@ function ActiveTasksSidebar({
 		}
 		window.addEventListener("rpc:taskUpdated", onTaskUpdated);
 		return () => window.removeEventListener("rpc:taskUpdated", onTaskUpdated);
-	}, [scope]);
+	}, [effectiveScope]);
 
-	const sourceTasks = scope === "global" ? globalTasks : tasks;
+	const sourceTasks = effectiveScope === "project" ? tasks : globalTasks;
 
 	let activeTasks = sourceTasks.filter((task) => ACTIVE_STATUSES.includes(task.status));
+	if (effectiveScope === "space" && siblingIds) {
+		activeTasks = activeTasks.filter((task) => siblingIds.has(task.projectId));
+	}
 
 	const projectById = useMemo(() => {
 		const map = new Map<string, Project>();
@@ -319,7 +331,12 @@ function ActiveTasksSidebar({
 	// scope, just the current one otherwise — mirrors the kanban's column order.
 	const orderedCustomColumns = useMemo(() => {
 		const cols: { projectId: string; columnId: string }[] = [];
-		const projectsToScan = scope === "global" ? Array.from(projectById.values()) : [project];
+		const projectsToScan =
+			effectiveScope === "global"
+				? Array.from(projectById.values())
+				: effectiveScope === "space" && siblingIds
+					? Array.from(projectById.values()).filter((p) => siblingIds.has(p.id))
+					: [project];
 		for (const p of projectsToScan) {
 			for (const col of p.customColumns ?? []) cols.push({ projectId: p.id, columnId: col.id });
 		}
@@ -329,7 +346,7 @@ function ActiveTasksSidebar({
 	// Readiness tiers: NEEDS YOU → custom columns → WAITING. Grouping +
 	// within-tier ordering is a pure function so it is unit-tested without
 	// rendering; here we only map it to header chrome.
-	const tiers = groupTasksIntoTiers(activeTasks, { scope, orderedCustomColumns, sortOrder });
+	const tiers = groupTasksIntoTiers(activeTasks, { scope: effectiveScope, orderedCustomColumns, sortOrder });
 	const grouped: SidebarGroup[] = tiers.map((tier) => {
 		if (tier.kind === "needs-you") {
 			return {
@@ -413,6 +430,32 @@ function ActiveTasksSidebar({
 							>
 								{/* Nerd Font: nf-fa-folder_open_o (U+F115) \u2192 nf-fa-folder_open (U+F07C) */}
 								<ScopeGlyph outline={"\uF115"} filled={"\uF07C"} active={scope === "project"} />
+							</button>
+						</Tooltip>
+						{/* Ring \u2014 the current project's spaces (union of sibling projects).
+						    Disabled when the project belongs to no space. */}
+						<Tooltip
+							content={t("sidebar.scopeSpace")}
+							detail={siblingIds === null ? t("ttip.sidebar.scopeSpaceDisabled") : t("ttip.sidebar.scopeSpace")}
+							placement="bottom"
+						>
+							<button
+								type="button"
+								onClick={() => siblingIds !== null && setScope("space")}
+								aria-pressed={scope === "space"}
+								aria-disabled={siblingIds === null || undefined}
+								aria-label={t("sidebar.scopeSpace")}
+								className={`${SCOPE_BUTTON_CLASS} ${
+									siblingIds === null
+										? "text-fg-muted/40 cursor-not-allowed"
+										: scope === "space"
+											? "text-fg"
+											: "text-fg-muted hover:text-fg-2"
+								}`}
+								data-testid="sidebar-scope-space"
+							>
+								{/* Nerd Font: nf-cod-circle_large_outline (U+EABC) \u2192 nf-cod-circle_large_filled (U+EBB5) */}
+								<ScopeGlyph outline={"\uEABC"} filled={"\uEBB5"} active={scope === "space"} />
 							</button>
 						</Tooltip>
 						{/* Globe \u2014 all projects */}
@@ -504,7 +547,7 @@ function ActiveTasksSidebar({
 
 			{/* Task list */}
 			<div className="flex-1 overflow-y-auto overflow-x-hidden" data-help-id="sidebar.active-tasks">
-				{scope === "global" && globalLoading && grouped.length === 0 ? (
+				{effectiveScope !== "project" && globalLoading && grouped.length === 0 ? (
 					<div className="px-3 py-6 text-center text-xs text-fg-muted">
 						{t("sidebar.globalLoading")}
 					</div>
@@ -564,7 +607,7 @@ function ActiveTasksSidebar({
 									.map((id) => labelsPool.find((l) => l.id === id))
 									.filter(Boolean) as typeof projectLabels;
 								const groupMembers = task.groupId ? siblingMap.get(task.groupId) ?? [task] : [task];
-								const showProjectBadge = scope === "global" && task.projectId !== project.id;
+								const showProjectBadge = effectiveScope !== "project" && task.projectId !== project.id;
 
 								return (
 									<div key={task.id}>

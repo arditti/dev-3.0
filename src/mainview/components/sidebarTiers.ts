@@ -40,12 +40,13 @@ export interface OrderedCustomColumn {
 }
 
 export interface TierGroupingContext {
-	scope: "project" | "global";
+	/** `space` groups exactly like `global`; the caller pre-filters the pool. */
+	scope: "project" | "global" | "space";
 	/** Direction of the in-band activity sort (global setting). */
 	sortOrder: TaskSortOrder;
 	/** Custom columns in the order their tiers should render. For project scope
-	 *  this is the current project's columns; for global scope, every project's
-	 *  columns concatenated. */
+	 *  this is the current project's columns; for global/space scope, the
+	 *  in-scope projects' columns concatenated. */
 	orderedCustomColumns: OrderedCustomColumn[];
 }
 
