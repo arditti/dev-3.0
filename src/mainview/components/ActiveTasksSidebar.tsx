@@ -22,7 +22,7 @@ import Tooltip from "./Tooltip";
 import { PanelLeftIcon } from "./TaskIcons";
 import ActiveTaskRow from "./ActiveTaskRow";
 
-type SidebarScope = "project" | "global" | "attention";
+type SidebarScope = "project" | "global";
 const LS_SIDEBAR_SCOPE = "dev3-sidebar-scope";
 
 /** Build a translucent fill from a "#rrggbb" status color for subtle tints. */
@@ -36,7 +36,7 @@ function statusTint(hex: string, alpha: number): string {
 function readScope(): SidebarScope {
 	try {
 		const v = localStorage.getItem(LS_SIDEBAR_SCOPE);
-		if (v === "global" || v === "project" || v === "attention") return v;
+		if (v === "global" || v === "project") return v;
 	} catch { /* ignore */ }
 	return "project";
 }
@@ -152,12 +152,11 @@ function ActiveTasksSidebar({
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [disableGlobalFindShortcut]);
 
-	// Always fetch global tasks (for the attention badge) and re-fetch when
-	// switching into global/attention scope. Loading spinner only shows in
-	// scoped views so project-scope mounts are silent.
+	// Always fetch global tasks and re-fetch when switching into global scope.
+	// Loading spinner only shows in scoped views so project-scope mounts are silent.
 	useEffect(() => {
 		let cancelled = false;
-		const isScoped = scope === "global" || scope === "attention";
+		const isScoped = scope === "global";
 		if (isScoped) setGlobalLoading(true);
 		(async () => {
 			try {
@@ -183,7 +182,7 @@ function ActiveTasksSidebar({
 
 	// Keep global tasks live across all projects.
 	useEffect(() => {
-		if (scope !== "global" && scope !== "attention") return;
+		if (scope !== "global") return;
 		function onTaskUpdated(e: Event) {
 			const { task } = (e as CustomEvent).detail as { task: Task };
 			setGlobalTasks((prev) => {
@@ -209,25 +208,9 @@ function ActiveTasksSidebar({
 		return () => window.removeEventListener("rpc:taskUpdated", onTaskUpdated);
 	}, [scope]);
 
-	const sourceTasks = (scope === "global" || scope === "attention") ? globalTasks : tasks;
-
-	// The attention scope and `is:attention` facet share the same status rule.
-	// PR Review belongs in this queue whether or not it currently has a bell.
-	const isAttention = useCallback((task: Task) => isAttentionTask(task), []);
-
-	// Count of attention tasks across all available data (global when loaded, else project).
-	const attentionCount = useMemo(() => {
-		const pool = globalTasks.length > 0 ? globalTasks : tasks;
-		return pool.filter(isAttention).length;
-	}, [globalTasks, tasks, isAttention]);
+	const sourceTasks = scope === "global" ? globalTasks : tasks;
 
 	let activeTasks = sourceTasks.filter((task) => ACTIVE_STATUSES.includes(task.status));
-	// Attention scope keeps only tasks needing the user (funnel pool + search
-	// operate on this subset). The priority-first ordering is applied by
-	// `groupTasksIntoTiers` below — same sort as every other tier.
-	if (scope === "attention") {
-		activeTasks = activeTasks.filter(isAttention);
-	}
 
 	const projectById = useMemo(() => {
 		const map = new Map<string, Project>();
@@ -240,7 +223,7 @@ function ActiveTasksSidebar({
 
 	// Facet resolver + funnel pool for the token-DSL filter. Labels/statuses are
 	// resolved per the task's OWN project (the pool may be cross-project in
-	// global/attention scope). The sidebar has no per-task PR number.
+	// global scope). The sidebar has no per-task PR number.
 	const resolver: FacetResolver = useMemo(() => ({
 		agents,
 		labelsFor: (task) => {
@@ -255,8 +238,8 @@ function ActiveTasksSidebar({
 		},
 		priorityFor: (task) => task.priority ?? DEFAULT_PRIORITY,
 		hasPortFor: (task) => (taskPorts.get(task.id)?.length ?? 0) > 0,
-		isAttentionFor: (task) => isAttention(task),
-	}), [agents, projectById, taskPorts, isAttention, t]);
+		isAttentionFor: (task) => isAttentionTask(task),
+	}), [agents, projectById, taskPorts, t]);
 
 	const priorityCandidates = useMemo<FilterFunnelOption[]>(
 		() => ALL_PRIORITIES.map((p) => ({ facet: "priority" as const, value: p, label: `${p} — ${t(PRIORITY_NAME_KEYS[p])}` })),
@@ -322,13 +305,11 @@ function ActiveTasksSidebar({
 		[projectById, statusColors],
 	);
 
-	// A rendered readiness-tier block. `showHeader` is false only for the
-	// attention scope, which renders a single flat list with no header.
+	// A rendered readiness-tier block.
 	interface SidebarGroup {
 		key: string;
 		label: string;
 		color: string;
-		showHeader: boolean;
 		tasks: Task[];
 	}
 
@@ -345,18 +326,17 @@ function ActiveTasksSidebar({
 		return cols;
 	}, [scope, projectById, project]);
 
-	// Readiness tiers: NEEDS YOU → custom columns → WAITING (attention scope: one
-	// flat NEEDS-YOU list). Grouping + within-tier ordering is a pure function so
-	// it is unit-tested without rendering; here we only map it to header chrome.
+	// Readiness tiers: NEEDS YOU → custom columns → WAITING. Grouping +
+	// within-tier ordering is a pure function so it is unit-tested without
+	// rendering; here we only map it to header chrome.
 	const tiers = groupTasksIntoTiers(activeTasks, { scope, orderedCustomColumns, sortOrder });
 	const grouped: SidebarGroup[] = tiers.map((tier) => {
 		if (tier.kind === "needs-you") {
 			return {
 				key: tier.key,
-				label: scope === "attention" ? "" : t("sidebar.tier.needsYou"),
+				label: t("sidebar.tier.needsYou"),
 				// Warm attention hue (the "act now" zone), matching the bell.
 				color: statusColors["user-questions"],
-				showHeader: scope !== "attention",
 				tasks: tier.tasks,
 			};
 		}
@@ -366,7 +346,6 @@ function ActiveTasksSidebar({
 				label: t("sidebar.tier.waiting"),
 				// Neutral grey — nothing needs the user in this zone.
 				color: statusColors["review-by-ai"],
-				showHeader: true,
 				tasks: tier.tasks,
 			};
 		}
@@ -376,7 +355,6 @@ function ActiveTasksSidebar({
 			key: tier.key,
 			label: col?.name ?? "",
 			color: col?.color ?? statusColors["in-progress"],
-			showHeader: true,
 			tasks: tier.tasks,
 		};
 	});
@@ -454,33 +432,6 @@ function ActiveTasksSidebar({
 								<ScopeGlyph outline={"\uEB01"} filled={"\uEB01"} active={scope === "global"} />
 							</button>
 						</Tooltip>
-						{/* Bell \u2014 attention mode: cross-project, filtered to tasks needing user input */}
-						<Tooltip content={t("sidebar.scopeAttention")} detail={t("ttip.sidebar.scopeAttention")} placement="bottom">
-							<button
-								type="button"
-								onClick={() => setScope("attention")}
-								aria-pressed={scope === "attention"}
-								aria-label={t("sidebar.scopeAttention")}
-								className={`relative ${SCOPE_BUTTON_CLASS} ${
-									scope === "attention"
-										? "text-awake"
-										: attentionCount > 0
-											? "text-awake/70 hover:text-awake"
-											: "text-fg-muted hover:text-fg-2"
-								}`}
-								data-testid="sidebar-scope-attention"
-							>
-								{/* Nerd Font: nf-fa-bell_o (U+F0A2) \u2192 nf-fa-bell (U+F0F3) */}
-								<span className={scope !== "attention" && attentionCount > 0 ? "animate-pulse motion-reduce:animate-none" : ""}>
-									<ScopeGlyph outline={"\uF0A2"} filled={"\uF0F3"} active={scope === "attention"} />
-								</span>
-								{attentionCount > 0 && scope !== "attention" && (
-									<span className="absolute -top-1 -right-1 min-w-[0.875rem] h-3.5 flex items-center justify-center px-0.5 rounded-full bg-awake text-nano font-bold text-fg leading-none pointer-events-none">
-										{attentionCount > 9 ? "9+" : attentionCount}
-									</span>
-								)}
-							</button>
-						</Tooltip>
 					</div>
 					{activeTaskId && (
 						<Tooltip content={t("sidebar.hide")} detail={t("ttip.sidebar.hide")} placement="bottom">
@@ -553,7 +504,7 @@ function ActiveTasksSidebar({
 
 			{/* Task list */}
 			<div className="flex-1 overflow-y-auto overflow-x-hidden" data-help-id="sidebar.active-tasks">
-				{(scope === "global" || scope === "attention") && globalLoading && grouped.length === 0 ? (
+				{scope === "global" && globalLoading && grouped.length === 0 ? (
 					<div className="px-3 py-6 text-center text-xs text-fg-muted">
 						{t("sidebar.globalLoading")}
 					</div>
@@ -561,8 +512,6 @@ function ActiveTasksSidebar({
 					<div className="px-3 py-6 text-center text-xs text-fg-muted">
 						{searchQuery.trim() ? (
 							t("sidebar.noSearchResults")
-						) : scope === "attention" ? (
-							t("sidebar.noAttentionTasks")
 						) : (
 							<>
 								<p>{t("sidebar.noActiveTasks")}</p>
@@ -571,18 +520,17 @@ function ActiveTasksSidebar({
 						)}
 					</div>
 				) : (
-					grouped.map(({ key: groupKey, label: groupLabel, color: groupColor, showHeader: groupShowHeader, tasks: groupTasks }, groupIdx) => (
+					grouped.map(({ key: groupKey, label: groupLabel, color: groupColor, tasks: groupTasks }, groupIdx) => (
 						<div key={groupKey}>
 							{/* Solid separator between readiness-tier blocks */}
-							{groupIdx > 0 && groupShowHeader && (
+							{groupIdx > 0 && (
 								<div className="mx-3 border-t border-edge" />
 							)}
 
-							{/* Tier header with count (hidden in attention mode — flat list).
-							    No spinner: the WAITING tier merges working + AI-review + PRs, so
-							    a tier-wide spinner would mislead; the per-card rail busy-flow
-							    animation remains the "agent working" cue. */}
-							{groupShowHeader && <div className="relative px-3 py-1.5 flex items-center gap-2 sticky top-0 bg-base/95 backdrop-blur-sm z-10">
+							{/* Tier header with count. No spinner: the WAITING tier merges
+							    working + AI-review + PRs, so a tier-wide spinner would mislead;
+							    the per-card rail busy-flow animation remains the cue. */}
+							<div className="relative px-3 py-1.5 flex items-center gap-2 sticky top-0 bg-base/95 backdrop-blur-sm z-10">
 								{/* Faint zone wash + left bar so the tier reads as one color zone */}
 								<span
 									className="absolute inset-0 pointer-events-none"
@@ -602,7 +550,7 @@ function ActiveTasksSidebar({
 								<span className="text-dense text-fg-muted" data-testid={`sidebar-tier-count-${groupKey}`}>
 									{groupTasks.length}
 								</span>
-							</div>}
+							</div>
 
 							{/* Tasks in this status */}
 							{groupTasks.map((task, idx) => {
@@ -616,7 +564,7 @@ function ActiveTasksSidebar({
 									.map((id) => labelsPool.find((l) => l.id === id))
 									.filter(Boolean) as typeof projectLabels;
 								const groupMembers = task.groupId ? siblingMap.get(task.groupId) ?? [task] : [task];
-								const showProjectBadge = (scope === "global" || scope === "attention") && task.projectId !== project.id;
+								const showProjectBadge = scope === "global" && task.projectId !== project.id;
 
 								return (
 									<div key={task.id}>
