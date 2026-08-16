@@ -5,6 +5,7 @@
 import type { CodingAgent } from "../shared/types";
 import type { Route } from "./state";
 import { api } from "./rpc";
+import { telemetryEnabled } from "./telemetry";
 import { randomUUID } from "./uuid";
 
 const GA_MEASUREMENT_ID = "G-L1NSQH6FGY";
@@ -192,6 +193,8 @@ function flushEngagementMs(): number {
 }
 
 function sendToGA(events: Array<{ name: string; params?: Record<string, unknown> }>): void {
+	if (!telemetryEnabled()) return;
+
 	// Flush once per hit and attach only to the first event — GA4 sums
 	// engagement_time_msec across events, so repeating it would multi-count the
 	// same interval. Floor at 1 so every hit carries a positive engagement.
@@ -222,6 +225,15 @@ function sendToGA(events: Array<{ name: string; params?: Record<string, unknown>
 
 /** Initialize GA4 with user properties and start heartbeat. */
 export function initAnalytics(appVersion: string): void {
+	// Wired before the telemetry gate: the listeners are local diagnostics first —
+	// logToBackend writes the app's own log file and never leaves the machine. The
+	// GA event they also raise is dropped by sendToGA when telemetry is off.
+	setupErrorTracking();
+
+	// Gated separately from sendToGA: the ipify lookup and the heartbeat interval
+	// below never pass through the transport.
+	if (!telemetryEnabled()) return;
+
 	clientId = getOrCreateClientId();
 	sessionId = getOrCreateSessionId();
 	sessionStartTime = Date.now();
@@ -281,9 +293,6 @@ export function initAnalytics(appVersion: string): void {
 			session_duration_sec: getSessionDurationSec(),
 		});
 	}, HEARTBEAT_INTERVAL_MS);
-
-	// Global error tracking
-	setupErrorTracking();
 }
 
 /** Tear down analytics (clears heartbeat interval). */
