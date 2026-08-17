@@ -130,3 +130,15 @@ describe("SpacesRail — drag to reorder", () => {
 		expect(screen.getByTestId("rail-home")).not.toHaveAttribute("draggable", "true");
 	});
 });
+
+describe("SpacesRail — a single space", () => {
+	it("is not draggable, because there is no order to change", () => {
+		renderRail({ spaces: [spaces[0]] });
+		expect(screen.getByTestId("rail-space-sp_a")).not.toHaveAttribute("draggable", "true");
+	});
+
+	it("stays draggable as soon as a second space exists", () => {
+		renderRail();
+		expect(screen.getByTestId("rail-space-sp_a")).toHaveAttribute("draggable", "true");
+	});
+});

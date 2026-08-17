@@ -66,7 +66,8 @@ function SpacesRail({
 	}
 
 	function dragHandlers(spaceId: string) {
-		if (!onReorder) return {};
+		// A single space has no order to change.
+		if (!onReorder || spaces.length < 2) return {};
 		return {
 			draggable: true,
 			onDragStart: (event: DragEvent<HTMLButtonElement>) => {

@@ -24,6 +24,9 @@ function writeCollapsed(ids: Set<string>) {
 
 /** Per-row reorder wiring, injected so one row renderer serves every context. */
 export interface RowReorderCtx {
+	/** False when the group holds one project — nothing to reorder, so the whole
+	 *  grip + up/down cluster is hidden rather than shown inert. */
+	showReorder: boolean;
 	isDragged: boolean;
 	dragEnabled: boolean;
 	onDragStart: (event: DragEvent<HTMLElement>) => void;
@@ -70,6 +73,8 @@ function SpaceGroupedProjects({
 	onAddProjects,
 }: SpaceGroupedProjectsProps) {
 	const t = useT();
+	// One space alone has no order to change, so its header carries no grip.
+	const spaceCount = groups.filter((g) => g.space !== null).length;
 	const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
 	const [dragged, setDragged] = useState<{ spaceId: string; projectId: string } | null>(null);
 	const [dropTarget, setDropTarget] = useState<{ spaceId: string; projectId: string; side: "before" | "after" } | null>(null);
@@ -116,9 +121,11 @@ function SpaceGroupedProjects({
 
 	function rowCtx(spaceId: string, members: Project[], project: Project, index: number): RowReorderCtx {
 		const isTarget = dropTarget?.spaceId === spaceId && dropTarget.projectId === project.id;
+		const canReorder = members.length > 1;
 		return {
+			showReorder: canReorder,
 			isDragged: dragged?.spaceId === spaceId && dragged.projectId === project.id,
-			dragEnabled: true,
+			dragEnabled: canReorder,
 			onDragStart: (event) => {
 				setDragged({ spaceId, projectId: project.id });
 				event.dataTransfer.setData("text/plain", `space-project:${spaceId}:${project.id}`);
@@ -218,6 +225,7 @@ function SpaceGroupedProjects({
 								void reorderHeaders(source, space.id, side);
 							}}
 						>
+							{spaceCount > 1 && (
 							<span
 								role="presentation"
 								draggable
@@ -237,6 +245,7 @@ function SpaceGroupedProjects({
 									{"\u{F01DB}"}
 								</span>
 							</span>
+						)}
 							<button
 								type="button"
 								onClick={() => toggleCollapsed(space.id)}

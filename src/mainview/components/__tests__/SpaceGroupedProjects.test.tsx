@@ -157,3 +157,57 @@ describe("SpaceGroupedProjects — header details from the mock", () => {
 		);
 	});
 });
+
+describe("SpaceGroupedProjects — nothing to reorder", () => {
+	const soloGroups: DashboardGroup[] = [
+		{ space: sp("sp_solo", "Solo", ["p1"]), projects: [proj("p1")] },
+	];
+
+	function renderWith(groupsArg: DashboardGroup[], renderProject = (p: Project) => <div data-testid={`row-${p.id}`}>{p.name}</div>) {
+		render(
+			<I18nProvider>
+				<SpaceGroupedProjects
+					groups={groupsArg}
+					spaceOrder={groupsArg.filter((g) => g.space).map((g) => g.space!.id)}
+					sensitiveProjectIds={new Set()}
+					needsYouCountOf={() => 0}
+					workingCountOf={() => 0}
+					renderProject={renderProject}
+					renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
+				/>
+			</I18nProvider>,
+		);
+	}
+
+	it("tells a lone project's row not to render reorder controls", () => {
+		const seen: boolean[] = [];
+		renderWith(soloGroups, (p, ctx) => {
+			seen.push(ctx.showReorder);
+			return <div data-testid={`row-${p.id}`}>{p.name}</div>;
+		});
+		expect(seen).toEqual([false]);
+	});
+
+	it("keeps reorder controls for a space holding several projects", () => {
+		const seen: boolean[] = [];
+		renderWith(groups, (p, ctx) => {
+			seen.push(ctx.showReorder);
+			return <div data-testid={`row-${p.id}`}>{p.name}</div>;
+		});
+		// Client X holds two projects; Beta holds one.
+		expect(seen.slice(0, 2)).toEqual([true, true]);
+		expect(seen[2]).toBe(false);
+	});
+
+	it("hides the header grip when only one space is rendered", () => {
+		renderWith(soloGroups);
+		const header = screen.getByTestId("space-header-sp_solo").parentElement!;
+		expect(header.querySelector('[role="presentation"][draggable="true"]')).toBeNull();
+	});
+
+	it("keeps the header grip when several spaces are rendered", () => {
+		renderWith(groups);
+		const header = screen.getByTestId("space-header-sp_a").parentElement!;
+		expect(header.querySelector('[role="presentation"][draggable="true"]')).not.toBeNull();
+	});
+});

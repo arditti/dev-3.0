@@ -424,6 +424,8 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 				<div className={`group flex items-center gap-2 px-3 md:px-5 ${hasActiveTasks ? "py-3" : "py-2.5"} hover:bg-raised-hover transition-colors`}>
 					{/* Reorder cluster — desktop only. On touch, drag and the
 					    step buttons are unusable; reorder lives in the action sheet. */}
+					{/* A grouped row alone in its space has nothing to reorder. */}
+					{(!reorder || reorder.showReorder) && (
 					<div className="hidden md:flex -ml-1.5 items-center gap-0.5">
 						{/* Pointer-only drag affordance. Deliberately NOT a button: it has
 						    no click or key handler, and the step buttons beside it are the
@@ -494,6 +496,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							</span>
 						</button>
 					</div>
+					)}
 					<button
 						type="button"
 						data-hint-id={`project:${project.id}`}
