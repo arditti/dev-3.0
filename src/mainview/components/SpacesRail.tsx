@@ -21,11 +21,6 @@ interface SpacesRailProps {
 	onReorder?: (order: string[]) => void;
 }
 
-/** First letter of the space name, for the neutral square badge (no colour). */
-function initialOf(name: string): string {
-	return (name.trim()[0] ?? "?").toUpperCase();
-}
-
 /**
  * Dashboard rail: All projects, then one row per space, then the computed Home
  * group. Selecting an entry FILTERS the dashboard — it never navigates, so a
@@ -124,9 +119,6 @@ function SpacesRail({
 					className={rowClass(selectedSpaceId === null)}
 					data-testid="rail-all-projects"
 				>
-					<span className="w-5 h-5 flex-shrink-0 rounded bg-raised flex items-center justify-center text-nano font-semibold text-fg-3">
-						{"A"}
-					</span>
 					<span className="flex-1 text-sm truncate">{t("spaces.railAllProjects")}</span>
 					<span className="text-fg-muted text-xs tabular-nums">{totalProjects}</span>
 				</button>
@@ -159,9 +151,6 @@ function SpacesRail({
 									}`}
 								/>
 							)}
-							<span className="w-5 h-5 flex-shrink-0 rounded bg-raised flex items-center justify-center text-nano font-semibold text-fg-3">
-								{initialOf(space.name)}
-							</span>
 							<span className={`flex-1 text-sm truncate ${maskedSpaceIds.has(space.id) ? MASK_CLASS : ""}`}>
 								{space.name}
 							</span>
@@ -177,9 +166,6 @@ function SpacesRail({
 						className={rowClass(selectedSpaceId === HOME_GROUP_ID)}
 						data-testid="rail-home"
 					>
-						<span className="w-5 h-5 flex-shrink-0 rounded bg-raised flex items-center justify-center text-nano font-semibold text-fg-3">
-							{initialOf(t("spaces.homeGroup"))}
-						</span>
 						<span className="flex-1 text-sm truncate">{t("spaces.homeGroup")}</span>
 						<span className="text-fg-muted text-xs tabular-nums">{homeCount}</span>
 					</button>

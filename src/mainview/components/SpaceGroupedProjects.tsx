@@ -263,9 +263,6 @@ function SpaceGroupedProjects({
 								>
 									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
 								</svg>
-								<span className="w-5 h-5 flex-shrink-0 rounded bg-raised flex items-center justify-center text-nano font-semibold text-fg-3">
-									{(space.name.trim()[0] ?? "?").toUpperCase()}
-								</span>
 								<span className={`text-fg-2 text-sm font-semibold truncate ${masked ? MASK_CLASS : ""}`}>
 									{space.name}
 								</span>

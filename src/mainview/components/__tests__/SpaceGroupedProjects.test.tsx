@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "../../i18n";
-import SpaceGroupedProjects from "../SpaceGroupedProjects";
+import SpaceGroupedProjects, { type RowReorderCtx } from "../SpaceGroupedProjects";
 import type { DashboardGroup } from "../../utils/spaceGroups";
 import type { Project, Space } from "../../../shared/types";
 
@@ -93,7 +93,7 @@ describe("SpaceGroupedProjects", () => {
 });
 
 describe("SpaceGroupedProjects — header details from the mock", () => {
-	it("shows a letter badge, the project count, and split need-you / working counts", () => {
+	it("shows the project count and split need-you / working counts, with no letter badge", () => {
 		render(
 			<I18nProvider>
 				<SpaceGroupedProjects
@@ -108,10 +108,14 @@ describe("SpaceGroupedProjects — header details from the mock", () => {
 			</I18nProvider>,
 		);
 		const header = screen.getByTestId("space-header-sp_a");
-		expect(header).toHaveTextContent("A");        // letter badge
 		expect(header).toHaveTextContent("2 projects");
 		expect(header).toHaveTextContent("1 need you");
 		expect(header).toHaveTextContent("2 working");
+		// The name carries the identity; a first-letter badge would only repeat it.
+		const singleLetterNodes = [...header.querySelectorAll("*")].filter(
+			(el) => el.children.length === 0 && /^[A-Z]$/.test((el.textContent ?? "").trim()),
+		);
+		expect(singleLetterNodes).toHaveLength(0);
 	});
 
 	it("offers the add-projects control only when the handler is provided", async () => {
@@ -163,7 +167,12 @@ describe("SpaceGroupedProjects — nothing to reorder", () => {
 		{ space: sp("sp_solo", "Solo", ["p1"]), projects: [proj("p1")] },
 	];
 
-	function renderWith(groupsArg: DashboardGroup[], renderProject = (p: Project) => <div data-testid={`row-${p.id}`}>{p.name}</div>) {
+	function renderWith(
+		groupsArg: DashboardGroup[],
+		renderProject: (project: Project, reorder: RowReorderCtx, groupSpaceId: string | null) => React.ReactNode = (p) => (
+			<div data-testid={`row-${p.id}`}>{p.name}</div>
+		),
+	) {
 		render(
 			<I18nProvider>
 				<SpaceGroupedProjects
