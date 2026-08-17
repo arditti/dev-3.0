@@ -69,6 +69,15 @@ describe("SpacesRail", () => {
 		expect(screen.getByTestId("rail-space-sp_b").querySelector(".streamer-private")).toBeNull();
 	});
 
+	it("masks the count too, not just the name", () => {
+		renderRail({ maskedSpaceIds: new Set(["sp_a"]) });
+		const row = screen.getByTestId("rail-space-sp_a");
+		const readableNumbers = [...row.querySelectorAll("*")].filter(
+			(el) => el.children.length === 0 && /^\d+$/.test((el.textContent ?? "").trim()) && !el.className.includes("streamer-private"),
+		);
+		expect(readableNumbers).toHaveLength(0);
+	});
+
 	it("opens the New Space flow", async () => {
 		const user = userEvent.setup();
 		const props = renderRail();

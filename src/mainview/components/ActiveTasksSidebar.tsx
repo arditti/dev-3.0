@@ -485,7 +485,10 @@ function ActiveTasksSidebar({
 							</button>
 						</Tooltip>
 						{/* Ring \u2014 the current project's spaces (union of sibling projects).
-						    Disabled when the project belongs to no space. */}
+						    Absent until a space exists at all: someone who never opted in
+						    must see yesterday's switcher. Disabled (not hidden) when spaces
+						    exist but this project is in none \u2014 there the tooltip teaches. */}
+						{spaces.length > 0 && (
 						<Tooltip
 							content={t("sidebar.scopeSpace")}
 							detail={siblingIds === null ? t("ttip.sidebar.scopeSpaceDisabled") : t("ttip.sidebar.scopeSpace")}
@@ -510,6 +513,7 @@ function ActiveTasksSidebar({
 								<ScopeGlyph outline={"\uEABC"} filled={"\uEBB5"} active={scope === "space"} />
 							</button>
 						</Tooltip>
+						)}
 						{/* Globe \u2014 all projects */}
 						<Tooltip content={t("sidebar.scopeGlobal")} detail={t("ttip.sidebar.scopeGlobal")} placement="bottom">
 							<button

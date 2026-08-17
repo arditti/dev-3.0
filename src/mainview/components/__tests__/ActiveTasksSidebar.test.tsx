@@ -1220,7 +1220,20 @@ describe("ActiveTasksSidebar — space scope", () => {
 		expect(localStorage.getItem("dev3-sidebar-scope")).toBe("space");
 	});
 
-	it("disables the space button when the current project is in no space", async () => {
+	it("does not render the space button at all when no space exists", async () => {
+		const { api } = await import("../../rpc");
+		(api.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue({ version: 1, spaces: [], order: [] });
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask()] },
+		]);
+		renderSidebarWith([project]);
+		// The switcher a user who never opted in sees: exactly yesterday's two.
+		await waitFor(() => expect(screen.getByTestId("sidebar-scope-project")).toBeInTheDocument());
+		expect(screen.getByTestId("sidebar-scope-global")).toBeInTheDocument();
+		expect(screen.queryByTestId("sidebar-scope-space")).not.toBeInTheDocument();
+	});
+
+	it("disables the space button when spaces exist but the current project is in none", async () => {
 		const { api } = await import("../../rpc");
 		(api.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockSpaces([["p2"]]));
 		renderSidebarWith([project, otherProject]);

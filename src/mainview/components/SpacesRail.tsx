@@ -154,7 +154,11 @@ function SpacesRail({
 							<span className={`flex-1 text-sm truncate ${maskedSpaceIds.has(space.id) ? MASK_CLASS : ""}`}>
 								{space.name}
 							</span>
-							<span className="text-fg-muted text-xs tabular-nums">{projectCountOf(space.id)}</span>
+							{/* The count leaks how much work a private client has in flight, so
+							    it is masked with the name, not left readable beside it. */}
+							<span className={`text-fg-muted text-xs tabular-nums ${maskedSpaceIds.has(space.id) ? MASK_CLASS : ""}`}>
+								{projectCountOf(space.id)}
+							</span>
 						</button>
 					);
 				})}

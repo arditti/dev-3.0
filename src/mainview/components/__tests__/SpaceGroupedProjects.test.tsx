@@ -90,6 +90,27 @@ describe("SpaceGroupedProjects", () => {
 		const beta = screen.getByTestId("space-header-sp_b");
 		expect(beta.querySelector(".streamer-private")).toBeNull();
 	});
+
+	it("masks the counts alongside the name — they say how much work a private client has", () => {
+		render(
+			<I18nProvider>
+				<SpaceGroupedProjects
+					groups={groups}
+					spaceOrder={["sp_a", "sp_b"]}
+					sensitiveProjectIds={new Set(["p2"])}
+					needsYouCountOf={() => 1}
+					workingCountOf={() => 2}
+					renderProject={(p) => <div data-testid={`row-${p.id}`}>{p.name}</div>}
+					renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
+				/>
+			</I18nProvider>,
+		);
+		const masked = screen.getByTestId("space-header-sp_a");
+		const readable = [...masked.querySelectorAll("*")].filter(
+			(el) => el.children.length === 0 && /\d/.test(el.textContent ?? "") && !el.className.includes("streamer-private"),
+		);
+		expect(readable).toHaveLength(0);
+	});
 });
 
 describe("SpaceGroupedProjects — header details from the mock", () => {

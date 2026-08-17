@@ -271,17 +271,17 @@ function SpaceGroupedProjects({
 								<span className={`text-fg-2 text-sm font-semibold truncate ${masked ? MASK_CLASS : ""}`}>
 									{space.name}
 								</span>
-								<span className="text-fg-muted text-xs tabular-nums flex-shrink-0">
+								<span className={`text-fg-muted text-xs tabular-nums flex-shrink-0 ${masked ? MASK_CLASS : ""}`}>
 									{t.plural("spaces.projectCount", group.projects.length)}
 								</span>
 								{needsYou > 0 && (
-									<span className="flex items-center gap-1 flex-shrink-0 text-xs text-fg-3">
+									<span className={`flex items-center gap-1 flex-shrink-0 text-xs text-fg-3 ${masked ? MASK_CLASS : ""}`}>
 										<span aria-hidden="true" className="w-2 h-2 rounded-full bg-awake" />
 										{t("spaces.needYou", { count: String(needsYou) })}
 									</span>
 								)}
 								{working > 0 && (
-									<span className="flex items-center gap-1 flex-shrink-0 text-xs text-fg-3">
+									<span className={`flex items-center gap-1 flex-shrink-0 text-xs text-fg-3 ${masked ? MASK_CLASS : ""}`}>
 										<span aria-hidden="true" className="w-2 h-2 rounded-full bg-accent" />
 										{t("spaces.working", { count: String(working) })}
 									</span>
