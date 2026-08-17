@@ -683,6 +683,16 @@ const settings = {
 	"spaces.filterAll": "Все",
 	"spaces.filterNeedsYou": "Ждут вас",
 	"spaces.acrossAllSpaces": "По всем пространствам",
+	"spaces.menuLabel": "Действия с пространством",
+	"spaces.rename": "Переименовать…",
+	"spaces.renameSave": "Сохранить",
+	"spaces.delete": "Удалить пространство",
+	"spaces.deleteConfirmTitle": "Удалить пространство?",
+	"spaces.deleteConfirmBody": "«{name}» исчезнет с дашборда. Проекты останутся в dev3 и просто потеряют эту группировку.",
+	"spaces.deleteConfirmAction": "Удалить пространство",
+	"spaces.deleted": "Пространство «{name}» удалено",
+	"spaces.failedDelete": "Не удалось удалить пространство: {error}",
+	"spaces.failedRename": "Не удалось переименовать пространство: {error}",
 };
 
 export default settings;

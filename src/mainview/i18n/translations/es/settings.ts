@@ -678,6 +678,16 @@ const settings = {
 	"spaces.filterAll": "Todos",
 	"spaces.filterNeedsYou": "Te esperan",
 	"spaces.acrossAllSpaces": "En todos los espacios",
+	"spaces.menuLabel": "Acciones del espacio",
+	"spaces.rename": "Renombrar espacio…",
+	"spaces.renameSave": "Guardar",
+	"spaces.delete": "Eliminar espacio",
+	"spaces.deleteConfirmTitle": "¿Eliminar el espacio?",
+	"spaces.deleteConfirmBody": "“{name}” desaparecerá del panel. Sus proyectos siguen en dev3 y solo pierden esta agrupación.",
+	"spaces.deleteConfirmAction": "Eliminar espacio",
+	"spaces.deleted": "Espacio “{name}” eliminado",
+	"spaces.failedDelete": "No se pudo eliminar el espacio: {error}",
+	"spaces.failedRename": "No se pudo renombrar el espacio: {error}",
 };
 
 export default settings;

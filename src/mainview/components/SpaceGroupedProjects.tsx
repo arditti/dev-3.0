@@ -5,6 +5,7 @@ import { MASK_CLASS } from "../sensitive-projects";
 import { api } from "../rpc";
 import { toast } from "../toast";
 import { useT } from "../i18n";
+import SpaceHeaderMenu from "./SpaceHeaderMenu";
 
 const LS_COLLAPSED_SPACES = "dev3-collapsed-spaces";
 
@@ -55,6 +56,8 @@ interface SpaceGroupedProjectsProps {
 	renderBottomBlockProject: (project: Project, blockProjects: Project[]) => ReactNode;
 	/** Opens the "add existing projects to this space" flow. */
 	onAddProjects?: (space: Space) => void;
+	onRenameSpace?: (space: Space, name: string) => void;
+	onDeleteSpace?: (space: Space) => void;
 }
 
 /**
@@ -71,6 +74,8 @@ function SpaceGroupedProjects({
 	renderProject,
 	renderBottomBlockProject,
 	onAddProjects,
+	onRenameSpace,
+	onDeleteSpace,
 }: SpaceGroupedProjectsProps) {
 	const t = useT();
 	// One space alone has no order to change, so its header carries no grip.
@@ -282,11 +287,16 @@ function SpaceGroupedProjects({
 									</span>
 								)}
 							</button>
+							{onRenameSpace && onDeleteSpace && (
+								<div className={onAddProjects ? "ml-auto" : "ml-auto"}>
+									<SpaceHeaderMenu space={space} onRename={onRenameSpace} onDelete={onDeleteSpace} />
+								</div>
+							)}
 							{onAddProjects && (
 								<button
 									type="button"
 									onClick={() => onAddProjects(space)}
-									className="ml-auto p-1 rounded text-fg-muted hover:text-fg hover:bg-elevated transition-colors"
+									className="p-1 rounded text-fg-muted hover:text-fg hover:bg-elevated transition-colors"
 									title={t("spaces.addProjects")}
 									aria-label={t("spaces.addProjects")}
 									data-testid={`space-add-projects-${space.id}`}

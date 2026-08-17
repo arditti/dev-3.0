@@ -677,6 +677,16 @@ const settings = {
 	"spaces.filterAll": "All",
 	"spaces.filterNeedsYou": "Needs you",
 	"spaces.acrossAllSpaces": "Across all spaces",
+	"spaces.menuLabel": "Space actions",
+	"spaces.rename": "Rename space…",
+	"spaces.renameSave": "Save",
+	"spaces.delete": "Delete space",
+	"spaces.deleteConfirmTitle": "Delete space?",
+	"spaces.deleteConfirmBody": "“{name}” will be removed from the dashboard. Its projects stay in dev3 and only lose this grouping.",
+	"spaces.deleteConfirmAction": "Delete space",
+	"spaces.deleted": "Space “{name}” deleted",
+	"spaces.failedDelete": "Failed to delete space: {error}",
+	"spaces.failedRename": "Failed to rename space: {error}",
 } as const;
 
 export default settings;

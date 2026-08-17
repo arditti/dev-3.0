@@ -5,6 +5,8 @@ import { compareTaskSortRank, getTaskTitle, isBuiltinOpsProject, isTaskDisconnec
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
 import { useT } from "../i18n";
+import { toast } from "../toast";
+import { confirm } from "../confirm";
 import { useProjectPrivacy } from "../sensitive-projects";
 import { useSpaces } from "../useSpaces";
 import { filterDashboardGroups, groupProjectsForDashboard } from "../utils/spaceGroups";
@@ -140,6 +142,32 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 	const openSpacesPicker = useCallback((project: Project, anchor: HTMLElement) => {
 		setSpacesPicker({ projectId: project.id, anchor });
 	}, []);
+
+	async function handleRenameSpace(space: Space, name: string) {
+		try {
+			await api.request.renameSpace({ spaceId: space.id, name });
+		} catch (err) {
+			toast.error(t("spaces.failedRename", { error: String(err) }));
+		}
+	}
+
+	// Deleting a space unlinks its projects and nothing else — never removes a
+	// project from dev3 (see the Spaces decision record).
+	async function handleDeleteSpace(space: Space) {
+		const confirmed = await confirm({
+			title: t("spaces.deleteConfirmTitle"),
+			message: t("spaces.deleteConfirmBody", { name: space.name }),
+			confirmLabel: t("spaces.deleteConfirmAction"),
+			danger: true,
+		});
+		if (!confirmed) return;
+		try {
+			await api.request.deleteSpace({ spaceId: space.id });
+			toast.info(t("spaces.deleted", { name: space.name }));
+		} catch (err) {
+			toast.error(t("spaces.failedDelete", { error: String(err) }));
+		}
+	}
 
 	function openProject(projectId: string) {
 		navigate({ screen: "project", projectId });
@@ -847,6 +875,8 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 								(tasksByProject.get(projectId) ?? []).filter((task) => BACKGROUND_STATUSES.includes(task.status)).length
 							}
 							onAddProjects={(space) => setAddProjectsSpace(space)}
+							onRenameSpace={handleRenameSpace}
+							onDeleteSpace={handleDeleteSpace}
 							renderProject={(p, ctx, spaceId) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id), ctx, spaceId)}
 							renderBottomBlockProject={(p) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id))}
 						/>
