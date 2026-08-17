@@ -102,7 +102,7 @@ describe("buildFilterGroups", () => {
 		{ facet: "priority", value: "P3", label: "P3 — Low" },
 		{ facet: "priority", value: "P4", label: "P4 — Lowest" },
 	];
-	const candidates = { priorityCandidates, statusCandidates, flagLabels: { attention: "Needs attention", port: "Has running port" } };
+	const candidates = { priorityCandidates, statusCandidates, flagLabels: { attention: "Needs attention", port: "Has running port", home: "Home" } };
 
 	function resolverFor(): FacetResolver {
 		const labelsById: Record<string, Label[]> = {
@@ -167,7 +167,7 @@ describe("buildFilterGroups — SPACES group", () => {
 	const spaceCandidates = {
 		priorityCandidates: [{ facet: "priority" as const, value: "P2", label: "P2 — Normal" }],
 		statusCandidates: [{ facet: "status" as const, value: "in-progress", label: "Agent is Working" }],
-		flagLabels: { attention: "Needs attention", port: "Has running port" },
+		flagLabels: { attention: "Needs attention", port: "Has running port", home: "Home" },
 	};
 
 	it("lists every space present in the pool, alphabetically, after STATUS", () => {
@@ -189,8 +189,38 @@ describe("buildFilterGroups — SPACES group", () => {
 		expect(ids).toContain("spaces");
 		expect(ids.indexOf("spaces")).toBeGreaterThan(ids.indexOf("status"));
 		const spaceGroup = groups.find((g) => g.id === "spaces")!;
-		expect(spaceGroup.options.map((o) => o.label)).toEqual(["Client X", "Labs"]);
-		expect(spaceGroup.options.every((o) => o.facet === "space")).toBe(true);
+		// p3 is in no space, so the computed Home option trails the real ones.
+		expect(spaceGroup.options.map((o) => o.label)).toEqual(["Client X", "Labs", "Home"]);
+		expect(spaceGroup.options.filter((o) => o.facet === "space").map((o) => o.value)).toEqual(["Client X", "Labs"]);
+	});
+
+	it("appends the computed Home option last when some project is in no space", () => {
+		const spacesByProject: Record<string, string[]> = { p1: ["Labs"], p2: [] };
+		const groups = buildFilterGroups(
+			[makeTask({ id: "a", projectId: "p1" }), makeTask({ id: "b", projectId: "p2" })],
+			{ ...baseResolver, spaceNamesFor: (task) => spacesByProject[task.projectId] ?? [] },
+			spaceCandidates,
+		);
+		const spaceGroup = groups.find((g) => g.id === "spaces")!;
+		expect(spaceGroup.options.map((o) => o.label)).toEqual(["Labs", "Home"]);
+		const home = spaceGroup.options[spaceGroup.options.length - 1];
+		// A flag token, so it can never collide with a space literally named Home.
+		expect(home.facet).toBe("is");
+		expect(home.value).toBe("home");
+	});
+
+	it("omits Home when every project belongs to a space", () => {
+		const groups = buildFilterGroups(
+			[makeTask({ id: "a", projectId: "p1" })],
+			{ ...baseResolver, spaceNamesFor: () => ["Labs"] },
+			spaceCandidates,
+		);
+		const spaceGroup = groups.find((g) => g.id === "spaces")!;
+		expect(spaceGroup.options.map((o) => o.label)).toEqual(["Labs"]);
+	});
+
+	it("reports null space names where the surface cannot resolve them", () => {
+		expect(taskQueryContext(makeTask(), baseResolver).spaceNames).toBeNull();
 	});
 
 	it("drops the group when the surface supplies no space resolver (single project board)", () => {

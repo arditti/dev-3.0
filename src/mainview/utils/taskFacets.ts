@@ -69,7 +69,7 @@ export function taskQueryContext(task: Task, resolver: FacetResolver): TaskQuery
 		priorityValue: resolver.priorityFor(task).toLowerCase(),
 		hasPort: resolver.hasPortFor(task),
 		isAttention: resolver.isAttentionFor(task),
-		spaceNames: resolver.spaceNamesFor?.(task) ?? [],
+		spaceNames: resolver.spaceNamesFor ? resolver.spaceNamesFor(task) : null,
 		prNumber: resolver.prNumberFor?.(task) ?? null,
 	};
 }
@@ -79,7 +79,7 @@ export interface FilterFunnelCandidates {
 	priorityCandidates: FilterFunnelOption[];
 	/** Full ordered status vocabulary (built-in statuses + custom columns). */
 	statusCandidates: FilterFunnelOption[];
-	flagLabels: { attention: string; port: string };
+	flagLabels: { attention: string; port: string; home: string };
 }
 
 /**
@@ -101,6 +101,7 @@ export function buildFilterGroups(
 	const presentPriority = new Set<string>();
 	let anyAttention = false;
 	let anyPort = false;
+	let anyHome = false;
 
 	for (const task of tasks) {
 		for (const label of resolver.labelsFor(task)) {
@@ -109,10 +110,14 @@ export function buildFilterGroups(
 				labelByValue.set(key, { facet: "label", value: label.name, label: label.name, color: label.color });
 			}
 		}
-		for (const name of resolver.spaceNamesFor?.(task) ?? []) {
-			const key = name.toLowerCase();
-			if (!spaceByValue.has(key)) {
-				spaceByValue.set(key, { facet: "space", value: name, label: name });
+		if (resolver.spaceNamesFor) {
+			const names = resolver.spaceNamesFor(task);
+			if (names.length === 0) anyHome = true;
+			for (const name of names) {
+				const key = name.toLowerCase();
+				if (!spaceByValue.has(key)) {
+					spaceByValue.set(key, { facet: "space", value: name, label: name });
+				}
 			}
 		}
 		const agentName = taskAgentName(task, resolver.agents);
@@ -134,7 +139,10 @@ export function buildFilterGroups(
 	const byLabel = (a: FilterFunnelOption, b: FilterFunnelOption) => a.label.localeCompare(b.label);
 	const labelOptions = [...labelByValue.values()].sort(byLabel);
 	const agentOptions = [...agentByValue.values()].sort(byLabel);
+	// Real spaces alphabetically, then the computed Home group last — same order
+	// as the dashboard rail.
 	const spaceOptions = [...spaceByValue.values()].sort(byLabel);
+	if (anyHome) spaceOptions.push({ facet: "is", value: "home", label: flagLabels.home });
 	const flagOptions: FilterFunnelOption[] = [];
 	if (anyAttention) flagOptions.push({ facet: "is", value: "attention", label: flagLabels.attention });
 	if (anyPort) flagOptions.push({ facet: "has", value: "port", label: flagLabels.port });

@@ -290,7 +290,7 @@ function ActiveTasksSidebar({
 		() => buildFilterGroups(activeTasks, resolver, {
 			priorityCandidates,
 			statusCandidates,
-			flagLabels: { attention: t("filter.flag.attention"), port: t("filter.flag.port") },
+			flagLabels: { attention: t("filter.flag.attention"), port: t("filter.flag.port"), home: t("spaces.homeGroup") },
 		}),
 		[activeTasks, resolver, priorityCandidates, statusCandidates, t],
 	);
