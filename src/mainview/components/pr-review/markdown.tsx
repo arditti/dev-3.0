@@ -9,61 +9,13 @@ import {
 	type MermaidErrorComponentProps,
 } from "streamdown";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import {
-	isDiskImageSrc,
-	MarkdownImage,
-	MarkdownImageProvider,
-	protectDiskImageSrc,
-} from "./markdown-images";
+import { MarkdownImage, MarkdownImageProvider } from "./markdown-images";
+import { remarkProtectRelativeUrls, safeLinkHref, unprotect } from "./markdown-urls";
 
 const mermaidPlugin = createMermaidPlugin();
 const plugins = { mermaid: mermaidPlugin };
-const RELATIVE_LINK_URL_PREFIX = "https://dev3.invalid/__markdown_link__/";
-
-interface MarkdownTreeNode {
-	type?: string;
-	url?: string;
-	identifier?: string;
-	children?: MarkdownTreeNode[];
-}
-
-function remarkProtectDiskImages() {
-	return (tree: MarkdownTreeNode) => {
-		const imageReferences = new Set<string>();
-		const linkReferences = new Set<string>();
-		const definitions: MarkdownTreeNode[] = [];
-		const nodes: MarkdownTreeNode[] = [tree];
-		for (let index = 0; index < nodes.length; index++) {
-			const node = nodes[index];
-			if (node.type === "imageReference" && node.identifier) {
-				imageReferences.add(node.identifier.toLowerCase());
-			}
-			if (node.type === "linkReference" && node.identifier) {
-				linkReferences.add(node.identifier.toLowerCase());
-			}
-			if (node.type === "image" && node.url && isDiskImageSrc(node.url)) {
-				node.url = protectDiskImageSrc(node.url);
-			}
-			if (node.type === "link" && node.url && !node.url.startsWith("#") && isDiskImageSrc(node.url)) {
-				node.url = protectRelativeLink(node.url);
-			}
-			if (node.type === "definition") definitions.push(node);
-			if (node.children) nodes.push(...node.children);
-		}
-		for (const definition of definitions) {
-			if (!definition.identifier || !definition.url || !isDiskImageSrc(definition.url)) continue;
-			const identifier = definition.identifier.toLowerCase();
-			if (imageReferences.has(identifier)) {
-				definition.url = protectDiskImageSrc(definition.url);
-			} else if (linkReferences.has(identifier) && !definition.url.startsWith("#")) {
-				definition.url = protectRelativeLink(definition.url);
-			}
-		}
-	};
-}
-
-const markdownRemarkPlugins = [...Object.values(defaultRemarkPlugins), remarkProtectDiskImages];
-const commentRemarkPlugins = [...markdownRemarkPlugins, remarkBreaks];
+const documentRemarkPlugins = [...Object.values(defaultRemarkPlugins), remarkProtectRelativeUrls];
+const commentRemarkPlugins = [...documentRemarkPlugins, remarkBreaks];
 const allowedTags = {
 	details: [],
 	summary: [],
@@ -145,22 +97,9 @@ function MermaidSourceFallback({ chart }: MermaidErrorComponentProps) {
 	);
 }
 
-function protectRelativeLink(href: string): string {
-	return `${RELATIVE_LINK_URL_PREFIX}${encodeURIComponent(href)}`;
-}
-
-function unprotectRelativeLink(href: string | undefined): string | undefined {
-	if (!href?.startsWith(RELATIVE_LINK_URL_PREFIX)) return href;
-	try {
-		return decodeURIComponent(href.slice(RELATIVE_LINK_URL_PREFIX.length));
-	} catch {
-		return undefined;
-	}
-}
-
-function ExternalMarkdownLink({ children, href, ...props }: ComponentProps<"a">) {
+function ExternalMarkdownLink({ children, ...props }: ComponentProps<"a">) {
 	return (
-		<a {...props} href={unprotectRelativeLink(href)} target="_blank" rel="noopener noreferrer">
+		<a {...props} target="_blank" rel="noopener noreferrer">
 			{children}
 		</a>
 	);
@@ -182,10 +121,13 @@ export function MarkdownContent({
 	rendererConfig,
 }: MarkdownContentProps) {
 	const components = useMemo<Components>(() => ({
-		a: ({ node: _node, ...props }) => <ExternalMarkdownLink {...props} />,
-		img: ({ node: _node, ...props }) => (
+		a: ({ node: _node, href, ...props }) => (
+			<ExternalMarkdownLink {...props} href={safeLinkHref(unprotect(href))} />
+		),
+		img: ({ node: _node, src, ...props }) => (
 			<MarkdownImage
 				{...props}
+				src={unprotect(src)}
 				imageBaseDir={imageBaseDir}
 				imageRootDir={imageRootDir}
 			/>
@@ -203,11 +145,14 @@ export function MarkdownContent({
 			components={components}
 			controls={false}
 			lineNumbers={false}
+			// Link safety off: it interposes a confirmation modal on every external
+			// link. Streamdown's URL hardener still runs; on top of it `unprotect`
+			// and `safeLinkHref` in `markdown-urls.ts` decide what may reach `href`.
 			linkSafety={{ enabled: false }}
 			allowedTags={allowedTags}
 			plugins={plugins}
 			mermaid={{ config: rendererConfig.mermaid, errorComponent: MermaidSourceFallback }}
-			remarkPlugins={isDocument ? markdownRemarkPlugins : commentRemarkPlugins}
+			remarkPlugins={isDocument ? documentRemarkPlugins : commentRemarkPlugins}
 		>
 			{body}
 		</Streamdown>

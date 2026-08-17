@@ -47,34 +47,6 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 	} as unknown as typeof ResizeObserver;
 }
 
-// Streamdown defers Mermaid work until its host is visible. happy-dom's
-// observer never intersects, so report observed elements as visible.
-class ImmediateIntersectionObserver {
-	private readonly callback: IntersectionObserverCallback;
-
-	constructor(callback: IntersectionObserverCallback) {
-		this.callback = callback;
-	}
-
-	observe(target: Element) {
-		this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
-	}
-
-	unobserve() {}
-	disconnect() {}
-	takeRecords() { return []; }
-	root = null;
-	rootMargin = "0px";
-	thresholds = [0];
-}
-for (const target of [globalThis, globalThis.window].filter(Boolean)) {
-	Object.defineProperty(target, "IntersectionObserver", {
-		configurable: true,
-		writable: true,
-		value: ImmediateIntersectionObserver,
-	});
-}
-
 // Force prefers-reduced-motion: reduce = true (happy-dom's default matchMedia
 // reports false) so animation hooks (useReducedMotion/useAnimatedNumber) render
 // final values synchronously in tests; every other query reports false. Tests

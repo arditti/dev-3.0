@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { CommentMarkdown, MarkdownDocument } from "../markdown";
+import { installImmediateIntersectionObserver } from "../../../test-utils/immediate-intersection";
 
 const mermaid = vi.hoisted(() => ({
 	initialize: vi.fn(),
@@ -18,6 +19,8 @@ vi.mock("@streamdown/mermaid", () => ({
 		},
 	}),
 }));
+
+installImmediateIntersectionObserver();
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -66,6 +69,26 @@ describe("CommentMarkdown", () => {
 
 		expect(screen.getByRole("link", { name: "guide" })).toHaveAttribute("href", "docs/guide.md");
 		expect(screen.getByRole("link", { name: "guide" })).toHaveAttribute("target", "_blank");
+	});
+
+	it("keeps unsafe schemes out of href, written plainly or wrapped as a token", () => {
+		const unsafe = [
+			"data:text/html,<script>alert(1)</script>",
+			"vbscript:msgbox(1)",
+			"file:///etc/passwd",
+			"views://mainview/index.html",
+		];
+		const body = unsafe
+			.flatMap((url, index) => [
+				`[plain${index}](${url})`,
+				`[wrapped${index}](https://dev3.invalid/0/${encodeURIComponent(url)})`,
+			])
+			.join(" ");
+		render(<CommentMarkdown body={body} />);
+
+		for (const link of screen.getByTestId("pr-comment-markdown").querySelectorAll("a")) {
+			expect(link.getAttribute("href") ?? "").not.toMatch(/^(?:data|vbscript|file|views|javascript):/i);
+		}
 	});
 
 	it("renders Mermaid code fences inline", async () => {

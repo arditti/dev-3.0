@@ -84,7 +84,7 @@
 		"ghostty-web": "^0.4.0",
 		"js-toml": "1.1.0",
 		"marked": "^18.0.6",
-		"mermaid": "11.16.1",
+		"mermaid": "11.16.0",
 		"posthog-js": "1.407.2",
 		"qrcode": "^1.5.4",
 		"react": "19.2.6",
@@ -92,6 +92,10 @@
 		"recharts": "^3.9.0",
 		"remark-breaks": "4.0.0",
 		"streamdown": "2.5.0"
+	},
+	"overrides": {
+		"mermaid": "11.16.0",
+		"cytoscape": "3.34.0"
 	},
 	"devDependencies": {
 		"@testing-library/jest-dom": "^6.9.1",

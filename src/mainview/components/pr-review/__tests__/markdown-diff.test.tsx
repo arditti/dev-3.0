@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { buildMarkdownDiffBlocks, MarkdownRichDiff } from "../markdown-diff";
+import { installImmediateIntersectionObserver } from "../../../test-utils/immediate-intersection";
 
 const mermaid = vi.hoisted(() => ({
 	initialize: vi.fn(),
@@ -18,6 +19,8 @@ vi.mock("@streamdown/mermaid", () => ({
 		},
 	}),
 }));
+
+installImmediateIntersectionObserver();
 
 beforeEach(() => {
 	vi.clearAllMocks();

@@ -8,6 +8,7 @@ import {
 	type ReactNode,
 } from "react";
 import { api } from "../../rpc";
+import { isRelativeUrl } from "./markdown-urls";
 
 /**
  * Repo-relative images in a rendered markdown document (`![](docs/shot.png)`).
@@ -17,7 +18,9 @@ import { api } from "../../rpc";
  * gated to the home dir plus registered project roots on the bun side.
  *
  * Markdown images are React components, so resolved data URLs remain stable
- * across parent renders without mutating renderer-owned DOM.
+ * across parent renders without mutating renderer-owned DOM. The `src` arriving
+ * here is already resolved by `markdown-urls.ts`, so a relative one provably came
+ * from the document being rendered.
  */
 
 const MAX_IMAGES_PER_DOCUMENT = 40;
@@ -25,30 +28,10 @@ const MAX_IMAGES_PER_DOCUMENT = 40;
 const MAX_CACHED_IMAGES = 24;
 const allowEveryImage = () => true;
 const DiskImageBudgetContext = createContext<(absPath: string) => boolean>(allowEveryImage);
-const DISK_IMAGE_URL_PREFIX = "https://dev3.invalid/__markdown_image__/";
 
 /** Absolute path → data URL, or null for "read failed / not an image". */
 const cache = new Map<string, string | null>();
 const inflight = new Map<string, Promise<string | null>>();
-
-/** True for a markdown image src that must be read off disk rather than fetched. */
-export function isDiskImageSrc(src: string): boolean {
-	return Boolean(src) && !src.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/i.test(src);
-}
-
-/** Keep relative sources intact while they pass through Streamdown's URL hardener. */
-export function protectDiskImageSrc(src: string): string {
-	return `${DISK_IMAGE_URL_PREFIX}${encodeURIComponent(src)}`;
-}
-
-function unprotectDiskImageSrc(src: string): string {
-	if (!src.startsWith(DISK_IMAGE_URL_PREFIX)) return src;
-	try {
-		return decodeURIComponent(src.slice(DISK_IMAGE_URL_PREFIX.length));
-	} catch {
-		return "";
-	}
-}
 
 /**
  * Resolve a markdown image src to an absolute path. `baseDir` is the directory
@@ -138,8 +121,8 @@ export function MarkdownImage({
 	...props
 }: MarkdownImageProps) {
 	const claimPath = useContext(DiskImageBudgetContext);
-	const originalSrc = unprotectDiskImageSrc(src ?? "");
-	const diskBacked = Boolean(imageBaseDir && originalSrc && isDiskImageSrc(originalSrc));
+	const originalSrc = src ?? "";
+	const diskBacked = Boolean(imageBaseDir && originalSrc && isRelativeUrl(originalSrc));
 	const absPath = useMemo(
 		() => (diskBacked ? resolveDiskImagePath(originalSrc, imageBaseDir!, imageRootDir) : null),
 		[diskBacked, originalSrc, imageBaseDir, imageRootDir],
