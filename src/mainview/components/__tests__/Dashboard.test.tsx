@@ -11,6 +11,16 @@ vi.mock("../../rpc", () => ({
 			removeProject: vi.fn(),
 			reorderProjects: vi.fn(),
 			getAllProjectTasks: vi.fn(() => Promise.resolve([])),
+			getSpaces: vi.fn(() => Promise.resolve({ version: 1, spaces: [], order: [] })),
+			reorderSpaces: vi.fn(),
+			reorderSpaceProjects: vi.fn(),
+			setProjectSpaces: vi.fn(),
+			createSpace: vi.fn(),
+			getGlobalSettings: vi.fn(() => Promise.resolve({ tipsDisabled: true })),
+			getTipState: vi.fn(() => Promise.resolve({ snoozedUntil: 0, seen: {}, rotationIndex: 0 })),
+			updateTipState: vi.fn((s) => Promise.resolve({ snoozedUntil: 0, seen: {}, rotationIndex: 0, ...s })),
+			setTaskPriority: vi.fn(() => Promise.resolve([])),
+			getTerminalPreview: vi.fn(),
 		},
 	},
 }));
@@ -38,6 +48,8 @@ function renderDashboard(
 				dispatch={dispatch ?? vi.fn()}
 				navigate={navigate ?? vi.fn()}
 				bellCounts={new Map()}
+			taskPorts={new Map()}
+			agents={[]}
 				onOpenAddProject={onOpenAddProject ?? vi.fn()}
 			/>
 		</I18nProvider>,

@@ -2917,6 +2917,9 @@ function App() {
 						dispatch={dispatch}
 						navigate={navigate}
 						bellCounts={state.bellCounts}
+						bellReasons={state.bellReasons}
+						taskPorts={state.taskPorts}
+						agents={agents}
 						onOpenAddProject={() => setShowAddProjectModal(true)}
 					/>
 				);

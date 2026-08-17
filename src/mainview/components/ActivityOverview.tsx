@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Dispatch, DragEvent } from "react";
-import type { Project, Task, TaskStatus } from "../../shared/types";
+import type { Project, Space, Task, TaskStatus } from "../../shared/types";
 import { compareTaskSortRank, getTaskTitle, isBuiltinOpsProject, isTaskDisconnected, orderProjectsForDisplay } from "../../shared/types";
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
 import { useT } from "../i18n";
 import { useProjectPrivacy } from "../sensitive-projects";
 import { useSpaces } from "../useSpaces";
-import { groupProjectsForDashboard } from "../utils/spaceGroups";
+import { filterDashboardGroups, groupProjectsForDashboard } from "../utils/spaceGroups";
+import ProjectSpaceChips from "./ProjectSpaceChips";
+import SpacePicker from "./SpacePicker";
+import AddProjectsToSpaceModal from "./AddProjectsToSpaceModal";
+import { useProjectSpaceMembership } from "../useProjectSpaceMembership";
 import SpaceGroupedProjects, { type RowReorderCtx } from "./SpaceGroupedProjects";
 import { getStatusLabel } from "../utils/statusLabel";
 import { statusKey } from "../i18n/status";
@@ -30,6 +34,9 @@ interface ActivityOverviewProps {
 	onRemoveProject?: (projectId: string) => void | Promise<void>;
 	onOpenAddProject?: () => void;
 	onReorderProjects?: (projectIds: string[]) => void | Promise<void>;
+	/** Rail filter: null = all, `HOME_GROUP_ID` = the computed Home group. */
+	selectedSpaceId?: string | null;
+	onNewSpace?: () => void;
 }
 
 /** Statuses worth their own row — they're waiting on a human (questions, your
@@ -103,7 +110,7 @@ function ActionSheetButton({
 	);
 }
 
-function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemoveProject, onOpenAddProject, onReorderProjects }: ActivityOverviewProps) {
+function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemoveProject, onOpenAddProject, onReorderProjects, selectedSpaceId = null, onNewSpace }: ActivityOverviewProps) {
 	const t = useT();
 	const statusColors = useStatusColors();
 	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
@@ -123,7 +130,16 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 	const [completingTasks, setCompletingTasks] = useState<Set<string>>(new Set());
 
 	const privacy = useProjectPrivacy();
-	const { file: spacesFile } = useSpaces();
+	const { spaces, file: spacesFile } = useSpaces();
+	const [projectQuery, setProjectQuery] = useState("");
+	// The row whose Spaces… picker is open, with the button it is anchored to.
+	const [spacesPicker, setSpacesPicker] = useState<{ projectId: string; anchor: HTMLElement } | null>(null);
+	const [addProjectsSpace, setAddProjectsSpace] = useState<Space | null>(null);
+	const membership = useProjectSpaceMembership(spacesFile);
+
+	const openSpacesPicker = useCallback((project: Project, anchor: HTMLElement) => {
+		setSpacesPicker({ projectId: project.id, anchor });
+	}, []);
 
 	function openProject(projectId: string) {
 		navigate({ screen: "project", projectId });
@@ -259,7 +275,12 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 	// The built-in Operations board is pinned first; ordinary projects keep order.
 	const visibleProjects = orderProjectsForDisplay(projects.filter((p) => !p.deleted));
 	// null with zero spaces — the legacy flat render below stays byte-identical.
-	const spaceGroups = groupProjectsForDashboard(visibleProjects, spacesFile);
+	const allSpaceGroups = groupProjectsForDashboard(visibleProjects, spacesFile);
+	const spaceGroups = filterDashboardGroups(allSpaceGroups, {
+		selectedSpaceId,
+		query: projectQuery,
+		spaces: spacesFile.spaces,
+	});
 	const sensitiveProjectIds = new Set(projects.filter((p) => p.sensitive).map((p) => p.id));
 	const hasPinnedBuiltin = visibleProjects.length > 0 && isBuiltinOpsProject(visibleProjects[0]);
 	const totalActive = Array.from(tasksByProject.values()).reduce((sum, tasks) => sum + tasks.length, 0);
@@ -317,7 +338,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 		reorderProject(projectId, target.id, step < 0 ? "before" : "after");
 	}
 
-	function renderProjectRow(project: Project, index: number, reorder?: RowReorderCtx) {
+	function renderProjectRow(project: Project, index: number, reorder?: RowReorderCtx, groupSpaceId?: string | null) {
 		const tasks = tasksByProject.get(project.id) ?? [];
 		const hasActiveTasks = tasks.length > 0;
 		const isDragged = reorder ? reorder.isDragged : draggedProjectId === project.id;
@@ -501,6 +522,13 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							</span>
 						)}
 						<span className={`truncate select-text ${privacy.maskClass(project)}`} title={locked || isBuiltinOps ? undefined : project.name}>{isBuiltinOps ? t("ops.boardName") : project.name}</span>
+									{!isBuiltinOps && (
+										<ProjectSpaceChips
+											spaces={spacesFile.spaces}
+											projectId={project.id}
+											omitSpaceId={groupSpaceId ?? undefined}
+										/>
+									)}
 								{project.kind === "virtual" && (
 									<span className="px-1.5 py-0.5 rounded bg-raised text-fg-3 text-dense font-medium uppercase tracking-[0.06em] flex items-center gap-1 flex-shrink-0">
 										<span aria-hidden="true" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{""}</span>
@@ -526,6 +554,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							project={project}
 							navigate={navigate}
 							onRemove={onRemoveProject}
+							onOpenSpaces={allSpaceGroups !== null ? openSpacesPicker : undefined}
 						/>
 					</div>
 					<span className="flex items-center gap-3">
@@ -755,16 +784,50 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							<div className="text-fg-3 text-xs mt-1">{t("activity.noActiveTasks")}</div>
 						)}
 					</div>
-					{onOpenAddProject && (
-						<button
-							type="button"
-							onClick={onOpenAddProject}
-							className="px-4 py-1.5 min-h-[44px] md:min-h-0 bg-accent-fill text-white text-sm font-semibold rounded-xl hover:bg-accent-fill-hover shadow-lg shadow-accent/20 transition-[background-color,transform] active:scale-[0.96] flex-shrink-0"
-						>
-							{t("dashboard.addProject")}
-						</button>
-					)}
+					<div className="flex items-center gap-2 flex-shrink-0">
+						{onNewSpace && (
+							<button
+								type="button"
+								onClick={onNewSpace}
+								className="px-3 py-1.5 min-h-[44px] md:min-h-0 border border-edge rounded-xl text-fg-2 text-sm hover:text-fg hover:border-edge-active transition-colors"
+								data-testid="dashboard-new-space"
+							>
+								{t("spaces.newSpace")}
+							</button>
+						)}
+						{onOpenAddProject && (
+							<button
+								type="button"
+								onClick={onOpenAddProject}
+								className="px-4 py-1.5 min-h-[44px] md:min-h-0 bg-accent-fill text-white text-sm font-semibold rounded-xl hover:bg-accent-fill-hover shadow-lg shadow-accent/20 transition-[background-color,transform] active:scale-[0.96] flex-shrink-0"
+							>
+								{t("dashboard.addProject")}
+							</button>
+						)}
+					</div>
 				</div>
+				{/* Search over projects AND their space names — the same rule as the
+				    ⌘K palette. Only meaningful once spaces group the list. */}
+				{allSpaceGroups !== null && (
+					<div className="relative">
+						<input
+							type="text"
+							value={projectQuery}
+							onChange={(e) => setProjectQuery(e.target.value)}
+							placeholder={t("spaces.searchPlaceholderDashboard")}
+							className="w-full bg-raised border border-edge rounded-xl pl-9 pr-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:border-edge-active transition-colors"
+							data-testid="dashboard-project-search"
+							aria-label={t("spaces.searchPlaceholderDashboard")}
+						/>
+						<span
+							aria-hidden="true"
+							className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted text-sm leading-none"
+							style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
+						>
+							{""}
+						</span>
+					</div>
+				)}
 				{spaceGroups === null ? (
 					visibleProjects.map((project, index) => renderProjectRow(project, index))
 				) : (
@@ -774,13 +837,36 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							groups={spaceGroups}
 							spaceOrder={spaceGroups.filter((g) => g.space !== null).map((g) => g.space!.id)}
 							sensitiveProjectIds={sensitiveProjectIds}
-							taskCountOf={(projectId) => (tasksByProject.get(projectId) ?? []).length}
-							renderProject={(p, ctx) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id), ctx)}
+							needsYouCountOf={(projectId) =>
+								(tasksByProject.get(projectId) ?? []).filter((task) => NEEDS_ME_STATUSES.includes(task.status)).length
+							}
+							workingCountOf={(projectId) =>
+								(tasksByProject.get(projectId) ?? []).filter((task) => BACKGROUND_STATUSES.includes(task.status)).length
+							}
+							onAddProjects={(space) => setAddProjectsSpace(space)}
+							renderProject={(p, ctx, spaceId) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id), ctx, spaceId)}
 							renderBottomBlockProject={(p) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id))}
 						/>
 					</>
 				)}
 
+				{addProjectsSpace && (
+					<AddProjectsToSpaceModal
+						space={addProjectsSpace}
+						projects={visibleProjects}
+						onClose={() => setAddProjectsSpace(null)}
+					/>
+				)}
+				{spacesPicker && (
+					<SpacePicker
+						spaces={spaces}
+						selectedIds={membership.selectedIdsOf(spacesPicker.projectId)}
+						onToggle={(spaceId) => void membership.toggle(spacesPicker.projectId, spaceId)}
+						onCreateNew={(name) => void membership.createWithProject(name, spacesPicker.projectId)}
+						anchorEl={spacesPicker.anchor}
+						onClose={() => setSpacesPicker(null)}
+					/>
+				)}
 				{/* Narrow-viewport per-project action sheet — the touch surface for
 				    actions that are hover-only / drag-only on desktop. */}
 				{narrow && sheetProject && (

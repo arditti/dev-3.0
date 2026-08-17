@@ -1,4 +1,4 @@
-import { groupProjectsForDashboard } from "../spaceGroups";
+import { HOME_GROUP_ID, filterDashboardGroups, groupProjectsForDashboard } from "../spaceGroups";
 import type { Project, Space, SpacesFile } from "../../../shared/types";
 
 const proj = (id: string, over?: Partial<Project>): Project => ({
@@ -79,5 +79,53 @@ describe("groupProjectsForDashboard", () => {
 		for (const g of groups) {
 			expect(g.projects.some((p) => p.id === "ops")).toBe(false);
 		}
+	});
+});
+
+describe("filterDashboardGroups", () => {
+	const projects = [proj("a"), proj("b"), proj("loose")];
+	const spaces = [sp("sp_1", ["a"]), sp("sp_2", ["a", "b"])];
+	const groups = () => groupProjectsForDashboard(projects, fileOf(spaces));
+
+	it("passes null through (zero spaces keeps the legacy flat path)", () => {
+		expect(filterDashboardGroups(null, { selectedSpaceId: null, query: "", spaces })).toBeNull();
+	});
+
+	it("keeps every group when nothing is selected or typed", () => {
+		const out = filterDashboardGroups(groups(), { selectedSpaceId: null, query: "", spaces })!;
+		expect(out.map((g) => g.space?.id ?? "home")).toEqual(["sp_1", "sp_2", "home"]);
+	});
+
+	it("narrows to one space when the rail selects it", () => {
+		const out = filterDashboardGroups(groups(), { selectedSpaceId: "sp_2", query: "", spaces })!;
+		expect(out).toHaveLength(1);
+		expect(out[0].projects.map((p) => p.id)).toEqual(["a", "b"]);
+	});
+
+	it("narrows to the computed Home group", () => {
+		const out = filterDashboardGroups(groups(), { selectedSpaceId: HOME_GROUP_ID, query: "", spaces })!;
+		expect(out).toHaveLength(1);
+		expect(out[0].space).toBeNull();
+		expect(out[0].projects.map((p) => p.id)).toEqual(["loose"]);
+	});
+
+	it("filters rows by project name and drops groups left empty", () => {
+		const out = filterDashboardGroups(groups(), { selectedSpaceId: null, query: "loose", spaces })!;
+		expect(out).toHaveLength(1);
+		expect(out[0].space).toBeNull();
+	});
+
+	it("keeps a whole group when the query matches its space name", () => {
+		const named = [sp("sp_1", ["a"]), { ...sp("sp_2", ["a", "b"]), name: "Client X" }];
+		const out = filterDashboardGroups(groupProjectsForDashboard(projects, fileOf(named)), {
+			selectedSpaceId: null,
+			query: "client",
+			spaces: named,
+		})!;
+		// sp_2 matches by name and keeps both members; sp_1 keeps only `a`, whose
+		// own haystack carries "Client X"; Home drops (no match at all).
+		expect(out.map((g) => g.space?.id ?? "home")).toEqual(["sp_1", "sp_2"]);
+		expect(out[0].projects.map((p) => p.id)).toEqual(["a"]);
+		expect(out[1].projects.map((p) => p.id)).toEqual(["a", "b"]);
 	});
 });

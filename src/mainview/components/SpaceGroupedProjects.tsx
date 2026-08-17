@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import { isSpaceSensitive, type Project } from "../../shared/types";
+import { isSpaceSensitive, type Project, type Space } from "../../shared/types";
 import type { DashboardGroup } from "../utils/spaceGroups";
 import { MASK_CLASS } from "../sensitive-projects";
 import { api } from "../rpc";
@@ -44,10 +44,14 @@ interface SpaceGroupedProjectsProps {
 	/** The order of spaces as rendered (for header drag persistence). */
 	spaceOrder: string[];
 	sensitiveProjectIds: ReadonlySet<string>;
-	taskCountOf: (projectId: string) => number;
-	renderProject: (project: Project, reorder: RowReorderCtx) => ReactNode;
+	/** Split header counts: tasks waiting on the user vs. tasks in flight. */
+	needsYouCountOf: (projectId: string) => number;
+	workingCountOf: (projectId: string) => number;
+	renderProject: (project: Project, reorder: RowReorderCtx, groupSpaceId: string | null) => ReactNode;
 	/** The bottom block still owns global order — same callback as the flat path. */
 	renderBottomBlockProject: (project: Project, blockProjects: Project[]) => ReactNode;
+	/** Opens the "add existing projects to this space" flow. */
+	onAddProjects?: (space: Space) => void;
 }
 
 /**
@@ -59,9 +63,11 @@ function SpaceGroupedProjects({
 	groups,
 	spaceOrder,
 	sensitiveProjectIds,
-	taskCountOf,
+	needsYouCountOf,
+	workingCountOf,
 	renderProject,
 	renderBottomBlockProject,
+	onAddProjects,
 }: SpaceGroupedProjectsProps) {
 	const t = useT();
 	const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
@@ -167,7 +173,7 @@ function SpaceGroupedProjects({
 						<div key="no-space" className="space-y-4" data-testid="space-group-rest">
 							<div className="flex items-center gap-2 pt-2">
 								<span className="text-fg-3 text-xs font-semibold uppercase tracking-wider">
-									{t("dashboard.noSpaceGroup")}
+									{t("spaces.homeGroup")}
 								</span>
 								<span className="text-fg-muted text-xs tabular-nums">{group.projects.length}</span>
 							</div>
@@ -179,7 +185,8 @@ function SpaceGroupedProjects({
 				const space = group.space;
 				const isCollapsed = collapsed.has(space.id);
 				const masked = isSpaceSensitive(space, sensitiveProjectIds);
-				const taskCount = group.projects.reduce((sum, p) => sum + taskCountOf(p.id), 0);
+				const needsYou = group.projects.reduce((sum, p) => sum + needsYouCountOf(p.id), 0);
+				const working = group.projects.reduce((sum, p) => sum + workingCountOf(p.id), 0);
 				const isHeaderTarget = headerDropTarget?.spaceId === space.id;
 
 				return (
@@ -247,18 +254,46 @@ function SpaceGroupedProjects({
 								>
 									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
 								</svg>
+								<span className="w-5 h-5 flex-shrink-0 rounded bg-raised flex items-center justify-center text-nano font-semibold text-fg-3">
+									{(space.name.trim()[0] ?? "?").toUpperCase()}
+								</span>
 								<span className={`text-fg-2 text-sm font-semibold truncate ${masked ? MASK_CLASS : ""}`}>
 									{space.name}
 								</span>
 								<span className="text-fg-muted text-xs tabular-nums flex-shrink-0">
-									{group.projects.length}
-									{taskCount > 0 && ` · ${t.plural("activity.taskCountShort", taskCount)}`}
+									{t.plural("spaces.projectCount", group.projects.length)}
 								</span>
+								{needsYou > 0 && (
+									<span className="flex items-center gap-1 flex-shrink-0 text-xs text-fg-3">
+										<span aria-hidden="true" className="w-2 h-2 rounded-full bg-awake" />
+										{t("spaces.needYou", { count: String(needsYou) })}
+									</span>
+								)}
+								{working > 0 && (
+									<span className="flex items-center gap-1 flex-shrink-0 text-xs text-fg-3">
+										<span aria-hidden="true" className="w-2 h-2 rounded-full bg-accent" />
+										{t("spaces.working", { count: String(working) })}
+									</span>
+								)}
 							</button>
+							{onAddProjects && (
+								<button
+									type="button"
+									onClick={() => onAddProjects(space)}
+									className="ml-auto p-1 rounded text-fg-muted hover:text-fg hover:bg-elevated transition-colors"
+									title={t("spaces.addProjects")}
+									aria-label={t("spaces.addProjects")}
+									data-testid={`space-add-projects-${space.id}`}
+								>
+									<svg aria-hidden="true" focusable="false" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+										<path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+									</svg>
+								</button>
+							)}
 						</div>
 						{!isCollapsed && group.projects.map((project, index) => (
 							<div key={`${space.id}:${project.id}`}>
-								{renderProject(project, rowCtx(space.id, group.projects, project, index))}
+								{renderProject(project, rowCtx(space.id, group.projects, project, index), space.id)}
 							</div>
 						))}
 					</div>

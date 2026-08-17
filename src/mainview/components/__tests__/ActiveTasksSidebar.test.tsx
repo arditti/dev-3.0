@@ -1240,3 +1240,79 @@ describe("ActiveTasksSidebar — space scope", () => {
 		await waitFor(() => expect(screen.getByText("Привет! как сам?")).toBeInTheDocument());
 	});
 });
+
+describe("ActiveTasksSidebar — dashboard mount (no current project)", () => {
+	function renderDashboardMount() {
+		return render(
+			<I18nProvider>
+				<ActiveTasksSidebar
+					allProjects={[project]}
+					dispatch={vi.fn()}
+					navigate={vi.fn()}
+					agents={[claudeAgent]}
+					bellCounts={new Map()}
+					taskPorts={new Map()}
+				/>
+			</I18nProvider>,
+		);
+	}
+
+	it("hides the scope switcher and shows the across-all-spaces subtitle", async () => {
+		const { api } = await import("../../rpc");
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask()] },
+		]);
+		renderDashboardMount();
+		await waitFor(() => expect(screen.getByText("Привет! как сам?")).toBeInTheDocument());
+		expect(screen.queryByTestId("sidebar-scope-project")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("sidebar-scope-space")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("sidebar-scope-global")).not.toBeInTheDocument();
+		expect(screen.getByText("Across all spaces")).toBeInTheDocument();
+	});
+
+	it("shows every project's tasks regardless of the stored scope", async () => {
+		const { api } = await import("../../rpc");
+		localStorage.setItem("dev3-sidebar-scope", "project");
+		const other = makeTask({
+			id: "t-other", seq: 7, projectId: "p9",
+			title: "Other project task", description: "Other project task",
+			groupId: null as unknown as string, variantIndex: null,
+		});
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask()] },
+			{ projectId: "p9", tasks: [other] },
+		]);
+		render(
+			<I18nProvider>
+				<ActiveTasksSidebar
+					allProjects={[project, { ...project, id: "p9", name: "Ninth" }]}
+					dispatch={vi.fn()}
+					navigate={vi.fn()}
+					agents={[claudeAgent]}
+					bellCounts={new Map()}
+					taskPorts={new Map()}
+				/>
+			</I18nProvider>,
+		);
+		await waitFor(() => expect(screen.getByText("Other project task")).toBeInTheDocument());
+		expect(screen.getByTestId("sidebar-project-badge-t-other")).toHaveTextContent("Ninth");
+	});
+
+	it("the Needs-you preset drives the is:attention token", async () => {
+		const user = userEvent.setup();
+		const { api } = await import("../../rpc");
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask(), makeTask({ id: "t-rev", seq: 8, status: "review-by-user", title: "Waiting on you", description: "Waiting on you", groupId: null as unknown as string, variantIndex: null })] },
+		]);
+		renderDashboardMount();
+		await waitFor(() => expect(screen.getByText("Waiting on you")).toBeInTheDocument());
+
+		await user.click(screen.getByTestId("sidebar-preset-attention"));
+		await waitFor(() => {
+			expect(screen.getByText("Waiting on you")).toBeInTheDocument();
+			expect(screen.queryByText("Привет! как сам?")).not.toBeInTheDocument();
+		});
+		await user.click(screen.getByTestId("sidebar-preset-all"));
+		await waitFor(() => expect(screen.getByText("Привет! как сам?")).toBeInTheDocument());
+	});
+});

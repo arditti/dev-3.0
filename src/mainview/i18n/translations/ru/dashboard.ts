@@ -242,7 +242,7 @@ const dashboard = {
 	"memory.bannerOutOfRoom_few": "Памяти в обрез — ещё {count} задачи машина, скорее всего, не потянет.",
 	"memory.bannerOutOfRoom_many": "Памяти в обрез — ещё {count} задач машина, скорее всего, не потянет.",
 	"memory.bannerOutOfRoom_other": "Памяти в обрез — ещё {count} задач машина, скорее всего, не потянет.",
-	"dashboard.noSpaceGroup": "Прочие проекты",
+	"dashboard.noSpaceGroup": "Home",
 };
 
 export default dashboard;

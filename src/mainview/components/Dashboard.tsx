@@ -1,24 +1,72 @@
-import type { Dispatch } from "react";
+import { useMemo, useState, type Dispatch } from "react";
 import { toast } from "../toast";
-import type { Project } from "../../shared/types";
-import { orderProjectsForDisplay } from "../../shared/types";
+import type { CodingAgent, PortInfo, Project } from "../../shared/types";
+import { isBuiltinOpsProject, isSpaceSensitive, orderProjectsForDisplay } from "../../shared/types";
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
 import { confirm } from "../confirm";
 import { useT } from "../i18n";
 import { trackEvent } from "../analytics";
+import { useSpaces } from "../useSpaces";
+import { useNarrowViewport } from "../hooks/useNarrowViewport";
+import { CAROUSEL_MAX_WIDTH } from "./MobileBoardCarousel";
 import ActivityOverview from "./ActivityOverview";
+import ActiveTasksSidebar from "./ActiveTasksSidebar";
+import SpacesRail from "./SpacesRail";
+import NewSpaceModal from "./NewSpaceModal";
 
 interface DashboardProps {
 	projects: Project[];
 	dispatch: Dispatch<AppAction>;
 	navigate: (route: Route) => void;
 	bellCounts: Map<string, number>;
+	bellReasons?: Map<string, string[]>;
+	taskPorts: Map<string, PortInfo[]>;
+	agents: CodingAgent[];
 	onOpenAddProject: () => void;
 }
 
-function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject }: DashboardProps) {
+function Dashboard({
+	projects,
+	dispatch,
+	navigate,
+	bellCounts,
+	bellReasons,
+	taskPorts,
+	agents,
+	onOpenAddProject,
+}: DashboardProps) {
 	const t = useT();
+	const { spaces } = useSpaces();
+	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
+	const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+	const [showNewSpace, setShowNewSpace] = useState(false);
+
+	// The rail and the cross-space task panel only exist once a space does:
+	// with zero spaces the dashboard stays exactly the screen it was.
+	const hasSpaces = spaces.length > 0;
+
+	const railCounts = useMemo(() => {
+		const ordinary = projects.filter((p) => !p.deleted && !isBuiltinOpsProject(p));
+		const known = new Set(ordinary.map((p) => p.id));
+		const perSpace = new Map<string, number>();
+		const associated = new Set<string>();
+		for (const space of spaces) {
+			const members = space.projectIds.filter((id) => known.has(id));
+			perSpace.set(space.id, members.length);
+			for (const id of members) associated.add(id);
+		}
+		return {
+			perSpace,
+			total: ordinary.length,
+			home: ordinary.filter((p) => !associated.has(p.id)).length,
+		};
+	}, [projects, spaces]);
+
+	const maskedSpaceIds = useMemo(() => {
+		const sensitive = new Set(projects.filter((p) => p.sensitive).map((p) => p.id));
+		return new Set(spaces.filter((s) => isSpaceSensitive(s, sensitive)).map((s) => s.id));
+	}, [projects, spaces]);
 
 	async function handleRemoveProject(projectId: string) {
 		const confirmed = await confirm({
@@ -55,7 +103,20 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 
 	return (
 		<div className="h-full w-full flex flex-col">
-			<div className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-hidden flex">
+				{hasSpaces && projects.length > 0 && (
+					<SpacesRail
+						spaces={spaces}
+						projectCountOf={(id) => railCounts.perSpace.get(id) ?? 0}
+						maskedSpaceIds={maskedSpaceIds}
+						totalProjects={railCounts.total}
+						homeCount={railCounts.home}
+						selectedSpaceId={selectedSpaceId}
+						onSelect={setSelectedSpaceId}
+						onNewSpace={() => setShowNewSpace(true)}
+					/>
+				)}
+				<div className="flex-1 min-w-0 overflow-hidden">
 				{projects.length > 0 ? (
 					<ActivityOverview
 						projects={projects}
@@ -65,6 +126,8 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 						onRemoveProject={handleRemoveProject}
 						onOpenAddProject={onOpenAddProject}
 						onReorderProjects={handleReorderProjects}
+						selectedSpaceId={selectedSpaceId}
+						onNewSpace={() => setShowNewSpace(true)}
 					/>
 				) : (
 					<div className="h-full overflow-y-auto p-3 md:p-7">
@@ -101,7 +164,26 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 						</div>
 					</div>
 				)}
+				</div>
+				{/* The same sidebar component the project view uses, with no current
+				    project: locked to global scope — active work across all spaces. */}
+				{hasSpaces && projects.length > 0 && !narrow && (
+					<div className="w-[21rem] flex-shrink-0 border-l border-edge overflow-hidden">
+						<ActiveTasksSidebar
+							allProjects={projects}
+							dispatch={dispatch}
+							navigate={navigate}
+							agents={agents}
+							bellCounts={bellCounts}
+							bellReasons={bellReasons}
+							taskPorts={taskPorts}
+						/>
+					</div>
+				)}
 			</div>
+			{showNewSpace && (
+				<NewSpaceModal projects={projects} onClose={() => setShowNewSpace(false)} />
+			)}
 		</div>
 	);
 }

@@ -48,7 +48,8 @@ function renderGroups(sensitive: ReadonlySet<string> = new Set()) {
 				groups={groups}
 				spaceOrder={["sp_a", "sp_b"]}
 				sensitiveProjectIds={sensitive}
-				taskCountOf={() => 0}
+				needsYouCountOf={() => 0}
+				workingCountOf={() => 0}
 				renderProject={(p) => <div data-testid={`row-${p.id}`}>{p.name}</div>}
 				renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
 			/>
@@ -69,7 +70,7 @@ describe("SpaceGroupedProjects", () => {
 		// p1 renders under both of its spaces.
 		expect(screen.getAllByTestId("row-p1")).toHaveLength(2);
 		// Bottom block renders through its own callback under the computed heading.
-		expect(screen.getByTestId("space-group-rest")).toHaveTextContent("Other projects");
+		expect(screen.getByTestId("space-group-rest")).toHaveTextContent("Home");
 		expect(screen.getByTestId("rest-row-p3")).toBeInTheDocument();
 	});
 
@@ -88,5 +89,71 @@ describe("SpaceGroupedProjects", () => {
 		expect(alpha.querySelector(".streamer-private")).not.toBeNull();
 		const beta = screen.getByTestId("space-header-sp_b");
 		expect(beta.querySelector(".streamer-private")).toBeNull();
+	});
+});
+
+describe("SpaceGroupedProjects — header details from the mock", () => {
+	it("shows a letter badge, the project count, and split need-you / working counts", () => {
+		render(
+			<I18nProvider>
+				<SpaceGroupedProjects
+					groups={groups}
+					spaceOrder={["sp_a", "sp_b"]}
+					sensitiveProjectIds={new Set()}
+					needsYouCountOf={(id) => (id === "p1" ? 1 : 0)}
+					workingCountOf={(id) => (id === "p2" ? 2 : 0)}
+					renderProject={(p) => <div data-testid={`row-${p.id}`}>{p.name}</div>}
+					renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
+				/>
+			</I18nProvider>,
+		);
+		const header = screen.getByTestId("space-header-sp_a");
+		expect(header).toHaveTextContent("A");        // letter badge
+		expect(header).toHaveTextContent("2 projects");
+		expect(header).toHaveTextContent("1 need you");
+		expect(header).toHaveTextContent("2 working");
+	});
+
+	it("offers the add-projects control only when the handler is provided", async () => {
+		const user = userEvent.setup();
+		const onAddProjects = vi.fn();
+		render(
+			<I18nProvider>
+				<SpaceGroupedProjects
+					groups={groups}
+					spaceOrder={["sp_a", "sp_b"]}
+					sensitiveProjectIds={new Set()}
+					needsYouCountOf={() => 0}
+					workingCountOf={() => 0}
+					renderProject={(p) => <div data-testid={`row-${p.id}`}>{p.name}</div>}
+					renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
+					onAddProjects={onAddProjects}
+				/>
+			</I18nProvider>,
+		);
+		await user.click(screen.getByTestId("space-add-projects-sp_a"));
+		expect(onAddProjects).toHaveBeenCalledWith(expect.objectContaining({ id: "sp_a" }));
+	});
+
+	it("passes the owning space id to the row renderer so chips can omit it", () => {
+		const renderProject = vi.fn((p) => <div data-testid={`row-${p.id}`}>{p.name}</div>);
+		render(
+			<I18nProvider>
+				<SpaceGroupedProjects
+					groups={groups}
+					spaceOrder={["sp_a", "sp_b"]}
+					sensitiveProjectIds={new Set()}
+					needsYouCountOf={() => 0}
+					workingCountOf={() => 0}
+					renderProject={renderProject}
+					renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
+				/>
+			</I18nProvider>,
+		);
+		expect(renderProject).toHaveBeenCalledWith(
+			expect.objectContaining({ id: "p1" }),
+			expect.anything(),
+			"sp_a",
+		);
 	});
 });
