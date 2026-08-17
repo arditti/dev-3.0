@@ -10,20 +10,28 @@ interface AddProjectsToSpaceModalProps {
 	space: Space;
 	projects: Project[];
 	onClose: () => void;
+	/** Hand off to the Add Project flow, pre-linked to this space. */
+	onCreateProject?: (space: Space) => void;
 }
 
 /** Adds existing projects to one space — the space header's `+`. */
-function AddProjectsToSpaceModal({ space, projects, onClose }: AddProjectsToSpaceModalProps) {
+function AddProjectsToSpaceModal({ space, projects, onClose, onCreateProject }: AddProjectsToSpaceModalProps) {
 	const t = useT();
 	const trapRef = useFocusTrap<HTMLDivElement>();
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [saving, setSaving] = useState(false);
+	const [query, setQuery] = useState("");
 
 	useEscapeKey(onClose);
 
-	const candidates = projects.filter(
+	const members = projects.filter(
 		(p) => !p.deleted && !isBuiltinOpsProject(p) && !space.projectIds.includes(p.id),
 	);
+	const q = query.trim().toLowerCase();
+	// Match on name and path — a project is often recognised by where it lives.
+	const candidates = q
+		? members.filter((p) => `${p.name} ${p.path}`.toLowerCase().includes(q))
+		: members;
 
 	function toggle(projectId: string) {
 		setSelected((prev) => {
@@ -72,6 +80,16 @@ function AddProjectsToSpaceModal({ space, projects, onClose }: AddProjectsToSpac
 					{t("spaces.addProjectsTitle", { name: space.name })}
 				</h2>
 
+				<input
+					type="text"
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					placeholder={t("spaces.addProjectsSearch")}
+					autoFocus
+					className="w-full bg-elevated border border-edge rounded-lg px-3 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-accent/50 transition-colors"
+					data-testid="add-to-space-search"
+				/>
+
 				<div className="max-h-56 overflow-y-auto rounded-lg border border-edge divide-y divide-edge/40">
 					{candidates.map((project) => (
 						<label
@@ -89,11 +107,27 @@ function AddProjectsToSpaceModal({ space, projects, onClose }: AddProjectsToSpac
 						</label>
 					))}
 					{candidates.length === 0 && (
-						<div className="px-3 py-4 text-xs text-fg-muted text-center">{t("spaces.allProjectsInSpace")}</div>
+						<div className="px-3 py-4 text-xs text-fg-muted text-center">
+							{q ? t("spaces.noProjectsMatch") : t("spaces.allProjectsInSpace")}
+						</div>
 					)}
 				</div>
 
-				<div className="flex justify-end gap-2">
+				<div className="flex items-center gap-2">
+					{onCreateProject && (
+						<button
+							type="button"
+							onClick={() => onCreateProject(space)}
+							className="flex items-center gap-1.5 px-2 py-1.5 -ml-2 text-sm rounded-lg text-accent hover:bg-elevated transition-colors"
+							data-testid="add-to-space-new-project"
+						>
+							<svg aria-hidden="true" focusable="false" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+							</svg>
+							{t("spaces.addProjectsNewProject")}
+						</button>
+					)}
+					<span className="flex-1" />
 					<button
 						type="button"
 						onClick={onClose}

@@ -15,9 +15,11 @@ import ProjectSpacesField from "./ProjectSpacesField";
 interface AddProjectModalProps {
 	dispatch: Dispatch<AppAction>;
 	onClose: () => void;
+	/** Pre-selected space memberships when the flow started from a space. */
+	initialSpaceIds?: string[];
 }
 
-function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
+function AddProjectModal({ dispatch, onClose, initialSpaceIds }: AddProjectModalProps) {
 	const t = useT();
 	const trapRef = useFocusTrap<HTMLDivElement>();
 	const [kind, setKind] = useState<"git" | "operations">("git");
@@ -32,7 +34,7 @@ function AddProjectModal({ dispatch, onClose }: AddProjectModalProps) {
 	const [initializing, setInitializing] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [cloneOutput, setCloneOutput] = useState<string[]>([]);
-	const [pendingSpaceIds, setPendingSpaceIds] = useState<string[]>([]);
+	const [pendingSpaceIds, setPendingSpaceIds] = useState<string[]>(initialSpaceIds ?? []);
 	const cloneProgressIdRef = useRef<string | null>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
 

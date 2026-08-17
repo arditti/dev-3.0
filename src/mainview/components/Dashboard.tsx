@@ -23,7 +23,7 @@ interface DashboardProps {
 	bellReasons?: Map<string, string[]>;
 	taskPorts: Map<string, PortInfo[]>;
 	agents: CodingAgent[];
-	onOpenAddProject: () => void;
+	onOpenAddProject: (spaceIds?: string[]) => void;
 }
 
 function Dashboard({
@@ -165,7 +165,7 @@ function Dashboard({
 								{t("dashboard.noProjectsHint")}
 							</p>
 							<button
-								onClick={onOpenAddProject}
+								onClick={() => onOpenAddProject()}
 								className="px-5 py-2 bg-accent-fill text-white text-sm font-semibold rounded-xl hover:bg-accent-fill-hover shadow-lg shadow-accent/20 transition-[background-color,transform] active:scale-[0.96]"
 							>
 								{t("dashboard.addProject")}

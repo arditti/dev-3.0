@@ -32,7 +32,7 @@ interface ActivityOverviewProps {
 	navigate: (route: Route) => void;
 	bellCounts: Map<string, number>;
 	onRemoveProject?: (projectId: string) => void | Promise<void>;
-	onOpenAddProject?: () => void;
+	onOpenAddProject?: (spaceIds?: string[]) => void;
 	onReorderProjects?: (projectIds: string[]) => void | Promise<void>;
 	/** Rail filter: null = all, `HOME_GROUP_ID` = the computed Home group. */
 	selectedSpaceId?: string | null;
@@ -801,7 +801,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						{onOpenAddProject && (
 							<button
 								type="button"
-								onClick={onOpenAddProject}
+								onClick={() => onOpenAddProject()}
 								className="px-4 py-1.5 min-h-[44px] md:min-h-0 bg-accent-fill text-white text-sm font-semibold rounded-xl hover:bg-accent-fill-hover shadow-lg shadow-accent/20 transition-[background-color,transform] active:scale-[0.96] flex-shrink-0"
 							>
 								{t("dashboard.addProject")}
@@ -858,6 +858,10 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						space={addProjectsSpace}
 						projects={visibleProjects}
 						onClose={() => setAddProjectsSpace(null)}
+						onCreateProject={onOpenAddProject ? (space) => {
+							setAddProjectsSpace(null);
+							onOpenAddProject([space.id]);
+						} : undefined}
 					/>
 				)}
 				{spacesPicker && (
