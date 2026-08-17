@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type Dispatch } from "react";
 import { useTaskSortOrder } from "../hooks/useTaskSortOrder";
 import type { CodingAgent, PortInfo, Project, Task, TaskPriority, TaskStatus } from "../../shared/types";
-import { ACTIVE_STATUSES, ALL_PRIORITIES, DEFAULT_PRIORITY } from "../../shared/types";
+import { ACTIVE_STATUSES, ALL_PRIORITIES, DEFAULT_PRIORITY, spacesOfProject } from "../../shared/types";
 import { PRIORITY_NAME_KEYS } from "./priorityStyles";
 import { groupTasksIntoTiers } from "./sidebarTiers";
 import { toast } from "../toast";
@@ -261,7 +261,10 @@ function ActiveTasksSidebar({
 		priorityFor: (task) => task.priority ?? DEFAULT_PRIORITY,
 		hasPortFor: (task) => (taskPorts.get(task.id)?.length ?? 0) > 0,
 		isAttentionFor: (task) => isAttentionTask(task),
-	}), [agents, projectById, taskPorts, t]);
+		// Space names come from the task's OWN project, so a cross-project pool
+		// can be filtered by space; a single-project pool yields one value.
+		spaceNamesFor: (task) => spacesOfProject(spaces, task.projectId).map((s) => s.name),
+	}), [agents, projectById, taskPorts, spaces, t]);
 
 	const priorityCandidates = useMemo<FilterFunnelOption[]>(
 		() => ALL_PRIORITIES.map((p) => ({ facet: "priority" as const, value: p, label: `${p} — ${t(PRIORITY_NAME_KEYS[p])}` })),

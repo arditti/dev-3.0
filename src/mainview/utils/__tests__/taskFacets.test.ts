@@ -154,3 +154,55 @@ describe("buildFilterGroups", () => {
 		expect(buildFilterGroups([], resolverFor(), candidates)).toEqual([]);
 	});
 });
+
+describe("buildFilterGroups — SPACES group", () => {
+	const baseResolver: FacetResolver = {
+		agents: [],
+		labelsFor: () => [],
+		statusValuesFor: (task) => [task.status],
+		priorityFor: (task) => task.priority ?? "P2",
+		hasPortFor: () => false,
+		isAttentionFor: (task) => isAttentionTask(task),
+	};
+	const spaceCandidates = {
+		priorityCandidates: [{ facet: "priority" as const, value: "P2", label: "P2 — Normal" }],
+		statusCandidates: [{ facet: "status" as const, value: "in-progress", label: "Agent is Working" }],
+		flagLabels: { attention: "Needs attention", port: "Has running port" },
+	};
+
+	it("lists every space present in the pool, alphabetically, after STATUS", () => {
+		const spacesByProject: Record<string, string[]> = {
+			p1: ["Labs", "Client X"],
+			p2: ["Client X"],
+			p3: [],
+		};
+		const groups = buildFilterGroups(
+			[
+				makeTask({ id: "a", projectId: "p1" }),
+				makeTask({ id: "b", projectId: "p2" }),
+				makeTask({ id: "c", projectId: "p3" }),
+			],
+			{ ...baseResolver, spaceNamesFor: (task) => spacesByProject[task.projectId] ?? [] },
+			spaceCandidates,
+		);
+		const ids = groups.map((g) => g.id);
+		expect(ids).toContain("spaces");
+		expect(ids.indexOf("spaces")).toBeGreaterThan(ids.indexOf("status"));
+		const spaceGroup = groups.find((g) => g.id === "spaces")!;
+		expect(spaceGroup.options.map((o) => o.label)).toEqual(["Client X", "Labs"]);
+		expect(spaceGroup.options.every((o) => o.facet === "space")).toBe(true);
+	});
+
+	it("drops the group when the surface supplies no space resolver (single project board)", () => {
+		const groups = buildFilterGroups([makeTask()], baseResolver, spaceCandidates);
+		expect(groups.map((g) => g.id)).not.toContain("spaces");
+	});
+
+	it("puts the task's own spaces into the query context", () => {
+		const c = taskQueryContext(makeTask({ projectId: "p1" }), {
+			...baseResolver,
+			spaceNamesFor: () => ["Client X"],
+		});
+		expect(c.spaceNames).toEqual(["Client X"]);
+	});
+});

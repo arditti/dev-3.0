@@ -37,6 +37,7 @@ function ctx(overrides: Partial<TaskQueryContext> = {}): TaskQueryContext {
 		agentName: null,
 		statusValues: [],
 		priorityValue: "",
+		spaceNames: [],
 		hasPort: false,
 		isAttention: false,
 		prNumber: null,
@@ -328,5 +329,26 @@ describe("countActiveFacetTokens", () => {
 
 	it("ignores free text and unrecognized tokens", () => {
 		expect(countActiveFacetTokens("login foo:bar")).toBe(0);
+	});
+});
+
+describe("space: facet", () => {
+	it("matches a space name case-insensitively by substring", () => {
+		const task = makeTask();
+		const context = ctx({ spaceNames: ["Client X", "Labs"] });
+		expect(matchesTaskQuery(task, 'space:"client x"', context)).toBe(true);
+		expect(matchesTaskQuery(task, "space:labs", context)).toBe(true);
+		expect(matchesTaskQuery(task, "space:lab", context)).toBe(true);
+		expect(matchesTaskQuery(task, "space:infra", context)).toBe(false);
+	});
+
+	it("never matches a task whose project is in no space", () => {
+		expect(matchesTaskQuery(makeTask(), "space:anything", ctx({ spaceNames: [] }))).toBe(false);
+	});
+
+	it("ANDs with other facets", () => {
+		const context = ctx({ spaceNames: ["Client X"], priorityValue: "p1" });
+		expect(matchesTaskQuery(makeTask(), 'space:"Client X" priority:p1', context)).toBe(true);
+		expect(matchesTaskQuery(makeTask(), 'space:"Client X" priority:p3', context)).toBe(false);
 	});
 });

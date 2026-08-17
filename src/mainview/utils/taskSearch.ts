@@ -21,7 +21,7 @@ import { getTaskTitle } from "../../shared/types";
  */
 
 /** Ordered set of recognized facet keys. Extend here to add a facet. */
-export const FACET_KEYS = ["priority", "label", "agent", "status", "is", "has"] as const;
+export const FACET_KEYS = ["priority", "label", "agent", "status", "space", "is", "has"] as const;
 export type FacetKey = (typeof FACET_KEYS)[number];
 
 /**
@@ -45,6 +45,8 @@ export interface TaskQueryContext {
 	isAttention: boolean;
 	/** The task's effective priority level (e.g. "p2"), lowercased. */
 	priorityValue: string;
+	/** Names of every space the task's project belongs to (may be empty). */
+	spaceNames: string[];
 	/** PR number for the task's branch, for free-text identifier matching. */
 	prNumber?: number | null;
 }
@@ -78,6 +80,11 @@ const FACET_DEFS: Record<FacetKey, FacetDef> = {
 		key: "status",
 		kind: "free",
 		match: (ctx, v) => ctx.statusValues.some((s) => s.toLowerCase().includes(v)),
+	},
+	space: {
+		key: "space",
+		kind: "free",
+		match: (ctx, v) => ctx.spaceNames.some((n) => n.toLowerCase().includes(v)),
 	},
 	is: {
 		key: "is",
@@ -119,7 +126,7 @@ function unescapeDslValue(inner: string): string {
 }
 
 function emptyFacets(): Record<FacetKey, string[]> {
-	return { priority: [], label: [], agent: [], status: [], is: [], has: [] };
+	return { priority: [], label: [], agent: [], status: [], space: [], is: [], has: [] };
 }
 
 /**
