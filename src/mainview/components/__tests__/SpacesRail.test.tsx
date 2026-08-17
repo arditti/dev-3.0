@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "../../i18n";
 import SpacesRail from "../SpacesRail";
@@ -20,6 +20,7 @@ function renderRail(over?: Partial<React.ComponentProps<typeof SpacesRail>>) {
 		selectedSpaceId: null,
 		onSelect: vi.fn(),
 		onNewSpace: vi.fn(),
+		onReorder: vi.fn(),
 		...over,
 	};
 	render(
@@ -73,5 +74,59 @@ describe("SpacesRail", () => {
 		const props = renderRail();
 		await user.click(screen.getByTestId("rail-new-space"));
 		expect(props.onNewSpace).toHaveBeenCalled();
+	});
+});
+
+describe("SpacesRail — drag to reorder", () => {
+	function dragRail(fromId: string, toId: string, atBottomHalf: boolean) {
+		const from = screen.getByTestId(`rail-space-${fromId}`);
+		const to = screen.getByTestId(`rail-space-${toId}`);
+		// happy-dom has no layout, so pin the target's box for the side maths.
+		to.getBoundingClientRect = () =>
+			({ top: 0, height: 40, bottom: 40, left: 0, right: 0, width: 100, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+		const store = new Map<string, string>();
+		const dataTransfer = {
+			setData: (k: string, v: string) => store.set(k, v),
+			getData: (k: string) => store.get(k) ?? "",
+			effectAllowed: "",
+			dropEffect: "",
+		};
+		const clientY = atBottomHalf ? 30 : 10;
+		fireEvent.dragStart(from, { dataTransfer });
+		// happy-dom's synthetic drag events drop `clientY`, so pin it explicitly.
+		for (const make of [createEvent.dragOver, createEvent.drop]) {
+			const event = make(to, { dataTransfer });
+			Object.defineProperty(event, "clientY", { get: () => clientY });
+			fireEvent(to, event);
+		}
+	}
+
+	it("persists the new order when a space is dropped after another", () => {
+		const props = renderRail();
+		dragRail("sp_b", "sp_a", true);
+		expect(props.onReorder).toHaveBeenCalledWith(["sp_a", "sp_b"]);
+	});
+
+	it("persists the new order when a space is dropped before another", () => {
+		const props = renderRail();
+		dragRail("sp_b", "sp_a", false);
+		expect(props.onReorder).toHaveBeenCalledWith(["sp_b", "sp_a"]);
+	});
+
+	it("is a no-op when a space is dropped on itself", () => {
+		const props = renderRail();
+		dragRail("sp_a", "sp_a", true);
+		expect(props.onReorder).not.toHaveBeenCalled();
+	});
+
+	it("does not make rows draggable when no reorder handler is given", () => {
+		renderRail({ onReorder: undefined });
+		expect(screen.getByTestId("rail-space-sp_a")).not.toHaveAttribute("draggable", "true");
+	});
+
+	it("never makes All projects or Home draggable — neither is an ordered space", () => {
+		renderRail();
+		expect(screen.getByTestId("rail-all-projects")).not.toHaveAttribute("draggable", "true");
+		expect(screen.getByTestId("rail-home")).not.toHaveAttribute("draggable", "true");
 	});
 });

@@ -68,6 +68,14 @@ function Dashboard({
 		return new Set(spaces.filter((s) => isSpaceSensitive(s, sensitive)).map((s) => s.id));
 	}, [projects, spaces]);
 
+	async function handleReorderSpaces(order: string[]) {
+		try {
+			await api.request.reorderSpaces({ order });
+		} catch (err) {
+			toast.error(t("spaces.failedUpdate", { error: String(err) }), { source: "dashboard" });
+		}
+	}
+
 	async function handleRemoveProject(projectId: string) {
 		const confirmed = await confirm({
 			title: t("dashboard.confirmRemoveTitle"),
@@ -114,6 +122,7 @@ function Dashboard({
 						selectedSpaceId={selectedSpaceId}
 						onSelect={setSelectedSpaceId}
 						onNewSpace={() => setShowNewSpace(true)}
+						onReorder={handleReorderSpaces}
 					/>
 				)}
 				<div className="flex-1 min-w-0 overflow-hidden">

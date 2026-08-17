@@ -1,3 +1,4 @@
+import { useRef, useState, type DragEvent } from "react";
 import type { Space } from "../../shared/types";
 import { HOME_GROUP_ID } from "../utils/spaceGroups";
 import { MASK_CLASS } from "../sensitive-projects";
@@ -15,6 +16,9 @@ interface SpacesRailProps {
 	selectedSpaceId: string | null;
 	onSelect: (id: string | null) => void;
 	onNewSpace: () => void;
+	/** Persist a new space order (drag within the rail). Same write as the
+	 *  dashboard header grip — drag only ever reorders, never membership. */
+	onReorder?: (order: string[]) => void;
 }
 
 /** First letter of the space name, for the neutral square badge (no colour). */
@@ -36,13 +40,70 @@ function SpacesRail({
 	selectedSpaceId,
 	onSelect,
 	onNewSpace,
+	onReorder,
 }: SpacesRailProps) {
 	const t = useT();
+	// The id lives in a ref as well as state: `drop` must not depend on a render
+	// having happened since `dragstart` (state is only for the drag styling).
+	const draggedRef = useRef<string | null>(null);
+	const [dragged, setDragged] = useState<string | null>(null);
+	const [dropTarget, setDropTarget] = useState<{ spaceId: string; side: "before" | "after" } | null>(null);
 
 	function rowClass(active: boolean): string {
 		return `w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors ${
 			active ? "bg-accent/15 text-fg" : "text-fg-2 hover:bg-elevated-hover hover:text-fg"
 		}`;
+	}
+
+	function commitReorder(targetId: string, side: "before" | "after") {
+		const source = draggedRef.current;
+		if (!onReorder || !source || source === targetId) return;
+		const order = spaces.map((s) => s.id).filter((id) => id !== source);
+		const at = order.indexOf(targetId);
+		if (at === -1) return;
+		order.splice(side === "after" ? at + 1 : at, 0, source);
+		onReorder(order);
+	}
+
+	function dragHandlers(spaceId: string) {
+		if (!onReorder) return {};
+		return {
+			draggable: true,
+			onDragStart: (event: DragEvent<HTMLButtonElement>) => {
+				draggedRef.current = spaceId;
+				setDragged(spaceId);
+				event.dataTransfer.setData("text/plain", `space:${spaceId}`);
+				event.dataTransfer.effectAllowed = "move";
+			},
+			onDragEnd: () => {
+				draggedRef.current = null;
+				setDragged(null);
+				setDropTarget(null);
+			},
+			onDragOver: (event: DragEvent<HTMLButtonElement>) => {
+				if (!draggedRef.current || draggedRef.current === spaceId) return;
+				event.preventDefault();
+				event.dataTransfer.dropEffect = "move";
+				const rect = event.currentTarget.getBoundingClientRect();
+				setDropTarget({
+					spaceId,
+					side: event.clientY > rect.top + rect.height / 2 ? "after" : "before",
+				});
+			},
+			onDragLeave: () => {
+				setDropTarget((cur) => (cur?.spaceId === spaceId ? null : cur));
+			},
+			onDrop: (event: DragEvent<HTMLButtonElement>) => {
+				event.preventDefault();
+				// Read the side off the drop itself: the dragover state may not have
+				// flushed yet, and the pointer is the only source of truth anyway.
+				const rect = event.currentTarget.getBoundingClientRect();
+				commitReorder(spaceId, event.clientY > rect.top + rect.height / 2 ? "after" : "before");
+				draggedRef.current = null;
+				setDragged(null);
+				setDropTarget(null);
+			},
+		};
 	}
 
 	return (
@@ -76,15 +137,27 @@ function SpacesRail({
 				</span>
 				{spaces.map((space) => {
 					const active = selectedSpaceId === space.id;
+					const isTarget = dropTarget?.spaceId === space.id;
 					return (
 						<button
 							key={space.id}
 							type="button"
 							onClick={() => onSelect(space.id)}
 							aria-pressed={active}
-							className={rowClass(active)}
+							className={`relative ${rowClass(active)} ${dragged === space.id ? "opacity-50" : ""} ${
+								onReorder ? "cursor-grab active:cursor-grabbing" : ""
+							}`}
 							data-testid={`rail-space-${space.id}`}
+							{...dragHandlers(space.id)}
 						>
+							{isTarget && (
+								<span
+									aria-hidden="true"
+									className={`absolute left-1 right-1 h-0.5 bg-accent rounded-full ${
+										dropTarget.side === "before" ? "top-0" : "bottom-0"
+									}`}
+								/>
+							)}
 							<span className="w-5 h-5 flex-shrink-0 rounded bg-raised flex items-center justify-center text-nano font-semibold text-fg-3">
 								{initialOf(space.name)}
 							</span>
