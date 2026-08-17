@@ -3,7 +3,7 @@ import type { AgentMessageSource, CliRequest, CliResponse, CustomColumn, Label, 
 import { isValidNotificationDurationMs, NOTIFICATION_MAX_DURATION_MS, NOTIFICATION_MIN_DURATION_MS } from "../shared/duration";
 import { socketMetaPathFor } from "../shared/socket-meta";
 import { isCliEndpointHandle } from "../shared/cli-endpoint";
-import { ACTIVE_STATUSES, ALL_STATUSES, DEV3_REPO_CONFIG_KEYS, ID_PREFIX_MIN_LENGTH, LABEL_COLORS, buildTaskDialogSubject, getTaskTitle, isStatusGuardBlocked, normalizePriority, titleFromDescription } from "../shared/types";
+import { ACTIVE_STATUSES, ALL_STATUSES, DEV3_REPO_CONFIG_KEYS, ID_PREFIX_MIN_LENGTH, LABEL_COLORS, appendTaskNote, buildTaskDialogSubject, getTaskTitle, isStatusGuardBlocked, normalizePriority, titleFromDescription } from "../shared/types";
 import { CODEX_STATUS_HOOK_EVENTS, getCodexHookTargetStatus, type CodexStatusHookEvent } from "../shared/agent-hooks";
 import { CLAUDE_STOP_FAILURE_ERRORS, describeClaudeStopFailure, type ClaudeStopFailureError } from "../shared/agent-stop-failure";
 import { SharedImageError, saveSharedImage } from "./shared-images";
@@ -25,6 +25,7 @@ import { loadSettings } from "./settings";
 import { addVent } from "./vents";
 import { createLogger } from "./logger";
 import { syncTaskBranchName } from "./task-branch-sync";
+import { loadEffectiveTaskHistory } from "./task-blobs";
 import { taskPeek } from "./task-peek";
 import { closePaneRun, paneRunListing, readPaneRun, startPaneRun } from "./task-pane-runs";
 import { buildTaskLifecycleEnv } from "./rpc-handlers/shared-pure";
@@ -121,6 +122,16 @@ function taskNotFoundError(ref: string): Error {
 		`Task not found: ${ref}. If the task was launched by an older app version its id may have changed — ` +
 		"run `dev3 tasks list` to find it by seq, or address it as `--task seq:<N>`.",
 	);
+}
+
+/**
+ * Put the task's archived title/overview history back on the record, leaving a
+ * task with no history at all untouched rather than stamping an empty array on
+ * it — the CLI's task shape stays exactly what it was before the sidecar.
+ */
+async function withArchivedHistory(project: Project, task: Task): Promise<Task> {
+	const history = await loadEffectiveTaskHistory(project, task);
+	return history.length > 0 ? { ...task, history } : task;
 }
 
 /**
@@ -447,6 +458,12 @@ const handlers: Record<string, Handler> = {
 		return tasks;
 	},
 
+	/**
+	 * `dev3 task show --history` is the only reader of a task's title/overview
+	 * history, and the history lives in the task's sidecar rather than in
+	 * tasks.json. Hydrating it here keeps the CLI's task shape complete without
+	 * putting a per-task file read on the board's load path.
+	 */
 	"task.show": async (params) => {
 		const taskId = params.taskId as string;
 		if (!taskId) throw new Error("taskId is required");
@@ -456,12 +473,12 @@ const handlers: Record<string, Handler> = {
 			const tasks = await data.loadTasks(project);
 			const task = findTaskByRef(tasks, taskId);
 			if (!task) throw taskNotFoundError(taskId);
-			return await syncTaskBranchName(project, task);
+			return await withArchivedHistory(project, await syncTaskBranchName(project, task));
 		}
 
 		const found = await resolveTaskAcrossProjects(taskId);
 		if (!found) throw taskNotFoundError(taskId);
-		return await syncTaskBranchName(found.project, found.task);
+		return await withArchivedHistory(found.project, await syncTaskBranchName(found.project, found.task));
 	},
 
 	/**
@@ -765,7 +782,7 @@ const handlers: Record<string, Handler> = {
 				createdAt: now,
 				updatedAt: now,
 			};
-			return { updates: { notes: [...(current.notes ?? []), note] }, result: note };
+			return { updates: { notes: appendTaskNote(current.notes, note) }, result: note };
 		});
 		getPushMessage()?.("taskUpdated", { projectId: project.id, task: updated });
 		return updated;
