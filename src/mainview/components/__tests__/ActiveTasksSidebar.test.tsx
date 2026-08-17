@@ -1298,6 +1298,44 @@ describe("ActiveTasksSidebar — dashboard mount (no current project)", () => {
 		expect(screen.getByTestId("sidebar-project-badge-t-other")).toHaveTextContent("Ninth");
 	});
 
+	it("the presets preserve every other filter in the query", async () => {
+		const user = userEvent.setup();
+		const { api } = await import("../../rpc");
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask(), makeTask({ id: "t-rev", seq: 8, status: "review-by-user", title: "Waiting on you", description: "Waiting on you", groupId: null as unknown as string, variantIndex: null })] },
+		]);
+		renderDashboardMount();
+		await waitFor(() => expect(screen.getByText("Waiting on you")).toBeInTheDocument());
+
+		// A filter the user set by hand, unrelated to the presets.
+		const search = screen.getByPlaceholderText("Search tasks...");
+		await user.type(search, 'priority:P2 hello');
+
+		await user.click(screen.getByTestId("sidebar-preset-attention"));
+		expect((search as HTMLInputElement).value).toBe("priority:P2 hello is:attention");
+
+		await user.click(screen.getByTestId("sidebar-preset-all"));
+		expect((search as HTMLInputElement).value).toBe("priority:P2 hello");
+	});
+
+	it("a preset already in effect is a no-op rather than a query rewrite", async () => {
+		const user = userEvent.setup();
+		const { api } = await import("../../rpc");
+		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ projectId: "p1", tasks: [makeTask()] },
+		]);
+		renderDashboardMount();
+		const search = await screen.findByPlaceholderText("Search tasks...");
+		await user.type(search, "space:Labs");
+
+		await user.click(screen.getByTestId("sidebar-preset-all"));   // already "All"
+		expect((search as HTMLInputElement).value).toBe("space:Labs");
+
+		await user.click(screen.getByTestId("sidebar-preset-attention"));
+		await user.click(screen.getByTestId("sidebar-preset-attention")); // already on
+		expect((search as HTMLInputElement).value).toBe("space:Labs is:attention");
+	});
+
 	it("the Needs-you preset drives the is:attention token", async () => {
 		const user = userEvent.setup();
 		const { api } = await import("../../rpc");

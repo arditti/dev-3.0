@@ -11,7 +11,7 @@ import { api } from "../rpc";
 import type { AppAction, Route } from "../state";
 import { useT } from "../i18n";
 import { getStatusLabel } from "../utils/statusLabel";
-import { matchesTaskQuery } from "../utils/taskSearch";
+import { isFacetTokenActive, matchesTaskQuery, toggleFacetToken } from "../utils/taskSearch";
 import { buildFilterGroups, taskQueryContext, isAttentionTask, type FacetResolver, type FilterFunnelOption } from "../utils/taskFacets";
 import FilterFunnel from "./FilterFunnel";
 import TipCard from "./TipCard";
@@ -438,19 +438,25 @@ function ActiveTasksSidebar({
 					    but the mock's All / Needs-you preset over `is:attention`. */}
 					{!project && (
 						<div role="group" className="inline-flex items-center rounded-lg bg-raised p-0.5" aria-label={t("sidebar.scopeToggleTitle")}>
+							{/* Presets toggle ONLY the `is:attention` token, so any other
+							    filter the user set (space:, label:, free text) survives. */}
 							{([
-								{ key: "all", label: t("spaces.filterAll"), query: "" },
-								{ key: "attention", label: t("spaces.filterNeedsYou"), query: "is:attention" },
-							] as const).map(({ key, label, query }) => {
-								const active = query === "" ? !searchQuery.includes("is:attention") : searchQuery.includes("is:attention");
+								{ key: "all", label: t("spaces.filterAll"), wantsAttention: false },
+								{ key: "attention", label: t("spaces.filterNeedsYou"), wantsAttention: true },
+							] as const).map(({ key, label, wantsAttention }) => {
+								const attentionOn = isFacetTokenActive(searchQuery, "is", "attention");
 								return (
 									<button
 										key={key}
 										type="button"
-										onClick={() => setSearchQuery(query)}
-										aria-pressed={active}
+										onClick={() => {
+											if (attentionOn !== wantsAttention) {
+												setSearchQuery(toggleFacetToken(searchQuery, "is", "attention"));
+											}
+										}}
+										aria-pressed={attentionOn === wantsAttention}
 										className={`px-2 py-0.5 rounded-md text-nano font-medium transition-colors ${
-											active ? "bg-elevated text-fg" : "text-fg-3 hover:text-fg-2"
+											attentionOn === wantsAttention ? "bg-elevated text-fg" : "text-fg-3 hover:text-fg-2"
 										}`}
 										data-testid={`sidebar-preset-${key}`}
 									>
