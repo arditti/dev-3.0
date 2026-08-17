@@ -9,6 +9,11 @@ git history, PRs, and the records in `decisions/`. Newest first.
 - **Rule:** Header-kebab rows that own a detail panel (memory breakdown, tmux sessions) open on ~180 ms hover intent with a click-to-pin, and the panel is anchored on the *menu's* outboard edge level with the row, never over the list; the portaled panel is exempted from the menu's outside-click dismissal via `data-header-flyout`.
 - **Why:** Click-only made both readouts unfindable once they left the header bar — a row that reacts to nothing reads as a label. Opening below/over the row was rejected because it covers the menu the pointer is still using; keeping click-only plus a chevron was rejected as chrome that still costs a click to learn.
 - **Status:** Implemented — `src/mainview/utils/menuFlyout.ts`, `MemoryHeadroomIndicator.tsx`, `TmuxSessionManager.tsx`, `GlobalHeader.tsx`; PRODUCT_UX_BIBLE §12.6.
+## 2026-08-17 — A Space filters the dashboard; it never becomes a place
+
+- **Rule:** Spaces group projects on the dashboard only — a rail that FILTERS the overview, collapsible group headers, row membership chips + a `Spaces…` action, rename/delete behind one `…`; no space route, no merged board, no colour, no stored `Home` (it is computed from zero-membership projects), and drag reorders only. The cross-space task list is the existing `ActiveTasksSidebar` component mounted without a current project, not a second panel.
+- **Why:** Giving a space a route invites "where is this place's board" — the uncanny-valley merged board issue #257 rejected; and many-to-many membership makes a drag unable to show which edge it removed. Rejected alternatives: a stored `Home` (writes to every user's state on upgrade, then needs permanent exceptions) and a dashboard-specific task panel (duplicate row/tier logic).
+- **Status:** Implemented. Evidence: `PRODUCT_UX_BIBLE.md` §10, `src/mainview/components/SpacesRail.tsx`, `decisions/2026/08/17/spaces-dashboard-follows-the-proposal-mock.md`.
 
 ## 2026-08-17 — A stored secret is read-only until the user reveals it
 
