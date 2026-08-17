@@ -1,6 +1,6 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFile } from "./data";
+import { atomicWriteFile } from "./atomic-write";
 import { withFileLock } from "./file-lock";
 import { DEV3_HOME } from "./paths";
 import type { Space, SpacesFile } from "../shared/types";
