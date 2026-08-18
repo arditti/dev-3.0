@@ -133,8 +133,6 @@ const common = {
 	"sidebar.globalLoading": "Loading tasks from all projects…",
 	"sidebar.unknownProject": "Unknown project",
 	"sidebar.statusChanged": "Status changed {ago} · {date}",
-	"sidebar.scopeAttention": "Needs attention",
-	"sidebar.noAttentionTasks": "Nothing needs your attention",
 	// Readiness-tier headers (built-in tiers; custom columns keep their own name)
 	"sidebar.tier.needsYou": "Needs you",
 	"sidebar.tier.waiting": "Waiting",

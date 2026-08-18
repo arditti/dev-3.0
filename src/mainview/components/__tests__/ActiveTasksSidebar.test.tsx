@@ -445,57 +445,13 @@ function makeTask(overrides?: Partial<Task>): Task {
 		});
 	});
 
-	it("attention scope shows only tasks needing user input, oldest-first, cross-project", async () => {
-		const user = userEvent.setup();
-		const { api } = await import("../../rpc");
-		const otherProject: Project = {
-			id: "p2",
-			name: "Other Project",
-			path: "/tmp/other",
-			setupScript: "",
-			devScript: "",
-			cleanupScript: "",
-			defaultBaseBranch: "main",
-			createdAt: "2025-01-01T00:00:00Z",
-		};
-		const olderReview = makeTask({
-			id: "rv-old", seq: 100, projectId: "p2",
-			title: "Older review", description: "Older review",
-			status: "review-by-user",
-			groupId: null as unknown as string, variantIndex: null,
-			movedAt: "2025-01-01T00:00:00Z",
-		});
-		const newerReview = makeTask({
-			id: "rv-new", seq: 101, projectId: "p1",
-			title: "Newer review", description: "Newer review",
-			status: "review-by-user",
-			groupId: null as unknown as string, variantIndex: null,
-			movedAt: "2025-06-01T00:00:00Z",
-		});
-		const question = makeTask({
-			id: "q1", seq: 102, projectId: "p1",
-			title: "Has a question", description: "Has a question",
-			status: "user-questions",
-			groupId: null as unknown as string, variantIndex: null,
-			movedAt: "2025-03-01T00:00:00Z",
-		});
-		const working = makeTask({
-			id: "w1", seq: 103, projectId: "p1",
-			title: "Still working", description: "Still working",
-			status: "in-progress",
-			groupId: null as unknown as string, variantIndex: null,
-		});
-		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-			{ projectId: "p1", tasks: [newerReview, question, working] },
-			{ projectId: "p2", tasks: [olderReview] },
-		]);
-
+	it("falls back to the project scope when localStorage holds the removed attention value", () => {
+		localStorage.setItem("dev3-sidebar-scope", "attention");
 		render(
 			<I18nProvider>
 				<ActiveTasksSidebar
 					project={project}
-					tasks={[working]}
-					allProjects={[project, otherProject]}
+					tasks={[makeTask()]}
 					activeTaskId="t1"
 					dispatch={vi.fn()}
 					navigate={vi.fn()}
@@ -505,121 +461,8 @@ function makeTask(overrides?: Partial<Task>): Task {
 				/>
 			</I18nProvider>,
 		);
-
-		await user.click(screen.getByTestId("sidebar-scope-attention"));
-
-		await waitFor(() => {
-			expect(screen.getByText("Older review")).toBeInTheDocument();
-		});
-		// in-progress task is excluded from attention scope
-		expect(screen.queryByText("Still working")).not.toBeInTheDocument();
-		// question task (other attention status) is included
-		expect(screen.getByText("Has a question")).toBeInTheDocument();
-		// oldest-first across all attention-status tasks (flat list, no STATUS_ORDER grouping)
-		const older = screen.getByText("Older review");
-		const newer = screen.getByText("Newer review");
-		expect(
-			older.compareDocumentPosition(newer) & Node.DOCUMENT_POSITION_FOLLOWING,
-		).toBeTruthy();
-		expect(localStorage.getItem("dev3-sidebar-scope")).toBe("attention");
-	});
-
-	it("attention scope includes every review-by-colleague (PR Review) task", async () => {
-		const user = userEvent.setup();
-		const { api } = await import("../../rpc");
-		const signalled = makeTask({
-			id: "pr-signal", seq: 200, projectId: "p1",
-			title: "PR signalled", description: "PR signalled",
-			status: "review-by-colleague",
-			groupId: null as unknown as string, variantIndex: null,
-			movedAt: "2025-02-01T00:00:00Z",
-		});
-		const quiet = makeTask({
-			id: "pr-quiet", seq: 201, projectId: "p1",
-			title: "PR quiet", description: "PR quiet",
-			status: "review-by-colleague",
-			groupId: null as unknown as string, variantIndex: null,
-			movedAt: "2025-02-02T00:00:00Z",
-		});
-		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-			{ projectId: "p1", tasks: [signalled, quiet] },
-		]);
-
-		render(
-			<I18nProvider>
-				<ActiveTasksSidebar
-					project={project}
-					tasks={[]}
-					allProjects={[project]}
-					activeTaskId="t1"
-					dispatch={vi.fn()}
-					navigate={vi.fn()}
-					agents={[claudeAgent]}
-					bellCounts={new Map([["pr-signal", 1]])}
-					taskPorts={new Map()}
-				/>
-			</I18nProvider>,
-		);
-
-		await user.click(screen.getByTestId("sidebar-scope-attention"));
-
-		await waitFor(() => {
-			expect(screen.getByText("PR signalled")).toBeInTheDocument();
-		});
-		expect(screen.getByText("PR quiet")).toBeInTheDocument();
-	});
-
-	it("shows a count badge on the bell when tasks await input and attention scope is inactive", () => {
-		render(
-			<I18nProvider>
-				<ActiveTasksSidebar
-					project={project}
-					tasks={[
-						makeTask({ id: "a1", status: "review-by-user" }),
-						makeTask({ id: "a2", status: "user-questions" }),
-						makeTask({ id: "a3", status: "in-progress" }),
-					]}
-					activeTaskId="a1"
-					dispatch={vi.fn()}
-					navigate={vi.fn()}
-					agents={[claudeAgent]}
-					bellCounts={new Map()}
-					taskPorts={new Map()}
-				/>
-			</I18nProvider>,
-		);
-
-		// Two attention-status tasks → badge reads "2".
-		expect(screen.getByTestId("sidebar-scope-attention")).toHaveTextContent("2");
-	});
-
-	it("shows the attention empty state when nothing needs the user's input", async () => {
-		const user = userEvent.setup();
-		const { api } = await import("../../rpc");
-		(api.request.getAllProjectTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-			{ projectId: "p1", tasks: [makeTask({ id: "w1", status: "in-progress" })] },
-		]);
-
-		render(
-			<I18nProvider>
-				<ActiveTasksSidebar
-					project={project}
-					tasks={[makeTask({ id: "w1", status: "in-progress" })]}
-					activeTaskId="w1"
-					dispatch={vi.fn()}
-					navigate={vi.fn()}
-					agents={[claudeAgent]}
-					bellCounts={new Map()}
-					taskPorts={new Map()}
-				/>
-			</I18nProvider>,
-		);
-
-		await user.click(screen.getByTestId("sidebar-scope-attention"));
-
-		await waitFor(() => {
-			expect(screen.getByText("Nothing needs your attention")).toBeInTheDocument();
-		});
+		expect(screen.getByTestId("sidebar-scope-project")).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByTestId("sidebar-scope-attention")).not.toBeInTheDocument();
 	});
 
 	it("shows overview inline only for the active task when overview is set", () => {
