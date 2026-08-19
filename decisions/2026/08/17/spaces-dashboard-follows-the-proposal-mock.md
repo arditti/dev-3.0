@@ -49,10 +49,10 @@ The mock is the dashboard's shape. Each element maps onto the existing rules:
 - **`+ New space` lives in the rail** — the dashboard entry point the previous record required.
 - **The dashboard gains one search field** over projects, matching space names through the same
   haystack the ⌘K palette uses. One matcher, one search language.
-- **A space header carries** a neutral letter badge, its project count, split
+- **A space header carries** its name, its project count, split
   "N need you · N working" counts, a drag grip (reorders spaces), and a `+` that adds existing
-  projects to that space. The letter badge is not a colour vocabulary — spaces still have no
-  colour.
+  projects to that space. The mock's letter badges were dropped during review as visual noise —
+  spaces have no badge and no colour vocabulary.
 - **The row's `Spaces…` action** is the mock's `S` button, in the existing action cluster and in
   the narrow bottom sheet. Still no per-row kebab (PRODUCT_UX_BIBLE §10).
 - **The cross-space task list is the existing `ActiveTasksSidebar` component**, mounted on the

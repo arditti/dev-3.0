@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch } from "react";
+import { useEffect, useMemo, useState, type Dispatch } from "react";
 import { toast } from "../toast";
 import type { CodingAgent, PortInfo, Project } from "../../shared/types";
 import { isBuiltinOpsProject, isSpaceSensitive, orderProjectsForDisplay } from "../../shared/types";
@@ -12,7 +12,7 @@ import { useNarrowViewport } from "../hooks/useNarrowViewport";
 import { CAROUSEL_MAX_WIDTH } from "./MobileBoardCarousel";
 import ActivityOverview from "./ActivityOverview";
 import ActiveTasksSidebar from "./ActiveTasksSidebar";
-import SpacesRail from "./SpacesRail";
+import SpacesRail, { SPACES_RAIL_MIN_WIDTH } from "./SpacesRail";
 import NewSpaceModal from "./NewSpaceModal";
 
 interface DashboardProps {
@@ -42,6 +42,13 @@ function Dashboard({
 	const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
 	const [showNewSpace, setShowNewSpace] = useState(false);
 
+	// The rail hides below Tailwind's `lg` (1024px) with plain CSS. A selection
+	// made on a wide window must not keep filtering once its control is gone.
+	const railHidden = useNarrowViewport(SPACES_RAIL_MIN_WIDTH);
+	useEffect(() => {
+		if (railHidden) setSelectedSpaceId(null);
+	}, [railHidden]);
+
 	// The rail and the cross-space task panel only exist once a space does:
 	// with zero spaces the dashboard stays exactly the screen it was.
 	const hasSpaces = spaces.length > 0;
@@ -58,7 +65,9 @@ function Dashboard({
 		}
 		return {
 			perSpace,
-			total: ordinary.length,
+			// `All projects` shows the pinned Operations board too, so its count
+			// includes it — and thereby always agrees with the overview heading.
+			total: projects.filter((p) => !p.deleted).length,
 			home: ordinary.filter((p) => !associated.has(p.id)).length,
 		};
 	}, [projects, spaces]);

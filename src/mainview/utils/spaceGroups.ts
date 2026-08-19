@@ -1,4 +1,5 @@
 import { isBuiltinOpsProject, orderSpaces, type Project, type Space, type SpacesFile } from "../../shared/types";
+import { projectSearchHaystack } from "./projectSearchHaystack";
 
 /**
  * Selection id for the computed `Home` group. `Home` is a UI grouping of the
@@ -84,18 +85,9 @@ export function filterDashboardGroups(
 		const projects = spaceMatches
 			? group.projects
 			: group.projects.filter((p) =>
-					projectHaystack(p.name, spaces, p.id).toLowerCase().includes(q),
+					projectSearchHaystack(p.name, spaces, p.id).toLowerCase().includes(q),
 				);
 		if (projects.length > 0) matched.push({ space: group.space, projects });
 	}
 	return matched;
-}
-
-/** Local copy of the search haystack rule (name first, then space names). */
-function projectHaystack(name: string, spaces: Space[], projectId: string): string {
-	const names = spaces
-		.filter((s) => !s.deleted && s.projectIds.includes(projectId))
-		.map((s) => s.name)
-		.join(" ");
-	return names ? `${name} ${names}` : name;
 }

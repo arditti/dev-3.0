@@ -4,6 +4,9 @@ import { HOME_GROUP_ID } from "../utils/spaceGroups";
 import { MASK_CLASS } from "../sensitive-projects";
 import { useT } from "../i18n";
 
+/** Tailwind `lg` — must match the rail's `hidden lg:flex` classes below. */
+export const SPACES_RAIL_MIN_WIDTH = 1024;
+
 interface SpacesRailProps {
 	spaces: Space[];
 	/** Resolvable member count per space id (dangling ids already skipped). */
