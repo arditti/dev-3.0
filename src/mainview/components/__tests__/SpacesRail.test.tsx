@@ -14,6 +14,8 @@ function renderRail(over?: Partial<React.ComponentProps<typeof SpacesRail>>) {
 	const props = {
 		spaces,
 		projectCountOf: (id: string) => (id === "sp_a" ? 2 : 1),
+		activityOf: (id: string) => (id === "sp_a" ? { needsYou: 1, working: 2 } : { needsYou: 0, working: 0 }),
+		homeActivity: { needsYou: 0, working: 3 },
 		maskedSpaceIds: new Set<string>(),
 		totalProjects: 5,
 		homeCount: 2,
@@ -76,6 +78,28 @@ describe("SpacesRail", () => {
 			(el) => el.children.length === 0 && /^\d+$/.test((el.textContent ?? "").trim()) && !el.className.includes("streamer-private"),
 		);
 		expect(readableNumbers).toHaveLength(0);
+	});
+
+	it("shows a row's needs-you / working split only when non-zero", () => {
+		renderRail();
+		const clientX = screen.getByTestId("rail-space-sp_a");
+		expect(clientX.querySelector('[aria-label="1 need you"]')).not.toBeNull();
+		expect(clientX.querySelector('[aria-label="2 working"]')).not.toBeNull();
+		// Labs has no active tasks — nothing but the project count renders.
+		const labs = screen.getByTestId("rail-space-sp_b");
+		expect(labs.querySelector('[aria-label*="need you"]')).toBeNull();
+		expect(labs.querySelector('[aria-label*="working"]')).toBeNull();
+		// The computed Home group carries its split too.
+		expect(screen.getByTestId("rail-home").querySelector('[aria-label="3 working"]')).not.toBeNull();
+	});
+
+	it("masks the activity split of a masked space", () => {
+		renderRail({ maskedSpaceIds: new Set(["sp_a"]) });
+		const row = screen.getByTestId("rail-space-sp_a");
+		for (const label of ["1 need you", "2 working"]) {
+			const el = row.querySelector(`[aria-label="${label}"]`);
+			expect(el?.classList.contains("streamer-private")).toBe(true);
+		}
 	});
 
 	it("opens the New Space flow", async () => {

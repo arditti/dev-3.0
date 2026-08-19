@@ -7,10 +7,19 @@ import { useT } from "../i18n";
 /** Tailwind `lg` — must match the rail's `hidden lg:flex` classes below. */
 export const SPACES_RAIL_MIN_WIDTH = 1024;
 
+export interface SpaceActivitySplit {
+	needsYou: number;
+	working: number;
+}
+
 interface SpacesRailProps {
 	spaces: Space[];
 	/** Resolvable member count per space id (dangling ids already skipped). */
 	projectCountOf: (spaceId: string) => number;
+	/** Needs-you / working task split per space id (same split as the group headers). */
+	activityOf: (spaceId: string) => SpaceActivitySplit;
+	/** The computed Home group's split (projects in no space). */
+	homeActivity: SpaceActivitySplit;
 	/** Spaces whose name must be masked (a member project is sensitive). */
 	maskedSpaceIds: ReadonlySet<string>;
 	totalProjects: number;
@@ -25,6 +34,38 @@ interface SpacesRailProps {
 }
 
 /**
+ * A row's needs-you / working indicator: an amber dot for tasks calling the
+ * user, a blue dot for agents working — each rendered only when non-zero.
+ * Masked rows blur the numbers along with the name (they leak how much work a
+ * private client has in flight).
+ */
+function ActivityDots({ split, masked }: { split: SpaceActivitySplit; masked: boolean }) {
+	const t = useT();
+	return (
+		<>
+			{split.needsYou > 0 && (
+				<span
+					aria-label={t("spaces.needYou", { count: String(split.needsYou) })}
+					className={`flex items-center gap-1 flex-shrink-0 text-xs tabular-nums text-fg-3 ${masked ? MASK_CLASS : ""}`}
+				>
+					<span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-awake" />
+					{split.needsYou}
+				</span>
+			)}
+			{split.working > 0 && (
+				<span
+					aria-label={t("spaces.working", { count: String(split.working) })}
+					className={`flex items-center gap-1 flex-shrink-0 text-xs tabular-nums text-fg-3 ${masked ? MASK_CLASS : ""}`}
+				>
+					<span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-accent" />
+					{split.working}
+				</span>
+			)}
+		</>
+	);
+}
+
+/**
  * Dashboard rail: All projects, then one row per space, then the computed Home
  * group. Selecting an entry FILTERS the dashboard — it never navigates, so a
  * space stays a grouping and never becomes a place with a board of its own.
@@ -32,6 +73,8 @@ interface SpacesRailProps {
 function SpacesRail({
 	spaces,
 	projectCountOf,
+	activityOf,
+	homeActivity,
 	maskedSpaceIds,
 	totalProjects,
 	homeCount,
@@ -157,6 +200,7 @@ function SpacesRail({
 							<span className={`flex-1 text-sm truncate ${maskedSpaceIds.has(space.id) ? MASK_CLASS : ""}`}>
 								{space.name}
 							</span>
+							<ActivityDots split={activityOf(space.id)} masked={maskedSpaceIds.has(space.id)} />
 							{/* The count leaks how much work a private client has in flight, so
 							    it is masked with the name, not left readable beside it. */}
 							<span className={`text-fg-muted text-xs tabular-nums ${maskedSpaceIds.has(space.id) ? MASK_CLASS : ""}`}>
@@ -174,6 +218,7 @@ function SpacesRail({
 						data-testid="rail-home"
 					>
 						<span className="flex-1 text-sm truncate">{t("spaces.homeGroup")}</span>
+						<ActivityDots split={homeActivity} masked={false} />
 						<span className="text-fg-muted text-xs tabular-nums">{homeCount}</span>
 					</button>
 				)}

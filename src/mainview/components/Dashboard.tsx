@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type Dispatch } from "react";
 import { toast } from "../toast";
-import type { CodingAgent, PortInfo, Project } from "../../shared/types";
+import type { CodingAgent, PortInfo, Project, Task, TaskStatus } from "../../shared/types";
 import { isBuiltinOpsProject, isSpaceSensitive, orderProjectsForDisplay } from "../../shared/types";
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
@@ -12,8 +12,12 @@ import { useNarrowViewport } from "../hooks/useNarrowViewport";
 import { CAROUSEL_MAX_WIDTH } from "./MobileBoardCarousel";
 import ActivityOverview from "./ActivityOverview";
 import ActiveTasksSidebar from "./ActiveTasksSidebar";
-import SpacesRail, { SPACES_RAIL_MIN_WIDTH } from "./SpacesRail";
+import SpacesRail, { SPACES_RAIL_MIN_WIDTH, type SpaceActivitySplit } from "./SpacesRail";
 import NewSpaceModal from "./NewSpaceModal";
+
+// Same needs-you / working split the space group headers use.
+const NEEDS_ME_STATUSES: TaskStatus[] = ["user-questions", "review-by-user"];
+const BACKGROUND_STATUSES: TaskStatus[] = ["in-progress", "review-by-ai"];
 
 interface DashboardProps {
 	projects: Project[];
@@ -52,6 +56,60 @@ function Dashboard({
 	// The rail and the cross-space task panel only exist once a space does:
 	// with zero spaces the dashboard stays exactly the screen it was.
 	const hasSpaces = spaces.length > 0;
+
+	// The rail's per-row activity split needs the cross-project task pool; the
+	// overview and the task panel each own theirs, so the rail fetches its own —
+	// gated on the rail existing at all.
+	const [railTasks, setRailTasks] = useState<Task[]>([]);
+	useEffect(() => {
+		if (!hasSpaces) return;
+		let cancelled = false;
+		(async () => {
+			try {
+				const results = await api.request.getAllProjectTasks();
+				if (cancelled) return;
+				setRailTasks(results.flatMap(({ tasks }) => tasks));
+			} catch (err) {
+				console.error("Failed to load tasks for the spaces rail:", err);
+			}
+		})();
+		function onTaskUpdated(e: Event) {
+			const { task } = (e as CustomEvent).detail as { task: Task };
+			setRailTasks((prev) => {
+				const rest = prev.filter((t) => t.id !== task.id);
+				const isActive = [...NEEDS_ME_STATUSES, ...BACKGROUND_STATUSES].includes(task.status);
+				return isActive ? [...rest, task] : rest;
+			});
+		}
+		window.addEventListener("rpc:taskUpdated", onTaskUpdated);
+		return () => {
+			cancelled = true;
+			window.removeEventListener("rpc:taskUpdated", onTaskUpdated);
+		};
+	}, [hasSpaces]);
+
+	const railActivity = useMemo(() => {
+		const splitOf = (memberIds: ReadonlySet<string>): SpaceActivitySplit => {
+			let needsYou = 0;
+			let working = 0;
+			for (const task of railTasks) {
+				if (!memberIds.has(task.projectId)) continue;
+				if (NEEDS_ME_STATUSES.includes(task.status)) needsYou++;
+				else if (BACKGROUND_STATUSES.includes(task.status)) working++;
+			}
+			return { needsYou, working };
+		};
+		const perSpace = new Map<string, SpaceActivitySplit>();
+		const grouped = new Set<string>();
+		for (const space of spaces) {
+			perSpace.set(space.id, splitOf(new Set(space.projectIds)));
+			for (const id of space.projectIds) grouped.add(id);
+		}
+		const homeIds = new Set(
+			projects.filter((p) => !p.deleted && !isBuiltinOpsProject(p) && !grouped.has(p.id)).map((p) => p.id),
+		);
+		return { perSpace, home: splitOf(homeIds) };
+	}, [railTasks, spaces, projects]);
 
 	const railCounts = useMemo(() => {
 		const ordinary = projects.filter((p) => !p.deleted && !isBuiltinOpsProject(p));
@@ -125,6 +183,8 @@ function Dashboard({
 					<SpacesRail
 						spaces={spaces}
 						projectCountOf={(id) => railCounts.perSpace.get(id) ?? 0}
+						activityOf={(id) => railActivity.perSpace.get(id) ?? { needsYou: 0, working: 0 }}
+						homeActivity={railActivity.home}
 						maskedSpaceIds={maskedSpaceIds}
 						totalProjects={railCounts.total}
 						homeCount={railCounts.home}
