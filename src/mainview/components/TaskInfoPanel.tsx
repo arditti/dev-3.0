@@ -52,6 +52,7 @@ import TaskNotes from "./task-info-panel/TaskNotes";
 import TaskNotesOverlay from "./TaskNotesOverlay";
 import TaskOpenIn from "./task-info-panel/TaskOpenIn";
 import TaskPaneControls from "./task-info-panel/TaskPaneControls";
+import TerminalShortcutsButton from "./task-info-panel/TerminalShortcutsButton";
 import { useTaskAllocatedPorts } from "./task-info-panel/useTaskAllocatedPorts";
 import type { TaskInlineDiffRequest } from "./task-inline-diff";
 import { isTestFile } from "../../shared/test-files";
@@ -759,14 +760,12 @@ function TaskInfoPanel({
 			}`}
 			aria-label={task.watched ? t("task.unwatchTooltip") : t("task.watchTooltip")}
 		>
+			{/* Icon only, at every width: the accent bell already says "watching", and
+			    the word cost bar space the tags and the status chip need more. The
+			    sentence stays in the tooltip and in the mobile sheet row. */}
 			{task.watched
 				? <WatchingIcon className="w-[0.95rem] h-[0.95rem]" />
 				: <WatchIcon className="w-[0.95rem] h-[0.95rem]" />}
-			{!compact && (
-				<span className="text-micro font-medium">
-					{task.watched ? t("task.watching") : t("task.watch")}
-				</span>
-			)}
 		</button>
 		</Tooltip>
 	);
@@ -786,14 +785,10 @@ function TaskInfoPanel({
 						: "text-fg-3 hover:text-fg hover:bg-elevated"
 				}`}
 			>
+				{/* Icon only. Even the short "I decide" label cost bar width for a state
+				    the accent icon already carries; the full sentence lives in the
+				    tooltip and in the mobile sheet row. */}
 				<CompletionOwnerIcon className="h-[0.95rem] w-[0.95rem]" active={task.manualCompletion} />
-				{/* Always the short label: the full sentence ("I'll complete it myself")
-				    costs ~180px of bar — more in ru/es — for a state the accent icon
-				    already carries. The sentence stays in the tooltip and in the mobile
-				    sheet row. A tight bar drops even the short label. */}
-				{!tight && (
-					<span className="text-micro font-medium">{t("task.manualCompletionShort")}</span>
-				)}
 			</button>
 		</Tooltip>
 	);
@@ -1264,6 +1259,24 @@ function TaskInfoPanel({
 
 	const height = collapsed ? `${COLLAPSED_HEIGHT_REM}rem` : panelHeight;
 
+	// Ends the Runtime bar (right of Images / Artifacts) instead of sitting in the
+	// panel chrome above: it is the rarest control up there, and crowding it next
+	// to Full screen made the two easy to confuse.
+	const collapseToggleButton = (
+		<Tooltip
+			content={collapsed ? t("infoPanel.expand") : t("infoPanel.collapse")}
+			detail={collapsed ? t("ttip.infoPanel.expand") : t("ttip.infoPanel.collapse")}
+		>
+			<button
+				onClick={toggleCollapsed}
+				className="task-anim flex-shrink-0 p-1 rounded hover:bg-elevated transition-colors text-fg-3 hover:text-fg"
+				aria-label={collapsed ? t("infoPanel.expand") : t("infoPanel.collapse")}
+			>
+				<PanelChevronIcon direction={collapsed ? "down" : "up"} className="w-3.5 h-3.5" />
+			</button>
+		</Tooltip>
+	);
+
 	// Narrow viewport (phone / narrow window): the two dense desktop toolbars do
 	// not fit. Collapse them into a thin summary bar (status + title + diff) and
 	// fold every action + the full details grid into an actions BottomSheet — the
@@ -1476,7 +1489,7 @@ function TaskInfoPanel({
 			{diffFilesPopover}
 			{fileOpenInMenuPortal}
 			{collapsed ? (
-				<div className="flex flex-col h-full px-4 gap-1 justify-center">
+				<div className="flex flex-col h-full px-2 gap-1 justify-center">
 					<div className="flex items-center gap-1.5 min-w-0">
 						{/* Same bar boxing as the expanded rows: the Context bar is the only
 						    shrinkable region, so the Session bar and the pinned chrome to
@@ -1484,9 +1497,9 @@ function TaskInfoPanel({
 						<div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
 							{variantSwitcher}
 							{watchToggleButton}
-							{manualCompletionToggleButton}
 							{priorityBadge}
 							{statusDropdownButton}
+							{manualCompletionToggleButton}
 							{diffSummaryBadge}
 							{diffIncludeTestsToggle}
 							{labelStrip}
@@ -1503,6 +1516,7 @@ function TaskInfoPanel({
 							<TaskPaneControls taskId={task.id} compact={tight} />
 						</div>
 						{worktreeSettingsButton}
+						<TerminalShortcutsButton taskId={task.id} />
 						{showPanelButton}
 						<Tooltip content={terminalFullscreenLabel} detail={terminalFullscreenTooltip}>
 							<button
@@ -1515,15 +1529,6 @@ function TaskInfoPanel({
 									: <FullscreenEnterIcon className="w-3.5 h-3.5" />}
 							</button>
 						</Tooltip>
-						<Tooltip content={t("infoPanel.expand")} detail={t("ttip.infoPanel.expand")}>
-							<button
-								onClick={toggleCollapsed}
-								className="task-anim flex-shrink-0 p-1 rounded hover:bg-elevated transition-colors text-fg-3 hover:text-fg"
-								aria-label={t("infoPanel.expand")}
-							>
-								<PanelChevronIcon direction="down" className="w-3.5 h-3.5" />
-							</button>
-					</Tooltip>
 					</div>
 
 					<div className="flex items-center gap-1.5 min-w-0">
@@ -1537,9 +1542,7 @@ function TaskInfoPanel({
 									dispatch={dispatch}
 									navigate={navigate}
 									isTaskActive={isTaskActive}
-									showWorktreeCopy
 									showLoading
-									branchNameClassName={`text-fg-3 text-xs font-mono flex-shrink-0 truncate ${veryTight ? "max-w-[4rem]" : tight ? "max-w-[6rem]" : "max-w-[12.5rem]"}`}
 									compact={compact}
 									onBranchStatusChange={setMetadataBranchState}
 									onOpenInlineDiff={onOpenInlineDiff}
@@ -1558,12 +1561,13 @@ function TaskInfoPanel({
 							<TaskExposedPorts task={task} compact={tight} />
 							<TaskSharedImages task={task} projectId={project.id} compact={tight} />
 							<TaskArtifacts task={task} projectId={project.id} compact={tight} />
+							{collapseToggleButton}
 						</div>
 					</div>
 				</div>
 			) : (
 				<div className="flex flex-col h-full">
-					<div className="flex flex-col px-4">
+					<div className="flex flex-col px-2">
 						<div className="flex items-center gap-1.5 min-w-0 pt-1">
 							{/* `overflow-hidden` is the backstop that keeps a bar's contents
 							    inside its own box: without it the shrink-0 children spill
@@ -1573,10 +1577,10 @@ function TaskInfoPanel({
 							<div className="flex items-center gap-1.5 min-w-0 overflow-hidden" data-help-id="inspector.context-bar">
 								{variantSwitcher}
 								{watchToggleButton}
-								{manualCompletionToggleButton}
 								{priorityBadge}
 								{statusDropdownButton}
 								{statusDropdownPortal}
+								{manualCompletionToggleButton}
 								{diffSummaryBadge}
 								{diffIncludeTestsToggle}
 								{labelStrip}
@@ -1592,6 +1596,7 @@ function TaskInfoPanel({
 								<TaskPaneControls taskId={task.id} compact={tight} />
 							</div>
 							<HelpSpot topicId="inspector.panel" className="ml-0.5" />
+							<TerminalShortcutsButton taskId={task.id} />
 							{showPanelButton}
 							<Tooltip content={terminalFullscreenLabel} detail={terminalFullscreenTooltip}>
 								<button
@@ -1604,15 +1609,6 @@ function TaskInfoPanel({
 										: <FullscreenEnterIcon className="w-3.5 h-3.5" />}
 								</button>
 							</Tooltip>
-							<Tooltip content={t("infoPanel.collapse")} detail={t("ttip.infoPanel.collapse")}>
-								<button
-									onClick={toggleCollapsed}
-									className="task-anim flex-shrink-0 p-1 rounded hover:bg-elevated transition-colors text-fg-3 hover:text-fg"
-									aria-label={t("infoPanel.collapse")}
-								>
-									<PanelChevronIcon direction="up" className="w-3.5 h-3.5" />
-								</button>
-						</Tooltip>
 						</div>
 
 						<div className="flex items-center gap-1.5 min-w-0 pb-1">
@@ -1626,7 +1622,6 @@ function TaskInfoPanel({
 										dispatch={dispatch}
 										navigate={navigate}
 										isTaskActive={isTaskActive}
-										branchNameClassName={`text-fg-3 text-xs font-mono flex-shrink-0 truncate ${veryTight ? "max-w-[4rem]" : tight ? "max-w-[6rem]" : "max-w-[12.5rem]"}`}
 										compact={compact}
 										onBranchStatusChange={setMetadataBranchState}
 										onOpenInlineDiff={onOpenInlineDiff}
@@ -1645,11 +1640,12 @@ function TaskInfoPanel({
 								<TaskExposedPorts task={task} compact={tight} />
 								<TaskSharedImages task={task} projectId={project.id} compact={tight} />
 								<TaskArtifacts task={task} projectId={project.id} compact={tight} />
+								{collapseToggleButton}
 							</div>
 						</div>
 					</div>
 
-					<div className="flex-1 overflow-auto px-4 pb-2">
+					<div className="flex-1 overflow-auto px-2 pb-2">
 						{taskDetailsBody}
 					</div>
 

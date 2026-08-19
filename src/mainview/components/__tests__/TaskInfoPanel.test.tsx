@@ -457,12 +457,101 @@ describe("TaskInfoPanel", () => {
 			expect(screen.queryByText("nonexistent")).not.toBeInTheDocument();
 		});
 
-		it("renders branch name", async () => {
+		it("carries the branch as a labelled chip, the name in its accessible name", async () => {
 			await act(async () => {
 				renderPanel(makeTask({ branchName: "dev3/my-branch" }));
 			});
-			// Branch appears in both collapsed and expanded, but collapsed is default
-			expect(screen.getAllByText("dev3/my-branch").length).toBeGreaterThanOrEqual(1);
+			// The bar shows the word, not the string: the name is 200px of mono text and
+			// only the chip's name / its menu heading have to carry it.
+			const chip = screen.getByTestId("branch-chip");
+			expect(chip).toHaveTextContent("Branch");
+			expect(chip.getAttribute("aria-label")).toContain("dev3/my-branch");
+			expect(screen.queryByText("dev3/my-branch")).not.toBeInTheDocument();
+		});
+
+		it("opens a menu with the full name and the three copy actions", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			await act(async () => {
+				renderPanel(makeTask({ branchName: "dev3/my-branch", worktreePath: "/tmp/wt/t1" }));
+			});
+
+			await user.click(screen.getByTestId("branch-chip"));
+
+			const menu = screen.getByRole("menu");
+			expect(menu).toHaveTextContent("dev3/my-branch");
+			expect(within(menu).getByRole("menuitem", { name: "Copy branch name" })).toBeInTheDocument();
+			expect(within(menu).getByRole("menuitem", { name: "Copy worktree path" })).toBeInTheDocument();
+			expect(within(menu).getByRole("menuitem", { name: "Copy checkout command" })).toBeInTheDocument();
+		});
+
+		it("copies the checkout command and says so out loud", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+			await act(async () => {
+				renderPanel(makeTask({ branchName: "dev3/my-branch" }));
+			});
+
+			await user.click(screen.getByTestId("branch-chip"));
+			await user.click(screen.getByRole("menuitem", { name: "Copy checkout command" }));
+
+			expect(writeText).toHaveBeenCalledWith("git checkout dev3/my-branch");
+			// Confirmation used to live inside the tooltip, where it was invisible — and it
+			// only fires once the clipboard write actually resolved.
+			await waitFor(() => {
+				expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Checkout command copied", { taskId: "t1" });
+			});
+			expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		});
+
+		it("carries the compare-ref picker inside the menu, not in the bar", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			await act(async () => {
+				renderPanel(makeTask({ branchName: "dev3/my-branch" }), { onOpenInlineDiff: vi.fn() });
+			});
+
+			// The bar stays clean; the setting lives one click deep.
+			expect(screen.queryByText(/vs origin\/main/)).not.toBeInTheDocument();
+
+			await user.click(screen.getByTestId("branch-chip"));
+			const menu = screen.getByRole("menu");
+			expect(menu).toHaveTextContent("Compare against");
+
+			const remote = within(menu).getByRole("menuitemradio", { name: /origin\/main/ });
+			const local = within(menu).getByRole("menuitemradio", { name: /main \(local\)/ });
+			expect(remote).toHaveAttribute("aria-checked", "true");
+			expect(local).toHaveAttribute("aria-checked", "false");
+
+			await user.click(local);
+
+			// Picking a ref refetches the status against it and closes the menu.
+			await waitFor(() => {
+				expect(mockedApi.request.getBranchStatus).toHaveBeenCalledWith({
+					taskId: "t1",
+					projectId: "p1",
+					compareRef: "main",
+				});
+			});
+			expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		});
+
+		it("says it failed when the clipboard refuses", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+			Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+			await act(async () => {
+				renderPanel(makeTask({ branchName: "dev3/my-branch" }));
+			});
+
+			await user.click(screen.getByTestId("branch-chip"));
+			await user.click(screen.getByRole("menuitem", { name: "Copy branch name" }));
+
+			await waitFor(() => {
+				expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Couldn't copy to the clipboard", { taskId: "t1" });
+			});
+			expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
 		});
 
 		it("does not render metadata grid in collapsed state", async () => {
@@ -504,8 +593,9 @@ describe("TaskInfoPanel", () => {
 			await act(async () => {
 				renderPanel(makeTask({ branchName: "dev3/task-abc" }));
 			});
-			const branchTexts = screen.getAllByText("dev3/task-abc");
-			expect(branchTexts.length).toBeGreaterThanOrEqual(2); // header row + metadata
+			// The bar carries a chip now, so the metadata grid is the one place the full
+			// name is printed without opening anything.
+			expect(screen.getAllByText("dev3/task-abc").length).toBe(1);
 		});
 
 		it("renders description when present", async () => {
@@ -646,6 +736,31 @@ describe("TaskInfoPanel", () => {
 
 			await user.click(screen.getByLabelText("Expand panel"));
 			expect(localStorage.getItem("dev3-panel-collapsed")).toBe("false");
+		});
+
+		it("ends the Runtime bar, right of Images, in the collapsed panel", async () => {
+			await act(async () => {
+				renderPanel(makeTask({ sharedImages: [{ id: "i1", storedPath: "/a.png", originalPath: "/a.png", name: "a.png", mime: "image/png", bytes: 1, createdAt: 1 }] }));
+			});
+
+			const toggle = screen.getByLabelText("Expand panel");
+			const images = screen.getByTestId("shared-images-badge");
+			expect(images.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+			// It left the panel chrome: Full screen must no longer be its neighbour.
+			expect(toggle.parentElement?.parentElement).not.toContainElement(screen.getByLabelText("Full screen"));
+		});
+
+		it("ends the Runtime bar, right of Images, in the expanded panel", async () => {
+			localStorage.setItem("dev3-panel-collapsed", "false");
+			await act(async () => {
+				renderPanel(makeTask({ sharedImages: [{ id: "i1", storedPath: "/a.png", originalPath: "/a.png", name: "a.png", mime: "image/png", bytes: 1, createdAt: 1 }] }));
+			});
+
+			const toggle = screen.getByLabelText("Collapse panel");
+			const runtimeBar = document.querySelector('[data-help-id="inspector.runtime-bar"]');
+			expect(runtimeBar).toContainElement(toggle);
+			const images = screen.getByTestId("shared-images-badge");
+			expect(images.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		});
 	});
 
@@ -1397,11 +1512,71 @@ describe("TaskInfoPanel", () => {
 				});
 
 			await act(async () => {
-				renderPanel(makeTask({ baseBranch: "develop" }));
+				renderPanel(makeTask({ baseBranch: "develop" }), { onOpenInlineDiff: vi.fn() });
 			});
 
-				expect(screen.getAllByText(/vs develop/).length).toBeGreaterThanOrEqual(1);
+				// The bar no longer prints "vs <ref>" — the compare target lives in the
+				// name of the control that acts on it.
+				expect(screen.queryByText(/vs develop/)).not.toBeInTheDocument();
+				expect(screen.getAllByLabelText(/vs develop/).length).toBeGreaterThanOrEqual(1);
 			});
+
+		it("opens the diff when the ahead/behind and line counts are clicked", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			const onOpenInlineDiff = vi.fn();
+			mockedApi.request.getBranchStatus.mockResolvedValue({
+				...defaultBranchStatus,
+				ahead: 1,
+				behind: 1,
+				insertions: 46,
+				deletions: 19,
+			});
+
+			await act(async () => {
+				renderPanel(makeTask(), { onOpenInlineDiff });
+			});
+
+			// One control carries both halves, so clicking either number opens the diff.
+			const summary = screen.getByText("+46").closest("button")!;
+			expect(summary).toContainElement(screen.getByText("1 ahead"));
+			await user.click(summary);
+
+			expect(onOpenInlineDiff).toHaveBeenCalledWith({
+				mode: "branch",
+				compareLabel: "origin/main",
+			});
+		});
+
+		it("keeps no separator between the commit counts and the line counts", async () => {
+			mockedApi.request.getBranchStatus.mockResolvedValue({
+				...defaultBranchStatus,
+				ahead: 1,
+				behind: 1,
+				insertions: 46,
+				deletions: 19,
+			});
+
+			await act(async () => {
+				renderPanel(makeTask(), { onOpenInlineDiff: vi.fn() });
+			});
+
+			const summary = screen.getByText("+46").closest("button")!;
+			expect(summary.textContent).not.toContain("|");
+		});
+
+		it("drops the compare-ref picker — the project setting owns that choice", async () => {
+			mockedApi.request.getBranchStatus.mockResolvedValue({
+				...defaultBranchStatus,
+				ahead: 1,
+			});
+
+			await act(async () => {
+				renderPanel(makeTask(), { onOpenInlineDiff: vi.fn() });
+			});
+
+			expect(screen.queryByText(/vs origin\/main/)).not.toBeInTheDocument();
+			expect(screen.queryByLabelText("Change comparison branch")).not.toBeInTheDocument();
+		});
 	});
 
 	describe("git action buttons", () => {
@@ -1756,7 +1931,6 @@ describe("TaskInfoPanel", () => {
 					});
 				});
 
-				expect(screen.getAllByText(/vs feat-uber-extra/).length).toBeGreaterThanOrEqual(1);
 				await waitFor(() => {
 					expect(mockedApi.request.getBranchStatus).toHaveBeenCalledWith({
 						taskId: "t1",
@@ -1779,7 +1953,6 @@ describe("TaskInfoPanel", () => {
 					});
 				});
 
-				expect(screen.getAllByText(/vs feat-uber-extra/).length).toBeGreaterThanOrEqual(1);
 				await waitFor(() => {
 					expect(mockedApi.request.getBranchStatus).toHaveBeenCalledWith({
 						taskId: "t1",
@@ -2504,14 +2677,38 @@ describe("TaskInfoPanel", () => {
 			expect(vi.mocked(toast.info)).not.toHaveBeenCalled();
 		});
 
-		it("keeps completion ownership legible in the compact task bar", async () => {
-			mockMatchMedia(true);
-
+		it("carries completion ownership as an icon only, with the sentence in the name", async () => {
 			await act(async () => {
 				renderPanel(makeTask({ manualCompletion: true }));
 			});
 
-			expect(screen.getByText("I decide")).toBeInTheDocument();
+			// The label cost bar width for a state the accent icon already carries; what
+			// the control does has to survive somewhere the user can reach — the name.
+			expect(screen.queryByText("I decide")).not.toBeInTheDocument();
+			const button = screen.getByLabelText(/complete it myself/i);
+			expect(button).toHaveAttribute("aria-pressed", "true");
+			expect(button.querySelector("svg")).toBeTruthy();
+		});
+
+		it("puts completion ownership to the RIGHT of the status chip", async () => {
+			await act(async () => {
+				renderPanel(makeTask({ manualCompletion: true }));
+			});
+
+			const owner = screen.getByLabelText(/complete it myself/i);
+			const status = screen.getByText("Agent is Working");
+			expect(
+				status.compareDocumentPosition(owner) & Node.DOCUMENT_POSITION_FOLLOWING,
+			).toBeTruthy();
+		});
+
+		it("shows the watch toggle as a bare bell, the words only in its name", async () => {
+			await act(async () => {
+				renderPanel(makeTask({ watched: true }));
+			});
+
+			expect(screen.queryByText("Watching")).not.toBeInTheDocument();
+			expect(screen.getByLabelText(/stop notifications/i).querySelector("svg")).toBeTruthy();
 		});
 
 		it("persists self-managed completion from the merge popup", async () => {
@@ -3117,7 +3314,7 @@ describe("TaskInfoPanel — virtual (Operations) tasks", () => {
 		await act(async () => {
 			renderPanel(makeTask({ branchName: "dev3/task-shown", worktreePath: "/tmp/wt/t1" }));
 		});
-		expect(await screen.findByText("dev3/task-shown")).toBeInTheDocument();
+		expect(await screen.findByTestId("branch-chip")).toBeInTheDocument();
 	});
 
 	it("fills the empty git slot with a muted 'Git is not available' note", async () => {

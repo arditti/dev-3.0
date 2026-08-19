@@ -8,8 +8,9 @@ import { useTaskBranchStatus } from "./useTaskBranchStatus";
 import { useViewportClamp } from "../../hooks/useViewportClamp";
 import { useReducedMotion } from "../../utils/useReducedMotion";
 import Tooltip from "../Tooltip";
+import { toast } from "../../toast";
 import type { TaskInlineDiffRequest } from "../task-inline-diff";
-import { AutoMergeIcon, CommitIcon, CreatePRIcon, MergeIcon, PushIcon, RebaseIcon, ShowDiffIcon } from "./GitIcons";
+import { AutoMergeIcon, BranchIcon, CommitIcon, CreatePRIcon, MergeIcon, PushIcon, RebaseIcon, ShowDiffIcon } from "./GitIcons";
 import TaskPrStatusPopover from "../TaskPrStatusPopover";
 
 export interface TaskBranchStatusMeta {
@@ -25,9 +26,7 @@ interface TaskGitActionsProps {
 	dispatch: Dispatch<AppAction>;
 	navigate: (route: Route) => void;
 	isTaskActive: boolean;
-	showWorktreeCopy?: boolean;
 	showLoading?: boolean;
-	branchNameClassName?: string;
 	compact?: boolean;
 	onBranchStatusChange?: (meta: TaskBranchStatusMeta) => void;
 	onOpenInlineDiff?: (request: TaskInlineDiffRequest) => void;
@@ -87,24 +86,20 @@ export default function TaskGitActions({
 	dispatch,
 	navigate,
 	isTaskActive,
-	showWorktreeCopy = false,
 	showLoading = false,
-	branchNameClassName = "text-fg-3 text-xs font-mono flex-shrink-0",
 	compact = false,
 	onBranchStatusChange,
 	onOpenInlineDiff,
 }: TaskGitActionsProps) {
 	const t = useT();
 	const reducedMotion = useReducedMotion();
-	const [copiedPath, setCopiedPath] = useState(false);
-	const [copiedBranch, setCopiedBranch] = useState(false);
-	const [refMenuOpen, setRefMenuOpen] = useState(false);
+	const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+	const [branchMenuPos, setBranchMenuPos] = useState({ top: 0, left: 0 });
+	const branchTriggerRef = useRef<HTMLButtonElement>(null);
+	const branchMenuRef = useRef<HTMLDivElement>(null);
+	const { position: branchMenuClamped, visible: branchMenuVisible } = useViewportClamp(branchMenuRef, branchMenuPos);
 	const [pushedPRStatus, setPushedPRStatus] = useState<TaskPRBadgeInfo | null>(null);
 	const initialPrRefreshTaskRef = useRef<string | null>(null);
-	const [refMenuPos, setRefMenuPos] = useState({ top: 0, left: 0 });
-	const refTriggerRef = useRef<HTMLButtonElement>(null);
-	const refMenuRef = useRef<HTMLDivElement>(null);
-	const { position: refMenuClamped, visible: refMenuVisible } = useViewportClamp(refMenuRef, refMenuPos);
 	const {
 		baseBranch,
 		branchStatus,
@@ -219,50 +214,46 @@ export default function TaskGitActions({
 		});
 	}, [branchStatus?.prNumber, branchStatus?.prUrl, isTaskActive, project.id, task.id, task.prNumber, task.prUrl, task.worktreePath]);
 
+	/**
+	 * Copy feedback is a toast, not a tooltip swap: the old confirmation lived
+	 * inside the branch button's tooltip, so it was invisible unless the pointer
+	 * happened to still hover the thing you just clicked.
+	 */
+	function copyToClipboard(value: string, confirmation: string) {
+		void navigator.clipboard
+			.writeText(value)
+			// Only claim success once the write resolved — a denied clipboard used to
+			// leave the user with a confirmation and an empty buffer.
+			.then(() => toast.success(confirmation, { taskId: task.id }))
+			.catch(() => toast.error(t("infoPanel.copyFailed"), { taskId: task.id }));
+		setBranchMenuOpen(false);
+	}
+
+	// Close on click outside / Escape, same contract as every other menu here.
 	useEffect(() => {
-		if (!refMenuOpen) {
-			return;
+		if (!branchMenuOpen) return;
+
+		function onMouseDown(event: MouseEvent) {
+			const target = event.target as Node;
+			if (branchMenuRef.current?.contains(target) || branchTriggerRef.current?.contains(target)) return;
+			setBranchMenuOpen(false);
+		}
+		function onKey(event: KeyboardEvent) {
+			if (event.key === "Escape") setBranchMenuOpen(false);
 		}
 
-		function handleClick(event: MouseEvent) {
-			if (
-				refMenuRef.current &&
-				!refMenuRef.current.contains(event.target as Node) &&
-				refTriggerRef.current &&
-				!refTriggerRef.current.contains(event.target as Node)
-			) {
-				setRefMenuOpen(false);
-			}
-		}
+		// Capture phase: the terminal swallows mousedown before it bubbles to document.
+		document.addEventListener("mousedown", onMouseDown, true);
+		window.addEventListener("keydown", onKey, true);
+		return () => {
+			document.removeEventListener("mousedown", onMouseDown, true);
+			window.removeEventListener("keydown", onKey, true);
+		};
+	}, [branchMenuOpen]);
 
-		document.addEventListener("mousedown", handleClick);
-		return () => document.removeEventListener("mousedown", handleClick);
-	}, [refMenuOpen]);
-
-	function handleCopyBranch() {
-		if (!task.branchName) {
-			return;
-		}
-
-		navigator.clipboard.writeText(task.branchName);
-		setCopiedBranch(true);
-		setTimeout(() => setCopiedBranch(false), 1500);
-	}
-
-	function handleCopyPath() {
-		if (!task.worktreePath) {
-			return;
-		}
-
-		navigator.clipboard.writeText(task.worktreePath);
-		setCopiedPath(true);
-		setTimeout(() => setCopiedPath(false), 1500);
-	}
-
-	const refOptions = [
-		{ value: "", label: `origin/${baseBranch}` },
-		{ value: baseBranch, label: `${baseBranch} (local)` },
-	];
+	useEffect(() => {
+		setBranchMenuOpen(false);
+	}, [task.id]);
 
 	const branchStatusBadge = branchStatus && (branchStatus.ahead > 0 || branchStatus.behind > 0) ? (
 		<span className="flex items-center gap-1.5 text-micro flex-shrink-0">
@@ -316,56 +307,6 @@ export default function TaskGitActions({
 			</button>
 		</TaskPrStatusPopover>
 	) : null;
-
-	const refDropdownButton = branchStatus ? (
-		<Tooltip content={t("ttip.git.changeRef")} detail={t("ttip.git.refDropdown")}>
-			<button
-				ref={refTriggerRef}
-				onClick={(event) => {
-					event.stopPropagation();
-					if (!refMenuOpen && refTriggerRef.current) {
-						const rect = refTriggerRef.current.getBoundingClientRect();
-						setRefMenuPos({ top: rect.bottom + 4, left: rect.left });
-					}
-					setRefMenuOpen((open) => !open);
-				}}
-				className="text-micro text-accent font-normal hover:text-accent-emphasis transition-colors cursor-pointer flex-shrink-0"
-			>
-				vs {displayRef} ▾
-			</button>
-		</Tooltip>
-	) : null;
-
-	const refDropdownPortal = refMenuOpen && createPortal(
-		<div
-			ref={refMenuRef}
-			className="fixed bg-overlay border border-edge-active rounded-md shadow-2xl shadow-black/40 py-1 min-w-[10rem] max-w-[calc(100vw-1rem)]"
-			style={{
-				top: refMenuClamped.top,
-				left: refMenuClamped.left,
-				zIndex: 9999,
-				visibility: refMenuVisible ? "visible" : "hidden",
-			}}
-			onClick={(event) => event.stopPropagation()}
-		>
-			{refOptions.map((option) => (
-				<button
-					key={option.value}
-					onClick={(event) => {
-						event.stopPropagation();
-						selectCompareRef(option.value);
-						setRefMenuOpen(false);
-					}}
-					className={`block w-full text-left px-3 py-1.5 text-micro hover:bg-elevated-hover transition-colors cursor-pointer ${
-						compareRef === option.value ? "text-accent font-medium" : "text-fg-2"
-					}`}
-				>
-					{option.label}
-				</button>
-			))}
-		</div>,
-		document.body,
-	);
 
 	const uncommittedBadge = branchStatus && (branchStatus.insertions > 0 || branchStatus.deletions > 0) ? (
 		<span className="flex items-center gap-1 text-micro font-medium text-danger flex-shrink-0">
@@ -440,6 +381,39 @@ export default function TaskGitActions({
 	const showDiffDisabled = !onOpenInlineDiff;
 	const showDiffTooltip = t("infoPanel.showDiffTooltip", { branch: displayRef });
 
+	const openBranchDiff = () => onOpenInlineDiff?.({
+		mode: "branch",
+		compareRef: compareRef || undefined,
+		compareLabel: displayRef,
+	});
+
+	/**
+	 * Ahead / behind and the uncommitted line counts are one statement about the
+	 * same branch, so they share one control with no separator between them — and
+	 * that control opens the diff, which is what the numbers make you want to do.
+	 * Which ref they compare against lives in the tooltip now; the project setting
+	 * owns the choice (Project Settings → compare ref).
+	 */
+	const changesSummary = branchStatusBadge || uncommittedBadge ? (
+		showDiffDisabled ? (
+			<span className="flex items-center gap-1.5 flex-shrink-0">
+				{branchStatusBadge}
+				{uncommittedBadge}
+			</span>
+		) : (
+			<Tooltip content={showDiffTooltip} detail={t("ttip.infoPanel.showDiff")}>
+				<button
+					onClick={openBranchDiff}
+					className="git-anim flex items-center gap-1.5 flex-shrink-0 rounded px-1 py-0.5 hover:bg-elevated transition-colors"
+					aria-label={showDiffTooltip}
+				>
+					{branchStatusBadge}
+					{uncommittedBadge}
+				</button>
+			</Tooltip>
+		)
+	) : null;
+
 	const disabledBtnClass = "text-fg-muted/50 cursor-not-allowed bg-raised/50";
 	const enabledBtnClass = "text-accent hover:bg-accent/20 bg-accent/10 border border-accent/25";
 
@@ -479,11 +453,7 @@ export default function TaskGitActions({
 		<span className="flex items-center gap-1 text-micro flex-shrink-0">
 			<GitActionTooltip content={showDiffTooltip} detail={t("ttip.infoPanel.showDiff")} disabled={showDiffDisabled}>
 				<button
-					onClick={() => onOpenInlineDiff?.({
-						mode: "branch",
-						compareRef: compareRef || undefined,
-						compareLabel: displayRef,
-					})}
+					onClick={openBranchDiff}
 					disabled={showDiffDisabled}
 					className={`git-anim inline-flex items-center justify-center px-1.5 py-0.5 rounded text-dense font-semibold transition-colors ${
 						showDiffDisabled ? disabledBtnClass : "text-accent hover:bg-accent/20 bg-accent/10 border border-accent/30"
@@ -599,48 +569,136 @@ export default function TaskGitActions({
 		</span>
 	) : null;
 
+	/**
+	 * The branch name used to sit in the bar as bare mono text: ~200px of width, no
+	 * affordance, and a tail-truncated string that hid the informative half. It is a
+	 * labelled chip now — the full name heads the menu it opens, and the menu names
+	 * every copy action in words instead of a Nerd Font glyph nobody decodes.
+	 * "Open in Finder" is deliberately absent: TaskOpenIn already owns that.
+	 */
+	const branchMenuItems = task.branchName
+		? [
+			{ key: "branch", label: t("infoPanel.copyBranchItem"), value: task.branchName, done: t("infoPanel.branchCopied") },
+			...(task.worktreePath
+				? [{ key: "path", label: t("infoPanel.copyPathItem"), value: task.worktreePath, done: t("infoPanel.worktreePathCopied") }]
+				: []),
+			{
+				key: "checkout",
+				label: t("infoPanel.copyCheckoutItem"),
+				value: `git checkout ${task.branchName}`,
+				done: t("infoPanel.checkoutCopied"),
+			},
+		]
+		: [];
+
+	/**
+	 * The compare-ref picker is back — inside the menu this time. It used to print
+	 * "vs origin/main ▾" in the bar, spending permanent width to state a setting the
+	 * project already owns; here it costs nothing until the menu is open.
+	 */
+	const compareOptions = [
+		{ value: "", ref: `origin/${baseBranch}`, label: `origin/${baseBranch}` },
+		{ value: baseBranch, ref: baseBranch, label: t("infoPanel.compareRefLocal", { branch: baseBranch }) },
+	];
+	// Match on the RESOLVED ref, never on the raw value: a project whose default is
+	// spelled "origin/main" holds that string in `compareRef`, while the remote option
+	// carries "" (meaning "the default"), so a raw comparison ticks neither row.
+
+	const branchChip = task.branchName ? (
+		<Tooltip content={task.branchName} detail={t("ttip.infoPanel.branchChip")}>
+			<button
+				ref={branchTriggerRef}
+				type="button"
+				onClick={(event) => {
+					event.stopPropagation();
+					if (!branchMenuOpen && branchTriggerRef.current) {
+						const rect = branchTriggerRef.current.getBoundingClientRect();
+						setBranchMenuPos({ top: rect.bottom + 4, left: rect.left });
+					}
+					setBranchMenuOpen((open) => !open);
+				}}
+				className={`git-anim flex items-center gap-1 flex-shrink-0 rounded px-1.5 py-0.5 text-micro border transition-colors ${
+					branchMenuOpen
+						? "text-fg bg-elevated border-edge-active"
+						: "text-fg-3 border-edge bg-raised/60 hover:text-fg hover:bg-elevated hover:border-edge-active"
+				}`}
+				aria-label={t("infoPanel.branchMenuLabel", { branch: task.branchName })}
+				aria-haspopup="menu"
+				aria-expanded={branchMenuOpen}
+				data-testid="branch-chip"
+			>
+				<BranchIcon className="w-3 h-3" />
+				<span className="font-medium">{t("infoPanel.branchChip")}</span>
+				<span aria-hidden="true" className="opacity-70">▾</span>
+			</button>
+		</Tooltip>
+	) : null;
+
+	const branchMenuPortal = branchMenuOpen && task.branchName && createPortal(
+		<div
+			ref={branchMenuRef}
+			role="menu"
+			className="fixed bg-overlay border border-edge-active rounded-lg shadow-2xl shadow-black/40 py-1 min-w-[13rem] max-w-[calc(100vw-1rem)]"
+			style={{
+				top: branchMenuClamped.top,
+				left: branchMenuClamped.left,
+				zIndex: 9999,
+				visibility: branchMenuVisible ? "visible" : "hidden",
+			}}
+			onClick={(event) => event.stopPropagation()}
+		>
+			<div className="px-3 pb-1.5 pt-1 mb-1 border-b border-edge font-mono text-micro text-fg-muted break-all">
+				{task.branchName}
+			</div>
+			{branchMenuItems.map((item) => (
+				<button
+					key={item.key}
+					role="menuitem"
+					type="button"
+					onClick={() => copyToClipboard(item.value, item.done)}
+					className="git-anim block w-full text-left px-3 py-1.5 text-micro text-fg-2 hover:bg-elevated-hover hover:text-fg transition-colors"
+				>
+					{item.label}
+				</button>
+			))}
+			<div className="mt-1 border-t border-edge pt-1">
+				<div className="px-3 py-1 text-dense font-semibold uppercase tracking-wider text-fg-muted">
+					{t("infoPanel.compareAgainst")}
+				</div>
+				{compareOptions.map((option) => (
+					<button
+						key={option.value}
+						role="menuitemradio"
+						type="button"
+						aria-checked={displayRef === option.ref}
+						onClick={() => {
+							selectCompareRef(option.value);
+							setBranchMenuOpen(false);
+						}}
+						className={`git-anim flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-micro transition-colors hover:bg-elevated-hover ${
+							displayRef === option.ref ? "text-accent font-medium" : "text-fg-2 hover:text-fg"
+						}`}
+					>
+						<span aria-hidden="true" className="w-2.5 flex-shrink-0">
+							{displayRef === option.ref ? "✓" : ""}
+						</span>
+						<span className="font-mono">{option.label}</span>
+					</button>
+				))}
+			</div>
+		</div>,
+		document.body,
+	);
+
 	return (
 		<>
-			{refDropdownPortal}
+			{branchMenuPortal}
+			{branchChip}
 
-			{task.branchName && (
-				<Tooltip
-					content={copiedBranch ? t("infoPanel.branchCopied") : task.branchName}
-					detail={t("ttip.infoPanel.copyBranch")}
-				>
-					<button
-						onClick={handleCopyBranch}
-						className={`${branchNameClassName} text-left rounded hover:text-fg transition-colors`}
-						aria-label={t("infoPanel.copyBranch", { branch: task.branchName })}
-					>
-						{task.branchName}
-					</button>
-				</Tooltip>
-			)}
-
-			{showWorktreeCopy && task.worktreePath && (
-				<>
-					<span className="text-fg-muted text-xs flex-shrink-0">|</span>
-					<Tooltip content={copiedPath ? t("infoPanel.pathCopied") : t("infoPanel.copyPath")} detail={t("ttip.infoPanel.copyPath")}>
-						<button
-							onClick={handleCopyPath}
-							className="flex-shrink-0 flex items-center gap-1 p-0.5 rounded hover:bg-elevated transition-colors text-fg-muted hover:text-fg"
-							aria-label={copiedPath ? t("infoPanel.pathCopied") : t("infoPanel.copyPath")}
-						>
-							<span className="text-xs leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\uEF81"}</span>
-							<span className="text-xs leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>
-								{copiedPath ? "\u{F012C}" : "\uF0C5"}
-							</span>
-						</button>
-					</Tooltip>
-				</>
-			)}
-
-			{(branchStatusBadge || refDropdownButton || (showLoading && statusLoading)) && (
+			{(branchStatusBadge || uncommittedBadge || (showLoading && statusLoading)) && (
 				<>
 					{task.branchName && <span className="text-fg-muted text-xs flex-shrink-0">|</span>}
-					{branchStatusBadge}
-					{refDropdownButton}
+					{changesSummary}
 					{showLoading && statusLoading && (
 						<span className="flex items-center gap-1 text-micro text-fg-muted flex-shrink-0">
 							<svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -649,13 +707,6 @@ export default function TaskGitActions({
 							</svg>
 						</span>
 					)}
-				</>
-			)}
-
-			{uncommittedBadge && (
-				<>
-					<span className="text-fg-muted text-xs flex-shrink-0">|</span>
-					{uncommittedBadge}
 				</>
 			)}
 
