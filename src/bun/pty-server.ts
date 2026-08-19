@@ -27,9 +27,8 @@ import {
 	stopNativeTaskPanes,
 } from "./native-task-panes";
 import { paneSessionKey, parsePaneSessionKey } from "../shared/pane-session-key";
-import { FEATURE_FLAGS } from "../shared/feature-flags";
-import { isFeatureEnabled } from "./feature-flags";
 import { batchWindowMs, isBackedUp } from "./pty-backpressure";
+import { forgetSession, noteBytesIn, noteFlush, noteQueued, noteWindow } from "./pty-throughput";
 import { PTY_WS_CLOSE } from "../shared/pty-ws-close-codes";
 import { nativeTaskSessionId, type TerminalLaunchSpec } from "./task-terminal-backend";
 import {
@@ -117,6 +116,10 @@ let ptyWsPort = 0;
 // rendering overhead in the frontend terminal emulator. Instead, we batch
 // data and flush at ~60fps (16ms intervals). This reduces WS message count
 // by 10-100x while maintaining perceptual smoothness.
+//
+// The window is a CEILING on the message rate, not a delay every chunk pays:
+// the chunk that opens it is sent at once (see enqueuePtyData), so an idle
+// terminal echoing one keystroke is never held back.
 const PTY_BATCH_INTERVAL_MS = 16;
 
 export type PtySessionType = "task" | "project";
@@ -291,6 +294,9 @@ function ingestPtyOutput(session: PtySession, data: string | Uint8Array): void {
 	const cleaned = handleOsc52(str, session);
 	checkForBell(cleaned, session.taskId);
 	if (!cleaned) return;
+	// Counted before the batcher can hide it: this is the only place that sees the
+	// shell's real production rate, which is what "are we behind" is measured against.
+	noteBytesIn(session.registryKey, cleaned.length);
 	// A native session always enqueues: the batch lands in its bounded journal even
 	// with no viewer attached, which is what lets a remote tab attach to a running
 	// shell and see the screen. tmux replays its own pane, so it stays as it was.
@@ -616,6 +622,7 @@ export function destroySession(taskId: string, fallbackSocket?: string): void {
 			}
 		}
 		session.clients.clear();
+		forgetSession(session.registryKey);
 		sessions.delete(taskId);
 	}
 
@@ -663,6 +670,7 @@ function releaseNativeSession(session: PtySession): void {
 		}
 	}
 	session.clients.clear();
+	forgetSession(session.registryKey);
 	sessions.delete(session.taskId);
 	// Release all composite-keyed PtySession entries for additional panes of this task.
 	sweepNativePaneSessions(session.taskId);
@@ -675,6 +683,7 @@ function sweepNativePaneSessions(taskId: string): void {
 		if (parsed?.taskId === taskId) {
 			if (s.batchTimer) clearTimeout(s.batchTimer);
 			s.pendingData = "";
+			forgetSession(s.registryKey);
 			s.native?.detach();
 			s.native = null;
 			for (const client of s.clients) {
@@ -1612,6 +1621,8 @@ function flushPendingData(session: PtySession): void {
 		if (session.clients.size === 0) return;
 		const data = session.pendingData;
 		session.pendingData = "";
+		noteQueued(session.registryKey, 0);
+		noteFlush(session.registryKey, data.length, session.clients.size);
 		for (const client of session.clients) {
 			try { client.sendText(data); } catch { /* dead client */ }
 		}
@@ -1619,11 +1630,13 @@ function flushPendingData(session: PtySession): void {
 	}
 	const data = session.pendingData;
 	session.pendingData = "";
+	noteQueued(session.registryKey, 0);
 	// Journal FIRST and unconditionally: with no viewer attached (remote-only use,
 	// or every tab closed) this tail is the entire screen the next one will get.
 	const seq = session.nativeStream?.push(data) ?? 0;
 	if (session.clients.size === 0) return;
 	const framed = outputMessage(seq, data);
+	noteFlush(session.registryKey, framed.length, session.clients.size);
 	for (const client of session.clients) {
 		try { client.sendText(framed); } catch { /* dead client */ }
 	}
@@ -1663,33 +1676,36 @@ function bufferedBytesFor(session: PtySession): number {
 }
 
 /**
- * Enqueue PTY data for batched delivery to the WebSocket.
- * Instead of sending every chunk immediately (which for Claude Code means
- * thousands of tiny WS messages per second), we accumulate data and flush
- * at ~60fps.
+ * Enqueue PTY data for delivery to the WebSocket.
  *
- * With FEATURE_FLAGS.remoteTerminalLatency on, the chunk that opens a window is
- * sent immediately (a lone keystroke echo no longer waits out the full window)
- * and the window widens while a viewer's socket is behind. The flag is read from
- * a local cache — no await, no lookup beyond a Map get, on a per-chunk path.
+ * The chunk that OPENS a window goes out immediately, and everything that
+ * arrives while the window is open is coalesced into one trailing flush. That
+ * keeps the message rate an agent's output produces bounded (Claude Code would
+ * otherwise push thousands of tiny frames per second) without making a lone
+ * keystroke echo — the only chunk in its window — wait out the full 16 ms.
+ *
+ * While a viewer's socket is behind, the leading-edge send is skipped and the
+ * window widens instead: a backed-up socket is exactly what cannot absorb an
+ * immediate send. Nothing is ever dropped — the ANSI stream is stateful.
  */
 function enqueuePtyData(session: PtySession, data: string): void {
 	session.pendingData += data;
-	if (session.batchTimer) return;
-
-	if (!isFeatureEnabled(FEATURE_FLAGS.remoteTerminalLatency)) {
-		// Trailing edge only: one chunk in the window still costs the full 16ms.
-		session.batchTimer = setTimeout(() => flushPendingData(session), PTY_BATCH_INTERVAL_MS);
+	if (session.batchTimer) {
+		// A window is already open, so these bytes really are held until it closes.
+		noteQueued(session.registryKey, session.pendingData.length);
 		return;
 	}
 
 	const buffered = bufferedBytesFor(session);
-	// A backed-up socket cannot absorb an immediate send; only widen the window.
 	if (!isBackedUp(buffered)) flushPendingData(session);
-	session.batchTimer = setTimeout(
-		() => flushPendingData(session),
-		batchWindowMs(buffered, PTY_BATCH_INTERVAL_MS),
-	);
+	// What the flush LEFT: nothing on the happy path, everything while the socket is
+	// backed up — which is the backlog this gauge exists to show. Sampling before the
+	// flush instead froze it at the last chunk's size, so an idle session reported a
+	// permanent multi-KB queue.
+	noteQueued(session.registryKey, session.pendingData.length);
+	const windowMs = batchWindowMs(buffered, PTY_BATCH_INTERVAL_MS);
+	noteWindow(session.registryKey, buffered, windowMs);
+	session.batchTimer = setTimeout(() => flushPendingData(session), windowMs);
 }
 
 async function configureTmux(tmuxSessionName: string, socket: string): Promise<void> {

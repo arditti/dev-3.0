@@ -2974,6 +2974,25 @@ export interface TmuxSessionInfo {
 	resourceUsage?: ResourceUsage;
 }
 
+/**
+ * One PTY session's read-vs-sent counters, as the Debug → Terminal Performance
+ * overlay reads them. Rates are per second over the last closed window; the
+ * gauges are instantaneous. `bytesIn` outrunning `bytesOut` means a backlog, and
+ * the two gauges say whether it is here or further downstream.
+ */
+export interface PtyThroughputStats {
+	bytesIn: number;
+	bytesOut: number;
+	messages: number;
+	drops: number;
+	droppedBytes: number;
+	queued: number;
+	socketBuffered: number;
+	windowMs: number;
+	queuedPeak: number;
+	socketPeak: number;
+}
+
 // ---- System requirements ----
 
 export interface RequirementCheckResult {
@@ -3799,6 +3818,11 @@ export type AppRPCSchema = {
 				params: void;
 				response: TmuxSessionInfo[];
 			};
+			/** PTY read-vs-sent counters for the Debug → Terminal Performance overlay. */
+			terminalPtyStats: {
+				params: void;
+				response: { sessions: Record<string, PtyThroughputStats> };
+			};
 			killTmuxSession: {
 				params: { sessionName: string };
 				response: void;
@@ -4593,6 +4617,8 @@ export type AppRPCSchema = {
 			showAbout: { version: string; buildChannel?: string };
 			/** Open the Debug → Feature Flags inspector. */
 			showFeatureFlags: {};
+			/** Show or hide the Debug → Terminal Performance overlay. */
+			toggleTerminalPerf: {};
 			/**
 			 * Result of a manual "Check for Updates" menu action, surfaced as a toast.
 			 * `available` updates flow through `updateAvailable` instead (header plaque).
