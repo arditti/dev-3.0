@@ -677,7 +677,6 @@ const settings = {
 	"spaces.searchPlaceholderDashboard": "Buscar espacios y proyectos…",
 	"spaces.filterAll": "Todos",
 	"spaces.filterNeedsYou": "Te esperan",
-	"spaces.summaryStripLabel": "Filtrar por espacio",
 	"spaces.acrossAllSpaces": "En todos los espacios",
 	"spaces.menuLabel": "Acciones del espacio",
 	"spaces.rename": "Renombrar espacio…",

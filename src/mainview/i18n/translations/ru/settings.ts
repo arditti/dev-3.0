@@ -682,7 +682,6 @@ const settings = {
 	"spaces.searchPlaceholderDashboard": "Поиск пространств и проектов…",
 	"spaces.filterAll": "Все",
 	"spaces.filterNeedsYou": "Ждут вас",
-	"spaces.summaryStripLabel": "Фильтр по пространству",
 	"spaces.acrossAllSpaces": "По всем пространствам",
 	"spaces.menuLabel": "Действия с пространством",
 	"spaces.rename": "Переименовать…",
