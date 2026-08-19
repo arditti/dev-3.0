@@ -42,7 +42,8 @@ import {
 	validAltClickPanes,
 } from "../tmux";
 import { markAgentPane } from "../agent-prompt";
-import { dev3TaskTempPath } from "../temp-paths";
+import { clearSetupExitCode, dev3TaskTempPath, setupExitCodePath } from "../temp-paths";
+import { stopSetupFailureWatch, watchSetupFailure } from "../setup-failure-watch";
 import { taskTerminalBackendIdentity } from "../task-terminal-backend";
 import {
 	focusNativeTaskPane,
@@ -618,6 +619,15 @@ export async function launchTaskPty(
 		skipSessionPersist,
 	});
 
+	// Any launch supersedes the previous run's setup verdict — including the
+	// "start anyway" relaunch, which is itself the answer to that verdict.
+	if (task.setupFailedExitCode != null) {
+		await data.updateTask(project, task.id, { setupFailedExitCode: null });
+		task.setupFailedExitCode = null;
+	}
+	stopSetupFailureWatch(task.id);
+	clearSetupExitCode(task.id);
+
 	const ctx: agents.TemplateContext = {
 		taskTitle: task.title,
 		taskDescription: task.description,
@@ -798,10 +808,16 @@ export async function launchTaskPty(
 			shellPath: userShell,
 			nativeBackend,
 			launchMode: setupScriptLaunchMode,
+			setupExitPath: setupExitCodePath(task.id),
 		});
 		await writeLaunchScript(startupPath, startupScript);
 		tmuxCmd = buildScriptRunnerCommand(startupPath, { shellPath: userShell });
 		isSetupWrapper = true;
+		// Only this process can see the wrapper's verdict — see setup-failure-watch.
+		watchSetupFailure(task.id, async (exitCode) => {
+			const updated = await data.updateTask(project, task.id, { setupFailedExitCode: exitCode });
+			getPushMessage()?.("taskUpdated", { projectId: project.id, task: updated });
+		});
 	}
 
 	const runScriptPath = dev3TaskTempPath(task.id, `run${dialect.scriptExtension}`);
