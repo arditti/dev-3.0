@@ -72,11 +72,11 @@ ux_architecture:
       detail_route: null                     # a space is a grouping, not a place: no board, no breadcrumb
       owner: "workspace"
       owns: []                               # references projects; owns nothing (git never moves)
-      common_actions: ["create", "rename", "delete", "reorder", "add_projects", "filter_dashboard"]
+      common_actions: ["create", "rename", "delete", "reorder", "add_projects", "filter_dashboard", "filter_sidebar_tasks"]
       membership: "Many-to-many by project.id, ordered per space. A project in several spaces renders under each. Dangling ids are normal and skipped silently."
       computed_home: "Projects with no membership group under a computed `Home` heading — never stored, not renameable/deletable, absent from every membership picker."
       never: "A merged space board, a space route, per-space columns/labels, a space colour, drag-changed membership, a stored Home."
-      evidence: ["src/shared/types.ts (Space)", "src/bun/spaces-data.ts", "src/mainview/components/SpacesRail.tsx", "src/mainview/components/SpaceGroupedProjects.tsx", "decisions/2026/08/14/spaces-group-projects-without-replacing-boards.md", "decisions/2026/08/17/spaces-dashboard-follows-the-proposal-mock.md"]
+      evidence: ["src/shared/types.ts (Space)", "src/bun/spaces-data.ts", "src/mainview/components/SpacesRail.tsx", "src/mainview/components/SpaceGroupedProjects.tsx", "src/mainview/components/SpaceSummaryStrip.tsx", "decisions/2026/08/14/spaces-group-projects-without-replacing-boards.md", "decisions/2026/08/17/spaces-dashboard-follows-the-proposal-mock.md"]
     task:
       label: "Task"
       plural: "Tasks"

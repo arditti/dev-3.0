@@ -22,6 +22,7 @@ import Tooltip from "./Tooltip";
 import { PanelLeftIcon } from "./TaskIcons";
 import ActiveTaskRow from "./ActiveTaskRow";
 import { useSpaces } from "../useSpaces";
+import SpaceSummaryStrip from "./SpaceSummaryStrip";
 import { spaceSiblingProjectIds } from "../utils/spaceScope";
 
 type SidebarScope = "project" | "global" | "space";
@@ -594,6 +595,18 @@ function ActiveTasksSidebar({
 				</div>
 				<FilterFunnel query={searchQuery} onChange={setSearchQuery} groups={filterGroups} size="xs" helpTopicId="filters.dsl" />
 			</div>
+
+			{/* Dashboard mount: per-space summary chips over the same pool the list
+			    shows. Each chip toggles the `space:"…"` token, nothing more. */}
+			{!project && spaces.length > 0 && (
+				<SpaceSummaryStrip
+					spaces={spaces}
+					tasks={sourceTasks}
+					allProjects={allProjects ?? []}
+					query={searchQuery}
+					onQueryChange={setSearchQuery}
+				/>
+			)}
 
 			{/* Feature-discovery tip — terminal-context tips lead here (see useTipRotation) */}
 			{currentTip && tipState && (

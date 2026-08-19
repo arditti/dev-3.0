@@ -676,6 +676,7 @@ const settings = {
 	"spaces.searchPlaceholderDashboard": "Search spaces and projects…",
 	"spaces.filterAll": "All",
 	"spaces.filterNeedsYou": "Needs you",
+	"spaces.summaryStripLabel": "Filter by space",
 	"spaces.acrossAllSpaces": "Across all spaces",
 	"spaces.menuLabel": "Space actions",
 	"spaces.rename": "Rename space…",
