@@ -322,12 +322,14 @@ describe("TaskInfoPanel", () => {
 			});
 		});
 
-		it("renders labels when present", async () => {
+		it("keeps labels off the collapsed bar", async () => {
 			await act(async () => {
 				renderPanel(makeTask({ labelIds: ["lbl1", "lbl2"] }));
 			});
-			expect(screen.getByText("Bug")).toBeInTheDocument();
-			expect(screen.getByText("Feature")).toBeInTheDocument();
+			// Labels live in the expanded metadata grid and the breadcrumb hover
+			// card; on the bar they only stole width from status and the diff.
+			expect(screen.queryByText("Bug")).not.toBeInTheDocument();
+			expect(screen.queryByText("Feature")).not.toBeInTheDocument();
 		});
 
 		it("renders diff summary badge in the top row when branch diff stats exist", async () => {
@@ -345,6 +347,39 @@ describe("TaskInfoPanel", () => {
 			expect(screen.getByText("2 files")).toBeInTheDocument();
 			expect(screen.getByText("+12")).toBeInTheDocument();
 			expect(screen.getByText("−4")).toBeInTheDocument();
+		});
+
+		it("hides tests by default and flips them back from the badge's own segment", async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			mockedApi.request.getBranchStatus.mockResolvedValue({
+				...defaultBranchStatus,
+				diffFiles: 2,
+				diffInsertions: 12,
+				diffDeletions: 4,
+				diffFileStats: [
+					{ path: "src/app.ts", insertions: 10, deletions: 3 },
+					{ path: "src/__tests__/app.test.ts", insertions: 2, deletions: 1 },
+				],
+			});
+
+			await act(async () => {
+				renderPanel(makeTask());
+			});
+
+			const toggle = await screen.findByTestId("diff-include-tests-toggle");
+			// The segment lives inside the badge, not beside it.
+			expect(toggle.closest("div")).toContainElement(screen.getByTestId("diff-summary-badge"));
+			expect(toggle).toHaveAttribute("aria-pressed", "false");
+			expect(screen.getByText("1 file")).toBeInTheDocument();
+			expect(screen.getByText("+10")).toBeInTheDocument();
+
+			await act(async () => {
+				await user.click(toggle);
+			});
+
+			expect(toggle).toHaveAttribute("aria-pressed", "true");
+			expect(screen.getByText("2 files")).toBeInTheDocument();
+			expect(screen.getByText("+12")).toBeInTheDocument();
 		});
 
 		it("shows changed files popup from the top diff summary badge", async () => {
@@ -587,6 +622,14 @@ describe("TaskInfoPanel", () => {
 				renderPanel(makeTask({ seq: 42 }));
 			});
 			expect(screen.getByText("#42")).toBeInTheDocument();
+		});
+
+		it("renders labels in the metadata grid", async () => {
+			await act(async () => {
+				renderPanel(makeTask({ labelIds: ["lbl1", "lbl2"] }));
+			});
+			expect(screen.getByText("Bug")).toBeInTheDocument();
+			expect(screen.getByText("Feature")).toBeInTheDocument();
 		});
 
 		it("renders branch name in metadata", async () => {
@@ -3685,24 +3728,14 @@ describe("TaskInfoPanel — virtual (Operations) tasks", () => {
 
 		afterEach(() => vi.unstubAllGlobals());
 
-		it("keeps label chips inline on a roomy panel", async () => {
+		it("never puts label chips on the summary bar — they live in the title hover card", async () => {
 			mockPanelWidth(1600);
 			await act(async () => {
 				renderPanel(makeTask({ labelIds: [label1.id, label2.id] }));
 			});
 
-			expect(screen.getByText("Bug")).toBeInTheDocument();
-			expect(screen.queryByTestId("label-strip-overflow")).not.toBeInTheDocument();
-		});
-
-		it("folds the label strip into a single count chip on a tight panel", async () => {
-			mockPanelWidth(1000);
-			await act(async () => {
-				renderPanel(makeTask({ labelIds: [label1.id, label2.id] }));
-			});
-
 			expect(screen.queryByText("Bug")).not.toBeInTheDocument();
-			expect(screen.getByTestId("label-strip-overflow")).toHaveAttribute("title", "Bug, Feature");
+			expect(screen.queryByTestId("label-strip-overflow")).not.toBeInTheDocument();
 		});
 
 		it("drops the completion-ownership label on a tight panel", async () => {
@@ -3718,14 +3751,6 @@ describe("TaskInfoPanel — virtual (Operations) tasks", () => {
 			).toBeGreaterThan(0);
 		});
 
-		it("drops the label strip entirely just above the mobile breakpoint", async () => {
-			mockPanelWidth(820);
-			await act(async () => {
-				renderPanel(makeTask({ labelIds: [label1.id, label2.id] }));
-			});
-
-			expect(screen.queryByTestId("label-strip-overflow")).not.toBeInTheDocument();
-		});
 	});
 });
 

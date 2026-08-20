@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect, type Dispatc
 import { toast } from "../toast";
 import { confirm } from "../confirm";
 import { createPortal } from "react-dom";
-import type { Task, Project, TaskStatus, PortInfo, ResourceUsage, Label, TaskPRBadgeInfo } from "../../shared/types";
+import type { Task, Project, TaskStatus, PortInfo, ResourceUsage, TaskPRBadgeInfo } from "../../shared/types";
 import LabelChip from "./LabelChip";
 import PriorityBadge from "./PriorityBadge";
 import OpenInMenu from "./OpenInMenu";
@@ -88,21 +88,12 @@ const DEFAULT_HEIGHT = 200;
 const MIN_HEIGHT = 80;
 const MAX_RATIO = 0.33;
 
-// Context bar budget: keep the label strip from pushing status/diff off the bar.
-// Extra labels collapse into a "+k" chip; the full list still shows in the
-// expanded metadata grid below.
-const MAX_INLINE_LABELS = 4;
 
 // The 2×2 bar grid is sized by the panel's own width, not the viewport: in split
 // view the board eats most of a 1100px window, so the bars go tight while
-// `useCompact` (1600) still reports "roomy". Below this the label strip folds to
-// its "+k" chip and the branch name clamps harder, keeping both rows on one line.
+// `useCompact` (1600) still reports "roomy". Below this the branch name clamps
+// harder, keeping both rows on one line.
 const TIGHT_PANEL_WIDTH = 1280;
-
-// Below this the Context bar can only keep its identity and primary actions: the
-// label strip and the include-tests toggle drop out (both still readable in the
-// expanded metadata grid / diff viewer) rather than eat the status label.
-const VERY_TIGHT_PANEL_WIDTH = 1000;
 
 // Uniform full-width row used by the narrow-viewport (mobile) actions sheet.
 // The mobile sheet is a curated read/trigger surface — a clean list of rows, not
@@ -183,7 +174,6 @@ function TaskInfoPanel({
 	const panelRef = useRef<HTMLDivElement>(null);
 	const panelWidth = useContainerWidth(panelRef);
 	const tight = panelWidth > 0 && panelWidth < TIGHT_PANEL_WIDTH;
-	const veryTight = panelWidth > 0 && panelWidth < VERY_TIGHT_PANEL_WIDTH;
 	const dragging = useRef(false);
 	const statusTriggerRef = useRef<HTMLButtonElement>(null);
 	const statusMenuRef = useRef<HTMLDivElement>(null);
@@ -529,10 +519,6 @@ function TaskInfoPanel({
 	const activeCustomColumn = task.customColumnId
 		? (project.customColumns ?? []).find((column) => column.id === task.customColumnId)
 		: null;
-	const assignedLabels = (task.labelIds ?? [])
-		.map((id) => (project.labels ?? []).find((item) => item.id === id))
-		.filter(Boolean) as Label[];
-
 	function showDiffFilesPopover() {
 		// Hover pattern — dead on touch, and a tap fires mouseenter with no
 		// mouseleave, so on narrow the popover would stick over the freshly
@@ -624,27 +610,36 @@ function TaskInfoPanel({
 				}
 				: null);
 	const allDiffFileStats = metadataBranchStatus?.diffFileStats ?? [];
+	// Per-file stats are what the filter subtracts from. Without them there is
+	// nothing to subtract, so the raw totals stand instead of collapsing to zero.
+	const showRawDiffTotals = includeTests || allDiffFileStats.length === 0;
 	const visibleDiffFileStats = includeTests
 		? allDiffFileStats
 		: allDiffFileStats.filter((entry) => !isTestFile(entry.path));
 	const excludedTestCount = allDiffFileStats.length - visibleDiffFileStats.length;
-	const visibleDiffFiles = includeTests
+	const visibleDiffFiles = showRawDiffTotals
 		? (metadataBranchStatus?.diffFiles ?? 0)
 		: visibleDiffFileStats.length;
-	const visibleDiffInsertions = includeTests
+	const visibleDiffInsertions = showRawDiffTotals
 		? (metadataBranchStatus?.diffInsertions ?? 0)
 		: visibleDiffFileStats.reduce((sum, e) => sum + e.insertions, 0);
-	const visibleDiffDeletions = includeTests
+	const visibleDiffDeletions = showRawDiffTotals
 		? (metadataBranchStatus?.diffDeletions ?? 0)
 		: visibleDiffFileStats.reduce((sum, e) => sum + e.deletions, 0);
 	const diffBadgeTitle = !includeTests && excludedTestCount > 0
 		? t.plural("infoPanel.diffTestsHidden", excludedTestCount)
 		: t("infoPanel.showDiff");
+	// The tests filter is a segment of the diff badge, not a chip of its own: it
+	// only ever modifies these very numbers, and as a neighbour it read as a
+	// second, unrelated action. Same segmented idiom as the status control —
+	// the border owns the group, a hairline splits the two click targets.
+	const showTestsSegment = project.kind !== "virtual" && !narrow && metadataBranchStatus != null && metadataBranchStatus.diffFiles > 0;
 	const diffSummaryBadge = project.kind !== "virtual" && metadataBranchStatus && metadataBranchStatus.diffFiles > 0 ? (
+		<div className="inline-flex items-center rounded-lg bg-elevated border border-edge hover:border-edge-active transition-colors flex-shrink-0">
 		<button
 			type="button"
 			ref={diffFilesTriggerRef}
-			className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-elevated border border-edge text-micro font-mono text-fg-2 flex-shrink-0 cursor-pointer transition-colors hover:bg-elevated-hover"
+			className={`inline-flex items-center gap-1.5 px-2 py-1 text-micro font-mono text-fg-2 cursor-pointer transition-colors hover:bg-elevated-hover ${showTestsSegment ? "rounded-l-lg" : "rounded-lg"}`}
 			onClick={() => openBranchDiff()}
 			onMouseEnter={showDiffFilesPopover}
 			onMouseLeave={hideDiffFilesPopover}
@@ -655,35 +650,28 @@ function TaskInfoPanel({
 			<span>{visibleDiffFiles} {visibleDiffFiles === 1 ? "file" : "files"}</span>
 			<span className="text-success">+{visibleDiffInsertions}</span>
 			<span className="text-danger">−{visibleDiffDeletions}</span>
-			{!includeTests && excludedTestCount > 0 && (
-				<span
-					className="text-fg-muted text-sm-plus leading-none"
-					style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}
-					title={t.plural("infoPanel.diffTestsHidden", excludedTestCount)}
-				>
-					{"\u{F0912}"}
-				</span>
-			)}
 		</button>
-	) : null;
-	const diffIncludeTestsToggle = project.kind !== "virtual" && !veryTight && metadataBranchStatus && metadataBranchStatus.diffFiles > 0 ? (
-		<Tooltip content={t("infoPanel.diffIncludeTestsTooltip")} detail={t("ttip.infoPanel.includeTests")}>
-		<button
-			type="button"
-			data-testid="diff-include-tests-toggle"
-			onClick={() => setIncludeTests(!includeTests)}
-			className={`git-anim inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-micro font-mono flex-shrink-0 transition-colors ${
-				includeTests
-					? "bg-elevated border-edge text-fg-2 hover:bg-elevated-hover"
-					: "bg-accent/10 border-accent/30 text-accent hover:bg-accent/20"
-			}`}
-			aria-label={t("infoPanel.diffIncludeTestsAria")}
-			aria-pressed={includeTests}
-		>
-			{!compact && <span>{includeTests ? t("infoPanel.diffIncludeTests") : t("infoPanel.diffExcludeTests")}</span>}
-			<IncludeTestsIcon className="w-[0.95rem] h-[0.95rem]" />
-		</button>
-		</Tooltip>
+		{showTestsSegment && (
+			<>
+				<span className="h-4 w-px flex-shrink-0 bg-edge" aria-hidden="true" />
+				<Tooltip content={t("infoPanel.diffIncludeTestsTooltip")} detail={t("ttip.infoPanel.includeTests")}>
+					<button
+						type="button"
+						data-testid="diff-include-tests-toggle"
+						onClick={() => setIncludeTests(!includeTests)}
+						title={!includeTests && excludedTestCount > 0 ? t.plural("infoPanel.diffTestsHidden", excludedTestCount) : undefined}
+						className={`git-anim flex flex-shrink-0 items-center justify-center self-stretch rounded-r-lg px-1.5 transition-colors ${
+							includeTests ? "text-fg-3 hover:bg-elevated-hover hover:text-fg-2" : "bg-accent/10 text-accent hover:bg-accent/20"
+						}`}
+						aria-label={t("infoPanel.diffIncludeTestsAria")}
+						aria-pressed={includeTests}
+					>
+						<IncludeTestsIcon className="w-[0.95rem] h-[0.95rem]" off={!includeTests} />
+					</button>
+				</Tooltip>
+			</>
+		)}
+		</div>
 	) : null;
 	const diffFilesPopover = diffFilesHover && metadataBranchStatus && visibleDiffFileStats.length > 0 && createPortal(
 		<div
@@ -737,31 +725,6 @@ function TaskInfoPanel({
 			taskId={task.id}
 			onClose={() => setFileOpenInMenu(null)}
 		/>
-	) : null;
-
-	// On a tight panel every inline chip is width the bar does not have — fold the
-	// whole strip into the "+k" chip instead of letting it overrun the next bar.
-	const maxInlineLabels = tight ? 0 : MAX_INLINE_LABELS;
-	const inlineLabels = assignedLabels.slice(0, maxInlineLabels);
-	const overflowLabels = assignedLabels.slice(maxInlineLabels);
-	const labelStrip = assignedLabels.length > 0 && !veryTight ? (
-		<div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
-			{inlineLabels.map((label) => <LabelChip key={label.id} label={label} size="xs" />)}
-			{overflowLabels.length > 0 && (
-				<span
-					className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-elevated text-fg-3 text-dense font-medium flex-shrink-0"
-					title={overflowLabels.map((label) => label.name).join(", ")}
-					data-testid="label-strip-overflow"
-				>
-					{/* With no chip beside it a bare "+2" is meaningless — the tag glyph
-					    says what is being counted. */}
-					{inlineLabels.length === 0 && (
-						<span className="text-micro leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>{"\u{F04F9}"}</span>
-					)}
-					{inlineLabels.length === 0 ? overflowLabels.length : `+${overflowLabels.length}`}
-				</span>
-			)}
-		</div>
 	) : null;
 
 	const watchToggleButton = (
@@ -1524,8 +1487,6 @@ function TaskInfoPanel({
 							{statusDropdownButton}
 							{manualCompletionToggleButton}
 							{diffSummaryBadge}
-							{diffIncludeTestsToggle}
-							{labelStrip}
 						</div>
 						{statusDropdownPortal}
 						<div className="flex-1" />
@@ -1595,8 +1556,6 @@ function TaskInfoPanel({
 								{statusDropdownPortal}
 								{manualCompletionToggleButton}
 								{diffSummaryBadge}
-								{diffIncludeTestsToggle}
-								{labelStrip}
 							</div>
 							<div className="flex-1" />
 							<div className="flex items-center gap-1.5 flex-shrink-0" data-help-id="inspector.session-bar">
