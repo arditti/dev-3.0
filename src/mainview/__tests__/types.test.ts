@@ -19,8 +19,11 @@ import {
 	orderProjectsForDisplay,
 	computeTaskTimeBreakdown,
 	buildTaskDialogSubject,
+	orderSpaces,
+	spacesOfProject,
+	isSpaceSensitive,
 } from "../../shared/types";
-import type { Label, Project, Task, TaskStatus, TaskTimeInput } from "../../shared/types";
+import type { Label, Project, Space, Task, TaskStatus, TaskTimeInput } from "../../shared/types";
 
 // ---- hexToRgb ----
 
@@ -731,5 +734,47 @@ describe("isTaskDisconnected — a session that died with the app", () => {
 		const disconnectedP0 = dead({ priority: "P0" });
 		expect(compareTaskSortRank(disconnectedP0, { priority: "P4" })).toBeGreaterThan(0);
 		expect(compareTaskSortRank(disconnectedP0, { priority: "P0", hibernated: true })).toBeLessThan(0);
+	});
+});
+
+// ---- Space helpers ----
+
+const sp = (id: string, projectIds: string[], over?: Partial<Space>): Space => ({
+	id,
+	name: id,
+	parentId: null,
+	projectIds,
+	createdAt: 1,
+	...over,
+});
+
+describe("orderSpaces", () => {
+	it("follows the order array, appends unknown ids, drops deleted", () => {
+		const a = sp("sp_a", []);
+		const b = sp("sp_b", []);
+		const c = sp("sp_c", [], { deleted: true });
+		expect(orderSpaces([a, b, c], ["sp_b"]).map((s) => s.id)).toEqual(["sp_b", "sp_a"]);
+	});
+
+	it("ignores order entries that reference no active space", () => {
+		const a = sp("sp_a", []);
+		expect(orderSpaces([a], ["sp_ghost", "sp_a"]).map((s) => s.id)).toEqual(["sp_a"]);
+	});
+});
+
+describe("spacesOfProject", () => {
+	it("returns every non-deleted space containing the id, in input order", () => {
+		const a = sp("sp_a", ["p1"]);
+		const b = sp("sp_b", ["p1", "p2"]);
+		const c = sp("sp_c", ["p1"], { deleted: true });
+		expect(spacesOfProject([a, b, c], "p1").map((s) => s.id)).toEqual(["sp_a", "sp_b"]);
+		expect(spacesOfProject([a, b], "p9")).toEqual([]);
+	});
+});
+
+describe("isSpaceSensitive", () => {
+	it("is true when any member is sensitive, false otherwise", () => {
+		expect(isSpaceSensitive(sp("sp_a", ["p1", "p2"]), new Set(["p2"]))).toBe(true);
+		expect(isSpaceSensitive(sp("sp_a", ["p1"]), new Set(["p9"]))).toBe(false);
 	});
 });

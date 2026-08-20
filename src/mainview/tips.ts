@@ -954,6 +954,14 @@ const ALL_TIPS: Tip[] = [
 		contexts: ["settings", "board"],
 		settingsSection: "models",
 	},
+	{
+		id: "spaceSearch",
+		titleKey: "tip.spaceSearch.title",
+		bodyKey: "tip.spaceSearch.body",
+		icon: "\u{F0E76}", // nf-md-shape_outline
+		score: 3,
+		contexts: ["board", "terminal"],
+	},
 ];
 
 const COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000; // 3 days

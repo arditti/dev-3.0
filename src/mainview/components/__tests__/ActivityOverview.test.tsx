@@ -12,6 +12,9 @@ vi.mock("../../rpc", () => ({
 		request: {
 			getAllProjectTasks: vi.fn(),
 			openFolder: vi.fn(),
+			getSpaces: vi.fn(() => Promise.resolve({ version: 1, spaces: [], order: [] })),
+			reorderSpaces: vi.fn(),
+			reorderSpaceProjects: vi.fn(),
 		},
 	},
 }));
@@ -788,5 +791,28 @@ describe("ActivityOverview row complete action", () => {
 		await user.click(screen.getByTestId("activity-row-complete"));
 
 		expect(navigate).not.toHaveBeenCalled();
+	});
+});
+
+describe("ActivityOverview — spaces grouping", () => {
+	it("renders the flat, headerless dashboard when no spaces exist", async () => {
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [] }]);
+		renderActivityOverview();
+		await waitFor(() => expect(screen.getByText("My Project")).toBeInTheDocument());
+		expect(document.querySelector('[data-testid^="space-group-"]')).toBeNull();
+	});
+
+	it("groups projects under space headers when spaces exist, with the computed bottom block", async () => {
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([]);
+		(mockedApi.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue({
+			version: 1,
+			spaces: [{ id: "sp_a", name: "Client X", parentId: null, projectIds: ["p1"], createdAt: 1 }],
+			order: ["sp_a"],
+		});
+		const other: Project = { ...mockProject, id: "p2", name: "Loose Project", path: "/tmp/loose" };
+		renderWithProjects([mockProject, other]);
+		await waitFor(() => expect(screen.getByTestId("space-header-sp_a")).toHaveTextContent("Client X"));
+		expect(within(screen.getByTestId("space-group-sp_a")).getByText("My Project")).toBeInTheDocument();
+		expect(within(screen.getByTestId("space-group-rest")).getByText("Loose Project")).toBeInTheDocument();
 	});
 });

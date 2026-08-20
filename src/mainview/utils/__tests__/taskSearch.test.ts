@@ -37,6 +37,7 @@ function ctx(overrides: Partial<TaskQueryContext> = {}): TaskQueryContext {
 		agentName: null,
 		statusValues: [],
 		priorityValue: "",
+		spaceNames: [],
 		hasPort: false,
 		isAttention: false,
 		prNumber: null,
@@ -328,5 +329,51 @@ describe("countActiveFacetTokens", () => {
 
 	it("ignores free text and unrecognized tokens", () => {
 		expect(countActiveFacetTokens("login foo:bar")).toBe(0);
+	});
+});
+
+describe("space: facet", () => {
+	it("matches a space name case-insensitively by substring", () => {
+		const task = makeTask();
+		const context = ctx({ spaceNames: ["Client X", "Labs"] });
+		expect(matchesTaskQuery(task, 'space:"client x"', context)).toBe(true);
+		expect(matchesTaskQuery(task, "space:labs", context)).toBe(true);
+		expect(matchesTaskQuery(task, "space:lab", context)).toBe(true);
+		expect(matchesTaskQuery(task, "space:infra", context)).toBe(false);
+	});
+
+	it("never matches a task whose project is in no space", () => {
+		expect(matchesTaskQuery(makeTask(), "space:anything", ctx({ spaceNames: [] }))).toBe(false);
+	});
+
+	it("matches nothing on a surface that cannot resolve spaces", () => {
+		expect(matchesTaskQuery(makeTask(), "space:labs", ctx({ spaceNames: null }))).toBe(false);
+	});
+
+	it("ANDs with other facets", () => {
+		const context = ctx({ spaceNames: ["Client X"], priorityValue: "p1" });
+		expect(matchesTaskQuery(makeTask(), 'space:"Client X" priority:p1', context)).toBe(true);
+		expect(matchesTaskQuery(makeTask(), 'space:"Client X" priority:p3', context)).toBe(false);
+	});
+});
+
+describe("is:home flag", () => {
+	it("matches only tasks whose project belongs to no space", () => {
+		expect(matchesTaskQuery(makeTask(), "is:home", ctx({ spaceNames: [] }))).toBe(true);
+		expect(matchesTaskQuery(makeTask(), "is:home", ctx({ spaceNames: ["Labs"] }))).toBe(false);
+	});
+
+	it("never matches where spaces are unresolvable, so a project board stays unaffected", () => {
+		expect(matchesTaskQuery(makeTask(), "is:home", ctx({ spaceNames: null }))).toBe(false);
+	});
+
+	it("cannot be confused with a real space actually named Home", () => {
+		const inHomeNamedSpace = ctx({ spaceNames: ["Home"] });
+		expect(matchesTaskQuery(makeTask(), "is:home", inHomeNamedSpace)).toBe(false);
+		expect(matchesTaskQuery(makeTask(), "space:Home", inHomeNamedSpace)).toBe(true);
+	});
+
+	it("ANDs with the space facet to mean an impossible set", () => {
+		expect(matchesTaskQuery(makeTask(), "is:home space:Labs", ctx({ spaceNames: [] }))).toBe(false);
 	});
 });

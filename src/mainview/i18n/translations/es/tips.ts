@@ -229,6 +229,8 @@ const tips = {
 	"tip.shareArtifactLink.body": "Pide al agente que comparta un artefacto: publica el informe como gist secreto y devuelve un enlace que puedes abrir en el móvil.",
 	"tip.modelCatalogRoles.title": "Mezcla modelos en un agente",
 	"tip.modelCatalogRoles.body": "Registra tus propios proveedores y luego da a cada rol del agente su propio modelo en el editor de preajustes.",
+	"tip.spaceSearch.title": "Salta por espacio, no proyecto",
+	"tip.spaceSearch.body": "⌘K también busca nombres de espacios — escribe un espacio para ver sus proyectos, y filtra tareas con `space:\"Client X\"`.",
 };
 
 export default tips;

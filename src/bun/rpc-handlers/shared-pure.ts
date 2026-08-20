@@ -363,7 +363,7 @@ export function setPushMessage(fn: (name: string, payload: any) => void): void {
 	pushMessageRaw = fn;
 	pushMessage = (name, payload) => {
 		fn(name, payload);
-		if (name === "taskUpdated" || name === "projectUpdated" || name === "taskRemoved") {
+		if (name === "taskUpdated" || name === "projectUpdated" || name === "taskRemoved" || name === "spacesUpdated") {
 			const params: Record<string, string> = { event: name };
 			if (payload.projectId) params.projectId = payload.projectId;
 			if (payload.project?.id) params.projectId = payload.project.id;

@@ -129,6 +129,7 @@ const common = {
 	"sidebar.hide": "Hide Active Tasks",
 	"sidebar.scopeProject": "Only this project",
 	"sidebar.scopeGlobal": "All projects",
+	"sidebar.scopeSpace": "This project's spaces",
 	"sidebar.scopeToggleTitle": "Toggle task scope (this project / all projects)",
 	"sidebar.globalLoading": "Loading tasks from all projects…",
 	"sidebar.unknownProject": "Unknown project",

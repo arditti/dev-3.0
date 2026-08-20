@@ -64,6 +64,19 @@ ux_architecture:
         git: "Repo-backed project; tasks get a git worktree + branch (default when kind absent)."
         virtual: "An 'Operations' board: tasks run an agent + shell in a managed temp dir (or a chosen folder), NO git worktree/branch/diff/PR; review columns hidden. Stored in a separate ~/.dev3.0/virtual-projects.json. One built-in board ships by default and hosts the Quick-shell operation (⇧⌘`)."
       evidence: ["src/shared/types.ts (Project.kind)", "src/mainview/components/ActivityOverview.tsx", "src/mainview/components/AddProjectModal.tsx", "src/bun/data.ts (addVirtualProject)", "decisions/2026/06/24/virtual-operations-board-identity.md"]
+    space:
+      label: "Space"
+      plural: "Spaces"
+      observed: true
+      primary_route: "screen:dashboard"      # a rail entry + a group header; NEVER its own screen
+      detail_route: null                     # a space is a grouping, not a place: no board, no breadcrumb
+      owner: "workspace"
+      owns: []                               # references projects; owns nothing (git never moves)
+      common_actions: ["create", "rename", "delete", "reorder", "add_projects", "filter_dashboard"]
+      membership: "Many-to-many by project.id, ordered per space. A project in several spaces renders under each. Dangling ids are normal and skipped silently."
+      computed_home: "Projects with no membership group under a computed `Home` heading — never stored, not renameable/deletable, absent from every membership picker."
+      never: "A merged space board, a space route, per-space columns/labels, a space colour, drag-changed membership, a stored Home."
+      evidence: ["src/shared/types.ts (Space)", "src/bun/spaces-data.ts", "src/mainview/components/SpacesRail.tsx", "src/mainview/components/SpaceGroupedProjects.tsx", "decisions/2026/08/14/spaces-group-projects-without-replacing-boards.md", "decisions/2026/08/17/spaces-dashboard-follows-the-proposal-mock.md"]
     task:
       label: "Task"
       plural: "Tasks"

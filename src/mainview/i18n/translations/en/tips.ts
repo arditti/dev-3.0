@@ -229,6 +229,8 @@ const tips = {
 	"tip.shareArtifactLink.body": "Ask the agent to share an artifact — it publishes the report as a secret gist and hands back a preview URL you can open on your phone.",
 	"tip.modelCatalogRoles.title": "Mix models in one agent",
 	"tip.modelCatalogRoles.body": "Register your own providers, then give each of an agent's roles its own model in the preset editor.",
+	"tip.spaceSearch.title": "Jump by space, not project",
+	"tip.spaceSearch.body": "⌘K matches space names too — type a space to list its projects, and filter tasks anywhere with `space:\"Client X\"`.",
 } as const;
 
 export default tips;

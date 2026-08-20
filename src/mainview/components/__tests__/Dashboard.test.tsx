@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Dashboard from "../Dashboard";
 import { I18nProvider } from "../../i18n";
@@ -11,6 +11,16 @@ vi.mock("../../rpc", () => ({
 			removeProject: vi.fn(),
 			reorderProjects: vi.fn(),
 			getAllProjectTasks: vi.fn(() => Promise.resolve([])),
+			getSpaces: vi.fn(() => Promise.resolve({ version: 1, spaces: [], order: [] })),
+			reorderSpaces: vi.fn(),
+			reorderSpaceProjects: vi.fn(),
+			setProjectSpaces: vi.fn(),
+			createSpace: vi.fn(),
+			getGlobalSettings: vi.fn(() => Promise.resolve({ tipsDisabled: true })),
+			getTipState: vi.fn(() => Promise.resolve({ snoozedUntil: 0, seen: {}, rotationIndex: 0 })),
+			updateTipState: vi.fn((s) => Promise.resolve({ snoozedUntil: 0, seen: {}, rotationIndex: 0, ...s })),
+			setTaskPriority: vi.fn(() => Promise.resolve([])),
+			getTerminalPreview: vi.fn(),
 		},
 	},
 }));
@@ -38,6 +48,8 @@ function renderDashboard(
 				dispatch={dispatch ?? vi.fn()}
 				navigate={navigate ?? vi.fn()}
 				bellCounts={new Map()}
+			taskPorts={new Map()}
+			agents={[]}
 				onOpenAddProject={onOpenAddProject ?? vi.fn()}
 			/>
 		</I18nProvider>,
@@ -192,6 +204,71 @@ describe("Dashboard", () => {
 
 			expect(mockedApi.request.removeProject).not.toHaveBeenCalled();
 			expect(dispatch).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("space selection vs the hidden rail", () => {
+		const RAIL_QUERY = "(max-width: 1023px)";
+		let originalMatchMedia: typeof window.matchMedia;
+		let railQueryMatches: boolean;
+		let railQueryListeners: Array<(e: { matches: boolean }) => void>;
+
+		beforeEach(() => {
+			originalMatchMedia = window.matchMedia;
+			railQueryMatches = false;
+			railQueryListeners = [];
+			Object.defineProperty(window, "matchMedia", {
+				configurable: true,
+				value: (query: string) => ({
+					get matches() {
+						return query === RAIL_QUERY ? railQueryMatches : false;
+					},
+					media: query,
+					onchange: null,
+					addEventListener: (_: string, handler: (e: { matches: boolean }) => void) => {
+						if (query === RAIL_QUERY) railQueryListeners.push(handler);
+					},
+					removeEventListener: vi.fn(),
+					addListener: vi.fn(),
+					removeListener: vi.fn(),
+					dispatchEvent: vi.fn(),
+				}),
+			});
+		});
+
+		afterEach(() => {
+			Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
+		});
+
+		it("clears the selected space when the viewport drops below the rail breakpoint", async () => {
+			const user = userEvent.setup();
+			const projects = [
+				mockProject,
+				{ ...mockProject, id: "p2", name: "Second", path: "/home/user/second" },
+			];
+			mockedApi.request.getSpaces.mockResolvedValue({
+				version: 1,
+				spaces: [
+					{ id: "s1", name: "Client X", projectIds: ["p1"], createdAt: "2026-08-01T00:00:00Z" },
+				],
+				order: ["s1"],
+			} as any);
+
+			renderDashboard(projects, vi.fn(), vi.fn(), vi.fn());
+			await user.click(await screen.findByTestId("rail-space-s1"));
+
+			// The selection filters the overview down to the space's member.
+			expect(screen.getByText("My Project")).toBeInTheDocument();
+			expect(screen.queryByText("Second")).not.toBeInTheDocument();
+
+			// The rail hides below `lg` via CSS; the filter must not survive it.
+			railQueryMatches = true;
+			act(() => {
+				for (const notify of railQueryListeners) notify({ matches: true });
+			});
+
+			expect(await screen.findByText("Second")).toBeInTheDocument();
+			expect(screen.getByText("My Project")).toBeInTheDocument();
 		});
 	});
 

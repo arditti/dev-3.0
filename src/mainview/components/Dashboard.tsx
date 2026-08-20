@@ -1,24 +1,147 @@
-import type { Dispatch } from "react";
+import { useEffect, useMemo, useState, type Dispatch } from "react";
 import { toast } from "../toast";
-import type { Project } from "../../shared/types";
-import { orderProjectsForDisplay } from "../../shared/types";
+import type { CodingAgent, PortInfo, Project, Task, TaskStatus } from "../../shared/types";
+import { isBuiltinOpsProject, isSpaceSensitive, orderProjectsForDisplay } from "../../shared/types";
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
 import { confirm } from "../confirm";
 import { useT } from "../i18n";
 import { trackEvent } from "../analytics";
+import { useSpaces } from "../useSpaces";
+import { useNarrowViewport } from "../hooks/useNarrowViewport";
+import { CAROUSEL_MAX_WIDTH } from "./MobileBoardCarousel";
 import ActivityOverview from "./ActivityOverview";
+import ActiveTasksSidebar from "./ActiveTasksSidebar";
+import SpacesRail, { SPACES_RAIL_MIN_WIDTH, type SpaceActivitySplit } from "./SpacesRail";
+import NewSpaceModal from "./NewSpaceModal";
+
+// Same needs-you / working split the space group headers use.
+const NEEDS_ME_STATUSES: TaskStatus[] = ["user-questions", "review-by-user"];
+const BACKGROUND_STATUSES: TaskStatus[] = ["in-progress", "review-by-ai"];
 
 interface DashboardProps {
 	projects: Project[];
 	dispatch: Dispatch<AppAction>;
 	navigate: (route: Route) => void;
 	bellCounts: Map<string, number>;
-	onOpenAddProject: () => void;
+	bellReasons?: Map<string, string[]>;
+	taskPorts: Map<string, PortInfo[]>;
+	agents: CodingAgent[];
+	onOpenAddProject: (spaceIds?: string[]) => void;
 }
 
-function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject }: DashboardProps) {
+function Dashboard({
+	projects,
+	dispatch,
+	navigate,
+	bellCounts,
+	bellReasons,
+	taskPorts,
+	agents,
+	onOpenAddProject,
+}: DashboardProps) {
 	const t = useT();
+	const { spaces } = useSpaces();
+	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
+	const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+	const [showNewSpace, setShowNewSpace] = useState(false);
+
+	// The rail hides below Tailwind's `lg` (1024px) with plain CSS. A selection
+	// made on a wide window must not keep filtering once its control is gone.
+	const railHidden = useNarrowViewport(SPACES_RAIL_MIN_WIDTH);
+	useEffect(() => {
+		if (railHidden) setSelectedSpaceId(null);
+	}, [railHidden]);
+
+	// The rail and the cross-space task panel only exist once a space does:
+	// with zero spaces the dashboard stays exactly the screen it was.
+	const hasSpaces = spaces.length > 0;
+
+	// The rail's per-row activity split needs the cross-project task pool; the
+	// overview and the task panel each own theirs, so the rail fetches its own —
+	// gated on the rail existing at all.
+	const [railTasks, setRailTasks] = useState<Task[]>([]);
+	useEffect(() => {
+		if (!hasSpaces) return;
+		let cancelled = false;
+		(async () => {
+			try {
+				const results = await api.request.getAllProjectTasks();
+				if (cancelled) return;
+				setRailTasks(results.flatMap(({ tasks }) => tasks));
+			} catch (err) {
+				console.error("Failed to load tasks for the spaces rail:", err);
+			}
+		})();
+		function onTaskUpdated(e: Event) {
+			const { task } = (e as CustomEvent).detail as { task: Task };
+			setRailTasks((prev) => {
+				const rest = prev.filter((t) => t.id !== task.id);
+				const isActive = [...NEEDS_ME_STATUSES, ...BACKGROUND_STATUSES].includes(task.status);
+				return isActive ? [...rest, task] : rest;
+			});
+		}
+		window.addEventListener("rpc:taskUpdated", onTaskUpdated);
+		return () => {
+			cancelled = true;
+			window.removeEventListener("rpc:taskUpdated", onTaskUpdated);
+		};
+	}, [hasSpaces]);
+
+	const railActivity = useMemo(() => {
+		const splitOf = (memberIds: ReadonlySet<string>): SpaceActivitySplit => {
+			let needsYou = 0;
+			let working = 0;
+			for (const task of railTasks) {
+				if (!memberIds.has(task.projectId)) continue;
+				if (NEEDS_ME_STATUSES.includes(task.status)) needsYou++;
+				else if (BACKGROUND_STATUSES.includes(task.status)) working++;
+			}
+			return { needsYou, working };
+		};
+		const perSpace = new Map<string, SpaceActivitySplit>();
+		const grouped = new Set<string>();
+		for (const space of spaces) {
+			perSpace.set(space.id, splitOf(new Set(space.projectIds)));
+			for (const id of space.projectIds) grouped.add(id);
+		}
+		const homeIds = new Set(
+			projects.filter((p) => !p.deleted && !isBuiltinOpsProject(p) && !grouped.has(p.id)).map((p) => p.id),
+		);
+		return { perSpace, home: splitOf(homeIds) };
+	}, [railTasks, spaces, projects]);
+
+	const railCounts = useMemo(() => {
+		const ordinary = projects.filter((p) => !p.deleted && !isBuiltinOpsProject(p));
+		const known = new Set(ordinary.map((p) => p.id));
+		const perSpace = new Map<string, number>();
+		const associated = new Set<string>();
+		for (const space of spaces) {
+			const members = space.projectIds.filter((id) => known.has(id));
+			perSpace.set(space.id, members.length);
+			for (const id of members) associated.add(id);
+		}
+		return {
+			perSpace,
+			// `All projects` shows the pinned Operations board too, so its count
+			// includes it — and thereby always agrees with the overview heading.
+			total: projects.filter((p) => !p.deleted).length,
+			home: ordinary.filter((p) => !associated.has(p.id)).length,
+		};
+	}, [projects, spaces]);
+
+	const maskedSpaceIds = useMemo(() => {
+		const sensitive = new Set(projects.filter((p) => p.sensitive).map((p) => p.id));
+		return new Set(spaces.filter((s) => isSpaceSensitive(s, sensitive)).map((s) => s.id));
+	}, [projects, spaces]);
+
+	async function handleReorderSpaces(order: string[]) {
+		try {
+			await api.request.reorderSpaces({ order });
+		} catch (err) {
+			toast.error(t("spaces.failedUpdate", { error: String(err) }), { source: "dashboard" });
+		}
+	}
 
 	async function handleRemoveProject(projectId: string) {
 		const confirmed = await confirm({
@@ -55,7 +178,23 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 
 	return (
 		<div className="h-full w-full flex flex-col">
-			<div className="flex-1 overflow-hidden">
+			<div className="flex-1 overflow-hidden flex">
+				{hasSpaces && projects.length > 0 && (
+					<SpacesRail
+						spaces={spaces}
+						projectCountOf={(id) => railCounts.perSpace.get(id) ?? 0}
+						activityOf={(id) => railActivity.perSpace.get(id) ?? { needsYou: 0, working: 0 }}
+						homeActivity={railActivity.home}
+						maskedSpaceIds={maskedSpaceIds}
+						totalProjects={railCounts.total}
+						homeCount={railCounts.home}
+						selectedSpaceId={selectedSpaceId}
+						onSelect={setSelectedSpaceId}
+						onNewSpace={() => setShowNewSpace(true)}
+						onReorder={handleReorderSpaces}
+					/>
+				)}
+				<div className="flex-1 min-w-0 overflow-hidden">
 				{projects.length > 0 ? (
 					<ActivityOverview
 						projects={projects}
@@ -65,6 +204,8 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 						onRemoveProject={handleRemoveProject}
 						onOpenAddProject={onOpenAddProject}
 						onReorderProjects={handleReorderProjects}
+						selectedSpaceId={selectedSpaceId}
+						onNewSpace={() => setShowNewSpace(true)}
 					/>
 				) : (
 					<div className="h-full overflow-y-auto p-3 md:p-7">
@@ -93,7 +234,7 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 								{t("dashboard.noProjectsHint")}
 							</p>
 							<button
-								onClick={onOpenAddProject}
+								onClick={() => onOpenAddProject()}
 								className="px-5 py-2 bg-accent-fill text-white text-sm font-semibold rounded-xl hover:bg-accent-fill-hover shadow-lg shadow-accent/20 transition-[background-color,transform] active:scale-[0.96]"
 							>
 								{t("dashboard.addProject")}
@@ -101,7 +242,26 @@ function Dashboard({ projects, dispatch, navigate, bellCounts, onOpenAddProject 
 						</div>
 					</div>
 				)}
+				</div>
+				{/* The same sidebar component the project view uses, with no current
+				    project: locked to global scope — active work across all spaces. */}
+				{hasSpaces && projects.length > 0 && !narrow && (
+					<div className="w-[21rem] flex-shrink-0 border-l border-edge overflow-hidden">
+						<ActiveTasksSidebar
+							allProjects={projects}
+							dispatch={dispatch}
+							navigate={navigate}
+							agents={agents}
+							bellCounts={bellCounts}
+							bellReasons={bellReasons}
+							taskPorts={taskPorts}
+						/>
+					</div>
+				)}
 			</div>
+			{showNewSpace && (
+				<NewSpaceModal projects={projects} onClose={() => setShowNewSpace(false)} />
+			)}
 		</div>
 	);
 }

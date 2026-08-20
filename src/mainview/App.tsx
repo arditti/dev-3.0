@@ -330,6 +330,8 @@ function App() {
 	// GitHub CLI availability warning
 	const [ghWarning, setGhWarning] = useState<{ notInstalled: boolean } | null>(null);
 	const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+	// Spaces a project created from a space flow should join on creation.
+	const [addProjectSpaceIds, setAddProjectSpaceIds] = useState<string[]>([]);
 	const [openAddProjectOnDashboard, setOpenAddProjectOnDashboard] = useState(false);
 	const [showProjectSwitch, setShowProjectSwitch] = useState(false);
 	// Cmd/Ctrl+O picker when no app is chosen yet (or the chosen one is gone).
@@ -2442,7 +2444,11 @@ function App() {
 			{showAddProjectModal && (
 				<AddProjectModal
 					dispatch={dispatch}
-					onClose={() => setShowAddProjectModal(false)}
+					initialSpaceIds={addProjectSpaceIds}
+					onClose={() => {
+						setShowAddProjectModal(false);
+						setAddProjectSpaceIds([]);
+					}}
 				/>
 			)}
 			{createTaskProject && (
@@ -2917,7 +2923,13 @@ function App() {
 						dispatch={dispatch}
 						navigate={navigate}
 						bellCounts={state.bellCounts}
-						onOpenAddProject={() => setShowAddProjectModal(true)}
+						bellReasons={state.bellReasons}
+						taskPorts={state.taskPorts}
+						agents={agents}
+						onOpenAddProject={(spaceIds) => {
+							setAddProjectSpaceIds(spaceIds ?? []);
+							setShowAddProjectModal(true);
+						}}
 					/>
 				);
 			case "project":

@@ -129,6 +129,7 @@ const common = {
 	"sidebar.hide": "Ocultar Tareas activas",
 	"sidebar.scopeProject": "Solo este proyecto",
 	"sidebar.scopeGlobal": "Todos los proyectos",
+	"sidebar.scopeSpace": "Los espacios de este proyecto",
 	"sidebar.scopeToggleTitle": "Alternar alcance (este proyecto / todos los proyectos)",
 	"sidebar.globalLoading": "Cargando tareas de todos los proyectos…",
 	"sidebar.unknownProject": "Proyecto desconocido",

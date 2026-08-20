@@ -1452,6 +1452,63 @@ export function orderProjectsForDisplay<T extends Pick<Project, "kind" | "builti
 	return [...builtin, ...projects.filter((p) => !isBuiltinOpsProject(p))];
 }
 
+// ---- Spaces (many-to-many project grouping; stored in ~/.dev3.0/spaces.json) ----
+
+/**
+ * A Space is a named group of projects — a global tag, not a container. It
+ * references projects by id and owns nothing; every project keeps its own
+ * board. See decisions/2026/08/14/spaces-group-projects-without-replacing-boards.md.
+ */
+export interface Space {
+	id: string;
+	name: string;
+	/** Reserved for nesting; always null in v1 so the format never changes later. */
+	parentId: string | null;
+	/** Membership AND this space's own project order. Dangling ids are normal. */
+	projectIds: string[];
+	createdAt: number;
+	deleted?: boolean;
+}
+
+/** The full on-disk shape of spaces.json. A missing file means the empty shape. */
+export interface SpacesFile {
+	version: 1;
+	spaces: Space[];
+	order: string[];
+}
+
+export const EMPTY_SPACES_FILE: SpacesFile = Object.freeze({
+	version: 1 as const,
+	spaces: [],
+	order: [],
+});
+
+/** Active spaces in display order: `order` first, unlisted actives appended. */
+export function orderSpaces(spaces: Space[], order: string[]): Space[] {
+	const active = spaces.filter((s) => !s.deleted);
+	const byId = new Map(active.map((s) => [s.id, s]));
+	const ordered: Space[] = [];
+	for (const id of order) {
+		const s = byId.get(id);
+		if (s) {
+			ordered.push(s);
+			byId.delete(id);
+		}
+	}
+	for (const s of active) if (byId.has(s.id)) ordered.push(s);
+	return ordered;
+}
+
+/** Every non-deleted space the project belongs to, in input order. */
+export function spacesOfProject(spaces: Space[], projectId: string): Space[] {
+	return spaces.filter((s) => !s.deleted && s.projectIds.includes(projectId));
+}
+
+/** Streamer masking is conservative: one sensitive member mutes the whole space. */
+export function isSpaceSensitive(space: Space, sensitiveProjectIds: ReadonlySet<string>): boolean {
+	return space.projectIds.some((id) => sensitiveProjectIds.has(id));
+}
+
 // ---- Board columns (single source of truth for column ordering + visibility) ----
 
 /** Default built-in column order — custom columns are interspersed between these two halves. */
@@ -3274,6 +3331,34 @@ export type AppRPCSchema = {
 				params: { projectIds: string[] };
 				response: Project[];
 			};
+			getSpaces: {
+				params: Record<string, never>;
+				response: SpacesFile;
+			};
+			createSpace: {
+				params: { name: string; projectIds: string[] };
+				response: Space;
+			};
+			renameSpace: {
+				params: { spaceId: string; name: string };
+				response: Space;
+			};
+			deleteSpace: {
+				params: { spaceId: string };
+				response: void;
+			};
+			setProjectSpaces: {
+				params: { projectId: string; spaceIds: string[] };
+				response: { file: SpacesFile; autoDeleted: Space[] };
+			};
+			reorderSpaces: {
+				params: { order: string[] };
+				response: SpacesFile;
+			};
+			reorderSpaceProjects: {
+				params: { spaceId: string; projectIds: string[] };
+				response: Space;
+			};
 			listDirectory: {
 				params: { path?: string | null; includeFiles?: boolean; showHidden?: boolean };
 				response: FolderListing;
@@ -4474,6 +4559,7 @@ export type AppRPCSchema = {
 		messages: {
 			taskUpdated: { projectId: string; task: Task };
 			projectUpdated: { project: Project };
+			spacesUpdated: { file: SpacesFile };
 			taskSound: { status: "completed" | "cancelled"; taskId: string };
 			ptyDied: { taskId: string };
 			projectPtyDied: { projectId: string };
