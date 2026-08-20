@@ -7,6 +7,8 @@ import { toast } from "../toast";
 import { usePinchZoom } from "../hooks/usePinchZoom";
 import { useFocusTrap } from "../utils/useFocusTrap";
 import { registerOverlayLayer } from "../utils/overlay-layers";
+import { downloadDataUrl } from "../utils/downloadBytes";
+import ImageSaveMenu from "./ImageSaveMenu";
 
 interface TaskImageViewerProps {
 	images: SharedImage[];
@@ -44,6 +46,9 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 	const [urls, setUrls] = useState<Record<string, string>>({});
 	const [copied, setCopied] = useState(false);
 	const [fullscreen, setFullscreen] = useState(false);
+	// Our own right-click menu over the image: WKWebView's native "Save Image As…"
+	// does nothing useful here (same reason the artifact viewer injects its own).
+	const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 	// Natural size of the active image (from onLoad) → drives the tall-image default.
 	const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
 	// null = auto (decide from aspect ratio); otherwise a manual override.
@@ -132,7 +137,11 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 	// listener here would never run and the modal underneath would close instead.
 	// Registering as a layer puts us at the top of that unwind order.
 	const dismissRef = useRef<() => void>(() => {});
-	dismissRef.current = () => { if (fullscreen) setFullscreen(false); else onClose(); };
+	dismissRef.current = () => {
+		if (menu) setMenu(null);
+		else if (fullscreen) setFullscreen(false);
+		else onClose();
+	};
 	useEffect(() => {
 		const el = containerRef.current;
 		if (!el) return;
@@ -164,6 +173,7 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 		const active = strip?.querySelector<HTMLElement>(`[data-thumb-index="${index}"]`);
 		active?.scrollIntoView({ inline: "center", block: "nearest" });
 		setCopied(false);
+		setMenu(null);
 		setNatural(null);
 		setFitOverride(null);
 		zoom.reset();
@@ -182,6 +192,26 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 		} catch {
 			toast.error(t("imageViewer.copyFailed"), { taskId });
 		}
+	};
+
+	// Renderer-side anchor download (Electrobun → ~/Downloads, browser → its own
+	// download dir). The bytes are already here as a data URL, so this needs no RPC
+	// and behaves identically on both transports.
+	const saveImage = () => {
+		setMenu(null);
+		if (!currentUrl || isError) return;
+		try {
+			downloadDataUrl(currentUrl, current.name);
+			toast.success(t("imageViewer.saved"), { taskId });
+		} catch {
+			toast.error(t("imageViewer.saveFailed"), { taskId });
+		}
+	};
+
+	const openMenu = (e: React.MouseEvent) => {
+		if (!currentUrl || isError) return;
+		e.preventDefault();
+		setMenu({ x: e.clientX, y: e.clientY });
 	};
 
 	const iconBtn = "flex-shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-fg-3 hover:bg-elevated-hover hover:text-fg transition-colors";
@@ -245,6 +275,17 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 					</button>
 					<button
 						type="button"
+						onClick={saveImage}
+						disabled={!currentUrl || isError}
+						title={t("imageViewer.download")}
+						aria-label={t("imageViewer.download")}
+						data-testid="image-viewer-download"
+						className={`${iconBtn} disabled:opacity-40 disabled:cursor-default`}
+					>
+						<span className="text-base leading-none" style={{ fontFamily: ICON }}>{""}</span>
+					</button>
+					<button
+						type="button"
 						onClick={() => api.request.openImageFile({ path: current.storedPath }).catch(() => toast.error(t("imageViewer.openFailed"), { taskId }))}
 						title={t("imageViewer.open")}
 						aria-label={t("imageViewer.open")}
@@ -268,6 +309,7 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 				<div className="relative flex-1 min-h-0 bg-base">
 					<div
 						ref={setStage}
+						onContextMenu={openMenu}
 						style={{ touchAction: fit === "width" ? "pan-y" : "none" }}
 						className={`absolute inset-0 ${fit === "width" ? "overflow-y-auto overflow-x-hidden p-3" : "overflow-hidden p-4 flex items-center justify-center"}`}
 					>
@@ -359,6 +401,15 @@ export default function TaskImageViewer({ images, initialIndex, onClose, taskId 
 							);
 						})}
 					</div>
+				)}
+
+				{menu && (
+					<ImageSaveMenu
+						at={menu}
+						onDownload={saveImage}
+						onCopyPath={() => { setMenu(null); void copyPath(); }}
+						onClose={() => setMenu(null)}
+					/>
 				)}
 			</div>
 		</div>
