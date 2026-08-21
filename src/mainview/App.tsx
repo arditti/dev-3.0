@@ -45,6 +45,7 @@ import StuckPreparationPopover from "./components/StuckPreparationPopover";
 import FolderPickerHost from "./components/FolderPickerModal";
 import KeyboardShortcutsModal, { type ShortcutsTab } from "./components/KeyboardShortcutsModal";
 import UpdatePopoverSimulatorModal from "./components/UpdatePopoverSimulatorModal";
+import RemoteAccessDialog from "./components/RemoteAccessDialog";
 import RemoteAccessExposedPorts from "./components/RemoteAccessExposedPorts";
 import { ConfirmHost, confirm } from "./confirm";
 import AgentLaunchRequestModal from "./components/AgentLaunchRequestModal";
@@ -2181,6 +2182,26 @@ function App() {
 		});
 	}, [applyRemoteQR]);
 
+	const closeRemoteQR = useCallback(() => {
+		setRemoteQR(null);
+		setRemoteUrlCopyState("idle");
+		setTunnelStarting(false);
+	}, []);
+
+	// Tear the public tunnel down and fall back to the local-network QR. Shared by
+	// the toggle and the explicit Stop button so both paths behave identically.
+	const stopRemoteTunnel = useCallback(() => {
+		setTunnelWanted(false);
+		setTunnelStarting(false);
+		setRemoteAccessActive(false);
+		api.request.stopTunnel().then(() => {
+			api.request.getRemoteAccessQR({ tunnel: false }).then((res) => {
+				applyRemoteQR(res);
+				setQrCountdown(25);
+			}).catch(() => {});
+		}).catch(() => {});
+	}, [applyRemoteQR]);
+
 	// Listen for the Remote Access open request (header button, kebab, native menu)
 	useEffect(() => {
 		function onShowRemoteQR(e: Event) {
@@ -2605,18 +2626,9 @@ function App() {
 				</div>
 			)}
 			{remoteQR && (
-				<div
-					className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-					onMouseDown={(e) => {
-						if (e.target === e.currentTarget) {
-							setRemoteQR(null);
-							setRemoteUrlCopyState("idle");
-							setTunnelStarting(false);
-						}
-					}}
-				>
-					<div className="bg-overlay border border-edge rounded-2xl shadow-2xl w-[28rem] p-6 space-y-4 text-center">
-						<h2 className="text-fg text-lg font-semibold">{t("remote.title")}</h2>
+				<RemoteAccessDialog titleId="remote-access-dialog-title" onClose={closeRemoteQR}>
+					<>
+						<h2 id="remote-access-dialog-title" className="text-fg text-lg font-semibold">{t("remote.title")}</h2>
 						<p className="text-fg-2 text-sm">{t("remote.subtitle")}</p>
 						<div className="flex justify-center relative">
 							{tunnelUrlPending ? (
@@ -2701,13 +2713,7 @@ function App() {
 										if (want && remoteQR.cloudflaredInstalled && remoteQR.tunnelState === "idle") {
 											startRemoteTunnel();
 										} else if (!want && remoteQR.tunnelState === "connected") {
-											setRemoteAccessActive(false);
-											api.request.stopTunnel().then(() => {
-												api.request.getRemoteAccessQR({ tunnel: false }).then((res) => {
-													applyRemoteQR(res);
-													setQrCountdown(25);
-												}).catch(() => {});
-											}).catch(() => {});
+											stopRemoteTunnel();
 										}
 									}}
 									className="accent-accent w-4 h-4"
@@ -2768,8 +2774,17 @@ function App() {
 
 							{tunnelWanted && remoteQR.tunnelState === "connected" && (
 								<div className="flex items-center gap-2">
-									<div className="w-2 h-2 rounded-full bg-green-400" />
-									<span className="text-green-400 text-xs">{t("remote.tunnelConnected")}</span>
+									<div className="w-2 h-2 rounded-full bg-success" />
+									<span className="text-success text-xs">{t("remote.tunnelConnected")}</span>
+									<button
+										type="button"
+										data-testid="remote-stop-tunnel"
+										onClick={stopRemoteTunnel}
+										title={t("remote.stopTunnelHint")}
+										className="ml-auto min-h-6 px-2 py-1.5 rounded-lg border border-edge text-fg-2 text-xs hover:text-fg hover:bg-elevated hover:border-edge-active transition-[color,background-color,border-color,transform] active:scale-[0.96]"
+									>
+										{t("remote.stopTunnel")}
+									</button>
 								</div>
 							)}
 
@@ -2839,14 +2854,14 @@ function App() {
 							</button>
 							<button
 								type="button"
-								onClick={() => { setRemoteQR(null); setRemoteUrlCopyState("idle"); setTunnelStarting(false); }}
+								onClick={closeRemoteQR}
 								className="px-4 py-2 text-sm rounded-lg text-fg-2 hover:text-fg hover:bg-elevated transition-colors"
 							>
 								{t("remote.close")}
 							</button>
 						</div>
-					</div>
-				</div>
+					</>
+				</RemoteAccessDialog>
 			)}
 			<StuckPreparationPopover tasks={state.currentProjectTasks} />
 			<FolderPickerHost />
