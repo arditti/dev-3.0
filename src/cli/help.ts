@@ -261,8 +261,40 @@ const COMMANDS: CommandHelp[] = [
 	},
 	{
 		name: "conversations",
-		summary: "Search past task conversations (transcripts + notes/overview).",
+		summary: "Search past task conversations, or parse this task's transcripts into JSON.",
 		subcommands: [
+			{
+				name: "dump",
+				usage: "dev3 conversations dump [--latest] [--verbatim] [--payload N] [--action N] [--compact] [--raw] [--stdout] [--out <dir>]",
+				summary: "Parse this task's agent transcripts into dev3's conversation model and write JSON.",
+				details: [
+					"Writes to the task's own conversations/ folder, next to logs/ and diffs/.",
+					"By default the dump is trimmed: duplicated fields dropped, session bookkeeping",
+					"collapsed to counts, tool payloads truncated. The native transcript stays the",
+					"source of truth, so nothing trimmed here is lost.",
+					"--latest      Only the most recently written transcript.",
+					"--payload N   Characters kept per tool output / file content (default 1000).",
+					"--action N    Characters kept per shell command / file path (default 2000).",
+					"--verbatim    No trimming at all — everything, full length.",
+					"--compact     One-line JSON. Indented by default, since dumps get read by hand.",
+					"--raw         Keep each native record alongside the parsed event (much larger).",
+					"--stdout      Print the JSON instead of writing files.",
+					"--out DIR     Write somewhere else.",
+				],
+			},
+			{
+				name: "handoff",
+				usage: "dev3 conversations handoff [--for claude|codex|markdown] [--thinking] [--tool-output N] [--turns N] [--out FILE]",
+				summary: "Retell this task's conversation as one message another agent can be handed.",
+				details: [
+					"Prints to stdout, so it pipes into `dev3 message`.",
+					"--for TARGET      Framing: markdown to read, claude or codex to hand over (default markdown).",
+					"--thinking        Include the previous agent's reasoning (off by default).",
+					"--tool-output N   Characters of tool output kept per call (default 2048, 0 drops it).",
+					"--turns N         Keep only the last N turns.",
+					"--out FILE        Write to a file instead of stdout.",
+				],
+			},
 			{
 				name: "search",
 				usage: 'dev3 conversations search "<query>" [--limit N] [--all-statuses] [--json]',
