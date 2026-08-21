@@ -9,6 +9,24 @@ import SpaceHeaderMenu from "./SpaceHeaderMenu";
 
 const LS_COLLAPSED_SPACES = "dev3-collapsed-spaces";
 
+/**
+ * A group's own rows are 8px from its header and 16px from each other; the next
+ * group starts 40px away (24px here plus the list's own 16px). Proximity is the
+ * only thing that says which rows belong to which space — with one 16px gap
+ * everywhere, a header read as another row in a flat list (§9a.6: the gap
+ * between groups must be at least twice the gap inside one).
+ */
+const GROUP_CLASS = "pt-6 space-y-2";
+/**
+ * The rows hang off their header: indented, with a hairline running down from
+ * it. Spacing alone did not say "these belong to that" — the rows are full-width
+ * cards with their own borders, so a gap between them read as a flat list with
+ * headings dropped in. A box around the group would have put a second border
+ * around cards that already have one; a rule and an indent are the same
+ * statement without the frame (§9a.6).
+ */
+const ROWS_CLASS = "space-y-4 ml-2 pl-4 border-l border-edge";
+
 function readCollapsed(): Set<string> {
 	try {
 		const raw = localStorage.getItem(LS_COLLAPSED_SPACES);
@@ -29,6 +47,9 @@ export interface RowReorderCtx {
 	 *  grip + up/down cluster is hidden rather than shown inert. */
 	showReorder: boolean;
 	isDragged: boolean;
+	/** A row in THIS group is being dragged, so every row here collapses to one
+	 *  line. Scoped to the group because only this group accepts the drop. */
+	groupDragActive: boolean;
 	dragEnabled: boolean;
 	onDragStart: (event: DragEvent<HTMLElement>) => void;
 	onDragEnd: () => void;
@@ -45,8 +66,6 @@ export interface RowReorderCtx {
 
 interface SpaceGroupedProjectsProps {
 	groups: DashboardGroup[];
-	/** The order of spaces as rendered (for header drag persistence). */
-	spaceOrder: string[];
 	sensitiveProjectIds: ReadonlySet<string>;
 	/** Split header counts: tasks waiting on the user vs. tasks in flight. */
 	needsYouCountOf: (projectId: string) => number;
@@ -54,37 +73,44 @@ interface SpaceGroupedProjectsProps {
 	renderProject: (project: Project, reorder: RowReorderCtx, groupSpaceId: string | null) => ReactNode;
 	/** The bottom block still owns global order — same callback as the flat path. */
 	renderBottomBlockProject: (project: Project, blockProjects: Project[]) => ReactNode;
-	/** Opens the "add existing projects to this space" flow. */
-	onAddProjects?: (space: Space) => void;
+	/** Opens the membership editor for this space (the menu's `Edit projects…`). */
+	onEditProjects?: (space: Space) => void;
 	onRenameSpace?: (space: Space, name: string) => void;
 	onDeleteSpace?: (space: Space) => void;
+	/** Step this space one position in the app-wide space order. */
+	onMoveSpace?: (space: Space, delta: -1 | 1) => void;
+	/** Toggles the space's own hide-on-camera flag. */
+	onToggleSensitive?: (space: Space, sensitive: boolean) => void;
+	/** Every space id in order — the visible groups are a filtered subset, so the
+	 *  edges of `Move up` / `Move down` cannot be read off `groups`. */
+	spaceOrder?: string[];
 }
 
 /**
  * Space headers around the dashboard's existing project rows. Owns collapse
- * state, header drag (space order), and within-space project drag (that
- * space's projectIds). Drag never crosses groups and never changes membership.
+ * state and within-space project drag (that space's projectIds). Drag never
+ * crosses groups and never changes membership. Space order is dragged in the
+ * rail; this header only carries the stepwise `Move up` / `Move down` for
+ * pointers that cannot drag.
  */
 function SpaceGroupedProjects({
 	groups,
-	spaceOrder,
 	sensitiveProjectIds,
 	needsYouCountOf,
 	workingCountOf,
 	renderProject,
 	renderBottomBlockProject,
-	onAddProjects,
+	onEditProjects,
 	onRenameSpace,
 	onDeleteSpace,
+	onMoveSpace,
+	onToggleSensitive,
+	spaceOrder,
 }: SpaceGroupedProjectsProps) {
 	const t = useT();
-	// One space alone has no order to change, so its header carries no grip.
-	const spaceCount = groups.filter((g) => g.space !== null).length;
 	const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
 	const [dragged, setDragged] = useState<{ spaceId: string; projectId: string } | null>(null);
 	const [dropTarget, setDropTarget] = useState<{ spaceId: string; projectId: string; side: "before" | "after" } | null>(null);
-	const [draggedHeader, setDraggedHeader] = useState<string | null>(null);
-	const [headerDropTarget, setHeaderDropTarget] = useState<{ spaceId: string; side: "before" | "after" } | null>(null);
 
 	function toggleCollapsed(spaceId: string) {
 		setCollapsed((prev) => {
@@ -110,26 +136,13 @@ function SpaceGroupedProjects({
 		}
 	}
 
-	async function reorderHeaders(sourceId: string, targetId: string, side: "before" | "after") {
-		if (sourceId === targetId) return;
-		const ids = [...spaceOrder];
-		ids.splice(ids.indexOf(sourceId), 1);
-		const targetIdx = ids.indexOf(targetId);
-		if (targetIdx === -1) return;
-		ids.splice(side === "after" ? targetIdx + 1 : targetIdx, 0, sourceId);
-		try {
-			await api.request.reorderSpaces({ order: ids });
-		} catch (err) {
-			toast.error(t("spaces.failedUpdate", { error: String(err) }));
-		}
-	}
-
 	function rowCtx(spaceId: string, members: Project[], project: Project, index: number): RowReorderCtx {
 		const isTarget = dropTarget?.spaceId === spaceId && dropTarget.projectId === project.id;
 		const canReorder = members.length > 1;
 		return {
 			showReorder: canReorder,
 			isDragged: dragged?.spaceId === spaceId && dragged.projectId === project.id,
+			groupDragActive: dragged?.spaceId === spaceId,
 			dragEnabled: canReorder,
 			onDragStart: (event) => {
 				setDragged({ spaceId, projectId: project.id });
@@ -182,14 +195,16 @@ function SpaceGroupedProjects({
 				if (group.space === null) {
 					if (group.projects.length === 0) return null;
 					return (
-						<div key="no-space" className="space-y-4" data-testid="space-group-rest">
-							<div className="flex items-center gap-2 pt-2">
+						<div key="no-space" className={GROUP_CLASS} data-testid="space-group-rest">
+							<div className="flex items-center gap-2">
 								<span className="text-fg-3 text-xs font-semibold uppercase tracking-wider">
 									{t("spaces.homeGroup")}
 								</span>
 								<span className="text-fg-muted text-xs tabular-nums">{group.projects.length}</span>
 							</div>
-							{group.projects.map((project) => renderBottomBlockProject(project, group.projects))}
+							<div className={ROWS_CLASS}>
+								{group.projects.map((project) => renderBottomBlockProject(project, group.projects))}
+							</div>
 						</div>
 					);
 				}
@@ -199,58 +214,10 @@ function SpaceGroupedProjects({
 				const masked = isSpaceSensitive(space, sensitiveProjectIds);
 				const needsYou = group.projects.reduce((sum, p) => sum + needsYouCountOf(p.id), 0);
 				const working = group.projects.reduce((sum, p) => sum + workingCountOf(p.id), 0);
-				const isHeaderTarget = headerDropTarget?.spaceId === space.id;
 
 				return (
-					<div key={space.id} className="space-y-4 relative" data-testid={`space-group-${space.id}`}>
-						{isHeaderTarget && headerDropTarget.side === "before" && (
-							<div className="absolute -top-2 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />
-						)}
-						{isHeaderTarget && headerDropTarget.side === "after" && (
-							<div className="absolute -bottom-2 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />
-						)}
-						<div
-							className={`flex items-center gap-2 pt-2 ${draggedHeader === space.id ? "opacity-60" : ""}`}
-							onDragOver={(event) => {
-								if (!draggedHeader || draggedHeader === space.id) return;
-								event.preventDefault();
-								event.dataTransfer.dropEffect = "move";
-								const rect = event.currentTarget.getBoundingClientRect();
-								const side = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
-								setHeaderDropTarget({ spaceId: space.id, side });
-							}}
-							onDragLeave={() => setHeaderDropTarget((cur) => (cur?.spaceId === space.id ? null : cur))}
-							onDrop={(event) => {
-								event.preventDefault();
-								if (!draggedHeader) return;
-								const side = isHeaderTarget ? headerDropTarget.side : "before";
-								const source = draggedHeader;
-								setDraggedHeader(null);
-								setHeaderDropTarget(null);
-								void reorderHeaders(source, space.id, side);
-							}}
-						>
-							{spaceCount > 1 && (
-							<span
-								role="presentation"
-								draggable
-								onDragStart={(event) => {
-									setDraggedHeader(space.id);
-									event.dataTransfer.setData("text/plain", `space:${space.id}`);
-									event.dataTransfer.effectAllowed = "move";
-								}}
-								onDragEnd={() => {
-									setDraggedHeader(null);
-									setHeaderDropTarget(null);
-								}}
-								className="hidden md:inline-flex p-1 rounded text-fg-muted hover:text-fg cursor-grab active:cursor-grabbing"
-								title={t("spaces.reorderSpace")}
-							>
-								<span aria-hidden="true" className="text-sm leading-none" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>
-									{"\u{F01DB}"}
-								</span>
-							</span>
-						)}
+					<div key={space.id} className={`relative ${GROUP_CLASS}`} data-testid={`space-group-${space.id}`}>
+						<div className="flex items-center gap-2">
 							<button
 								type="button"
 								onClick={() => toggleCollapsed(space.id)}
@@ -274,44 +241,49 @@ function SpaceGroupedProjects({
 								<span className={`text-fg-muted text-xs tabular-nums flex-shrink-0 ${masked ? MASK_CLASS : ""}`}>
 									{t.plural("spaces.projectCount", group.projects.length)}
 								</span>
+								{/* Words, no colour marker: a dot needs a legend, and the
+								    only legend was this same line saying it out loud. */}
 								{needsYou > 0 && (
-									<span className={`flex items-center gap-1 flex-shrink-0 text-xs text-fg-3 ${masked ? MASK_CLASS : ""}`}>
-										<span aria-hidden="true" className="w-2 h-2 rounded-full bg-awake" />
+									<span className={`flex-shrink-0 text-xs text-fg-3 ${masked ? MASK_CLASS : ""}`}>
 										{t("spaces.needYou", { count: String(needsYou) })}
 									</span>
 								)}
 								{working > 0 && (
-									<span className={`flex items-center gap-1 flex-shrink-0 text-xs text-fg-3 ${masked ? MASK_CLASS : ""}`}>
-										<span aria-hidden="true" className="w-2 h-2 rounded-full bg-accent" />
+									<span className={`flex-shrink-0 text-xs text-fg-3 ${masked ? MASK_CLASS : ""}`}>
 										{t("spaces.working", { count: String(working) })}
 									</span>
 								)}
 							</button>
+							{/* One control for the whole space, sitting against its name and
+							    not pushed to the far right of a 1024px column (§9a.6 — group
+							    with proximity). Membership lives inside it: a bare `+` could
+							    only add, so removing a project was reachable nowhere near
+							    the space it belonged to. */}
 							{onRenameSpace && onDeleteSpace && (
-								<div className={onAddProjects ? "ml-auto" : "ml-auto"}>
-									<SpaceHeaderMenu space={space} onRename={onRenameSpace} onDelete={onDeleteSpace} />
-								</div>
-							)}
-							{onAddProjects && (
-								<button
-									type="button"
-									onClick={() => onAddProjects(space)}
-									className="p-1 rounded text-fg-muted hover:text-fg hover:bg-elevated transition-colors"
-									title={t("spaces.addProjects")}
-									aria-label={t("spaces.addProjects")}
-									data-testid={`space-add-projects-${space.id}`}
-								>
-									<svg aria-hidden="true" focusable="false" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-										<path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-									</svg>
-								</button>
+								<SpaceHeaderMenu
+									space={space}
+									onRename={onRenameSpace}
+									onDelete={onDeleteSpace}
+									onEditProjects={onEditProjects}
+									onToggleSensitive={onToggleSensitive}
+									touchTarget
+									onMove={onMoveSpace && (spaceOrder?.length ?? 0) > 1 ? onMoveSpace : undefined}
+									canMoveUp={(spaceOrder?.indexOf(space.id) ?? 0) > 0}
+									canMoveDown={
+										spaceOrder ? spaceOrder.indexOf(space.id) < spaceOrder.length - 1 : false
+									}
+								/>
 							)}
 						</div>
-						{!isCollapsed && group.projects.map((project, index) => (
-							<div key={`${space.id}:${project.id}`}>
-								{renderProject(project, rowCtx(space.id, group.projects, project, index), space.id)}
+						{!isCollapsed && (
+							<div className={ROWS_CLASS}>
+								{group.projects.map((project, index) => (
+									<div key={`${space.id}:${project.id}`}>
+										{renderProject(project, rowCtx(space.id, group.projects, project, index), space.id)}
+									</div>
+								))}
 							</div>
-						))}
+						)}
 					</div>
 				);
 			})}

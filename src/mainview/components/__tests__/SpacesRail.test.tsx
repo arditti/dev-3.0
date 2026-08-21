@@ -14,8 +14,6 @@ function renderRail(over?: Partial<React.ComponentProps<typeof SpacesRail>>) {
 	const props = {
 		spaces,
 		projectCountOf: (id: string) => (id === "sp_a" ? 2 : 1),
-		activityOf: (id: string) => (id === "sp_a" ? { needsYou: 1, working: 2 } : { needsYou: 0, working: 0 }),
-		homeActivity: { needsYou: 0, working: 3 },
 		maskedSpaceIds: new Set<string>(),
 		totalProjects: 5,
 		homeCount: 2,
@@ -34,9 +32,9 @@ function renderRail(over?: Partial<React.ComponentProps<typeof SpacesRail>>) {
 }
 
 describe("SpacesRail", () => {
-	it("lists All projects, every space with its count, and the computed Home group", () => {
+	it("lists Everything, every space with its count, and the computed Home group", () => {
 		renderRail();
-		expect(screen.getByTestId("rail-all-projects")).toHaveTextContent("All projects");
+		expect(screen.getByTestId("rail-all-projects")).toHaveTextContent("Everything");
 		expect(screen.getByTestId("rail-all-projects")).toHaveTextContent("5");
 		expect(screen.getByTestId("rail-space-sp_a")).toHaveTextContent("Client X");
 		expect(screen.getByTestId("rail-space-sp_a")).toHaveTextContent("2");
@@ -80,26 +78,18 @@ describe("SpacesRail", () => {
 		expect(readableNumbers).toHaveLength(0);
 	});
 
-	it("shows a row's needs-you / working split only when non-zero", () => {
+	it("carries no activity dots — the count is the row's only number", () => {
 		renderRail();
-		const clientX = screen.getByTestId("rail-space-sp_a");
-		expect(clientX.querySelector('[aria-label="1 need you"]')).not.toBeNull();
-		expect(clientX.querySelector('[aria-label="2 working"]')).not.toBeNull();
-		// Labs has no active tasks — nothing but the project count renders.
-		const labs = screen.getByTestId("rail-space-sp_b");
-		expect(labs.querySelector('[aria-label*="need you"]')).toBeNull();
-		expect(labs.querySelector('[aria-label*="working"]')).toBeNull();
-		// The computed Home group carries its split too.
-		expect(screen.getByTestId("rail-home").querySelector('[aria-label="3 working"]')).not.toBeNull();
-	});
-
-	it("masks the activity split of a masked space", () => {
-		renderRail({ maskedSpaceIds: new Set(["sp_a"]) });
 		const row = screen.getByTestId("rail-space-sp_a");
-		for (const label of ["1 need you", "2 working"]) {
-			const el = row.querySelector(`[aria-label="${label}"]`);
-			expect(el?.classList.contains("streamer-private")).toBe(true);
-		}
+		// Two coloured dots with no legend on this screen; both are gone, and with
+		// them the second and third number competing with the name.
+		expect(row.querySelector(".bg-awake")).toBeNull();
+		expect(row.querySelector(".bg-accent")).toBeNull();
+		const numbers = [...row.querySelectorAll("*")].filter(
+			(el) => el.children.length === 0 && /^\d+$/.test((el.textContent ?? "").trim()),
+		);
+		expect(numbers).toHaveLength(1);
+		expect(numbers[0]).toHaveTextContent("2");
 	});
 
 	it("opens the New Space flow", async () => {
@@ -112,8 +102,8 @@ describe("SpacesRail", () => {
 
 describe("SpacesRail — drag to reorder", () => {
 	function dragRail(fromId: string, toId: string, atBottomHalf: boolean) {
-		const from = screen.getByTestId(`rail-space-${fromId}`);
-		const to = screen.getByTestId(`rail-space-${toId}`);
+		const from = screen.getByTestId(`rail-space-row-${fromId}`);
+		const to = screen.getByTestId(`rail-space-row-${toId}`);
 		// happy-dom has no layout, so pin the target's box for the side maths.
 		to.getBoundingClientRect = () =>
 			({ top: 0, height: 40, bottom: 40, left: 0, right: 0, width: 100, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
@@ -154,7 +144,7 @@ describe("SpacesRail — drag to reorder", () => {
 
 	it("does not make rows draggable when no reorder handler is given", () => {
 		renderRail({ onReorder: undefined });
-		expect(screen.getByTestId("rail-space-sp_a")).not.toHaveAttribute("draggable", "true");
+		expect(screen.getByTestId("rail-space-row-sp_a")).not.toHaveAttribute("draggable", "true");
 	});
 
 	it("never makes All projects or Home draggable — neither is an ordered space", () => {
@@ -167,11 +157,96 @@ describe("SpacesRail — drag to reorder", () => {
 describe("SpacesRail — a single space", () => {
 	it("is not draggable, because there is no order to change", () => {
 		renderRail({ spaces: [spaces[0]] });
-		expect(screen.getByTestId("rail-space-sp_a")).not.toHaveAttribute("draggable", "true");
+		expect(screen.getByTestId("rail-space-row-sp_a")).not.toHaveAttribute("draggable", "true");
 	});
 
 	it("stays draggable as soon as a second space exists", () => {
 		renderRail();
-		expect(screen.getByTestId("rail-space-sp_a")).toHaveAttribute("draggable", "true");
+		expect(screen.getByTestId("rail-space-row-sp_a")).toHaveAttribute("draggable", "true");
+	});
+});
+
+describe("SpacesRail — reorder affordance", () => {
+	it("advertises the drag with a resting grip, not just the cursor", () => {
+		renderRail();
+		// The glyph is aria-hidden, so it is found by its title, which is the only
+		// thing a pointer user can discover before committing to a drag.
+		const row = screen.getByTestId("rail-space-row-sp_a");
+		expect(row.querySelector('[title="Drag to reorder spaces"]')).not.toBeNull();
+	});
+
+	it("carries no second reorder control — drag is the rail's whole story", () => {
+		renderRail();
+		expect(screen.queryByTestId("rail-reorder-toggle")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("rail-space-up-sp_a")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("rail-space-down-sp_a")).not.toBeInTheDocument();
+	});
+
+	it("keeps every row a filter — a click selects, it never grabs", async () => {
+		const user = userEvent.setup();
+		const props = renderRail();
+		await user.click(screen.getByTestId("rail-space-sp_a"));
+		expect(props.onSelect).toHaveBeenCalledWith("sp_a");
+		expect(screen.getByTestId("rail-home")).toBeInTheDocument();
+	});
+});
+
+describe("SpacesRail — each row's own menu", () => {
+	it("renames, deletes, reorders and edits membership without leaving the rail", async () => {
+		const user = userEvent.setup();
+		const props = renderRail({
+			onRenameSpace: vi.fn(),
+			onDeleteSpace: vi.fn(),
+			onMoveSpace: vi.fn(),
+			onEditProjects: vi.fn(),
+		});
+		await user.click(screen.getByTestId("rail-space-menu-sp_b"));
+		await user.click(screen.getByTestId("rail-space-edit-projects-sp_b"));
+		expect(props.onEditProjects).toHaveBeenCalledWith(expect.objectContaining({ id: "sp_b" }));
+
+		await user.click(screen.getByTestId("rail-space-menu-sp_b"));
+		await user.click(screen.getByTestId("rail-space-move-up-sp_b"));
+		expect(props.onMoveSpace).toHaveBeenCalledWith(expect.objectContaining({ id: "sp_b" }), -1);
+	});
+
+	it("stops the last space from moving down and the first from moving up", async () => {
+		const user = userEvent.setup();
+		renderRail({ onRenameSpace: vi.fn(), onDeleteSpace: vi.fn(), onMoveSpace: vi.fn() });
+		await user.click(screen.getByTestId("rail-space-menu-sp_a"));
+		expect(screen.getByTestId("rail-space-move-up-sp_a")).toBeDisabled();
+		expect(screen.getByTestId("rail-space-move-down-sp_a")).toBeEnabled();
+	});
+
+	it("carries no menu at all when the host passes no space actions", () => {
+		renderRail();
+		expect(screen.queryByTestId("rail-space-menu-sp_a")).not.toBeInTheDocument();
+	});
+
+	it("keeps the menu's width at rest, so the numbers never shift under the pointer", () => {
+		renderRail({ onRenameSpace: vi.fn(), onDeleteSpace: vi.fn() });
+		// Only the ink waits for hover: the slot itself is always laid out, and
+		// the rows WITHOUT a menu donate the same width so one column of counts
+		// survives (Home and All projects).
+		const slot = screen.getByTestId("rail-space-menu-sp_a").parentElement!;
+		expect(slot.className).toContain("opacity-0");
+		expect(slot.className).not.toContain("hidden");
+		for (const id of ["rail-home", "rail-all-projects"]) {
+			const donor = [...screen.getByTestId(id).querySelectorAll("span")].filter((el) =>
+				el.className.includes("invisible"),
+			);
+			expect(donor.length).toBeGreaterThan(0);
+		}
+	});
+});
+
+describe("SpacesRail — New space placement", () => {
+	it("ends the spaces list instead of being pinned to the rail's bottom", () => {
+		renderRail();
+		const button = screen.getByTestId("rail-new-space");
+		expect(button.className).not.toContain("mt-auto");
+		// It belongs to the section it appends to, as its last entry.
+		const section = screen.getByTestId("rail-home").parentElement;
+		expect(button.parentElement).toBe(section);
+		expect(section?.lastElementChild).toBe(button);
 	});
 });

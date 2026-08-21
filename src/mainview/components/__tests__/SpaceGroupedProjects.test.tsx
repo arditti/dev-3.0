@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "../../i18n";
+import { api } from "../../rpc";
 import SpaceGroupedProjects, { type RowReorderCtx } from "../SpaceGroupedProjects";
 import type { DashboardGroup } from "../../utils/spaceGroups";
 import type { Project, Space } from "../../../shared/types";
@@ -46,7 +47,6 @@ function renderGroups(sensitive: ReadonlySet<string> = new Set()) {
 		<I18nProvider>
 			<SpaceGroupedProjects
 				groups={groups}
-				spaceOrder={["sp_a", "sp_b"]}
 				sensitiveProjectIds={sensitive}
 				needsYouCountOf={() => 0}
 				workingCountOf={() => 0}
@@ -83,6 +83,28 @@ describe("SpaceGroupedProjects", () => {
 		expect(JSON.parse(localStorage.getItem("dev3-collapsed-spaces")!)).toEqual(["sp_a"]);
 	});
 
+	// §9a.6: what says "these rows belong to this space" is proximity, so the gap
+	// between groups has to be at least twice the gap inside one. Asserted as
+	// classes because happy-dom has no layout to measure.
+	it("keeps its own rows closer to the header than the next group is", () => {
+		renderGroups();
+		const group = screen.getByTestId("space-group-sp_a");
+		expect(group.className).toContain("pt-6");
+		expect(group.className).toContain("space-y-2");
+		const rows = screen.getByTestId("row-p2").parentElement!.parentElement!;
+		expect(rows.className).toContain("space-y-4");
+	});
+
+	// Proximity alone did not read as containment: the rows are bordered cards, so
+	// a gap between them still looked like a flat list with headings dropped in.
+	it("hangs the rows off the header with an indent and a rule", () => {
+		renderGroups();
+		const rows = screen.getByTestId("row-p2").parentElement!.parentElement!;
+		expect(rows.className).toContain("ml-2");
+		expect(rows.className).toContain("pl-4");
+		expect(rows.className).toContain("border-l");
+	});
+
 	it("masks the header name when a member project is sensitive", () => {
 		renderGroups(new Set(["p2"]));
 		const alpha = screen.getByTestId("space-header-sp_a");
@@ -96,7 +118,6 @@ describe("SpaceGroupedProjects", () => {
 			<I18nProvider>
 				<SpaceGroupedProjects
 					groups={groups}
-					spaceOrder={["sp_a", "sp_b"]}
 					sensitiveProjectIds={new Set(["p2"])}
 					needsYouCountOf={() => 1}
 					workingCountOf={() => 2}
@@ -119,7 +140,6 @@ describe("SpaceGroupedProjects — header details from the mock", () => {
 			<I18nProvider>
 				<SpaceGroupedProjects
 					groups={groups}
-					spaceOrder={["sp_a", "sp_b"]}
 					sensitiveProjectIds={new Set()}
 					needsYouCountOf={(id) => (id === "p1" ? 1 : 0)}
 					workingCountOf={(id) => (id === "p2" ? 2 : 0)}
@@ -132,6 +152,9 @@ describe("SpaceGroupedProjects — header details from the mock", () => {
 		expect(header).toHaveTextContent("2 projects");
 		expect(header).toHaveTextContent("1 need you");
 		expect(header).toHaveTextContent("2 working");
+		// No amber/blue dot: its only legend was this very line saying it in words.
+		expect(header.querySelector(".bg-awake")).toBeNull();
+		expect(header.querySelector(".bg-accent")).toBeNull();
 		// The name carries the identity; a first-letter badge would only repeat it.
 		const singleLetterNodes = [...header.querySelectorAll("*")].filter(
 			(el) => el.children.length === 0 && /^[A-Z]$/.test((el.textContent ?? "").trim()),
@@ -139,25 +162,29 @@ describe("SpaceGroupedProjects — header details from the mock", () => {
 		expect(singleLetterNodes).toHaveLength(0);
 	});
 
-	it("offers the add-projects control only when the handler is provided", async () => {
+	it("opens the membership editor from the space's own menu, with no bare + beside it", async () => {
 		const user = userEvent.setup();
-		const onAddProjects = vi.fn();
+		const onEditProjects = vi.fn();
 		render(
 			<I18nProvider>
 				<SpaceGroupedProjects
 					groups={groups}
-					spaceOrder={["sp_a", "sp_b"]}
 					sensitiveProjectIds={new Set()}
 					needsYouCountOf={() => 0}
 					workingCountOf={() => 0}
 					renderProject={(p) => <div data-testid={`row-${p.id}`}>{p.name}</div>}
 					renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
-					onAddProjects={onAddProjects}
+					onEditProjects={onEditProjects}
+					onRenameSpace={vi.fn()}
+					onDeleteSpace={vi.fn()}
 				/>
 			</I18nProvider>,
 		);
-		await user.click(screen.getByTestId("space-add-projects-sp_a"));
-		expect(onAddProjects).toHaveBeenCalledWith(expect.objectContaining({ id: "sp_a" }));
+		// A `+` could only ever add; removal has to live in the same place.
+		expect(screen.queryByTestId("space-add-projects-sp_a")).not.toBeInTheDocument();
+		await user.click(screen.getByTestId("space-menu-sp_a"));
+		await user.click(screen.getByTestId("space-edit-projects-sp_a"));
+		expect(onEditProjects).toHaveBeenCalledWith(expect.objectContaining({ id: "sp_a" }));
 	});
 
 	it("passes the owning space id to the row renderer so chips can omit it", () => {
@@ -166,7 +193,6 @@ describe("SpaceGroupedProjects — header details from the mock", () => {
 			<I18nProvider>
 				<SpaceGroupedProjects
 					groups={groups}
-					spaceOrder={["sp_a", "sp_b"]}
 					sensitiveProjectIds={new Set()}
 					needsYouCountOf={() => 0}
 					workingCountOf={() => 0}
@@ -198,7 +224,6 @@ describe("SpaceGroupedProjects — nothing to reorder", () => {
 			<I18nProvider>
 				<SpaceGroupedProjects
 					groups={groupsArg}
-					spaceOrder={groupsArg.filter((g) => g.space).map((g) => g.space!.id)}
 					sensitiveProjectIds={new Set()}
 					needsYouCountOf={() => 0}
 					workingCountOf={() => 0}
@@ -229,15 +254,48 @@ describe("SpaceGroupedProjects — nothing to reorder", () => {
 		expect(seen[2]).toBe(false);
 	});
 
-	it("hides the header grip when only one space is rendered", () => {
-		renderWith(soloGroups);
-		const header = screen.getByTestId("space-header-sp_solo").parentElement!;
-		expect(header.querySelector('[role="presentation"][draggable="true"]')).toBeNull();
+	// Space ORDER belongs to the rail, which is the collapsed name-only list.
+	// A second grip here meant dragging a header across a page hundreds of
+	// pixels tall, and it never existed on touch at all.
+	it("carries no space-order grip on a header, whatever the space count", () => {
+		renderWith(groups);
+		for (const id of ["sp_a", "sp_b"]) {
+			const header = screen.getByTestId(`space-header-${id}`).parentElement!;
+			expect(header.querySelector('[draggable="true"]')).toBeNull();
+		}
 	});
 
-	it("keeps the header grip when several spaces are rendered", () => {
+	// Dragging is only worth doing if the list you are dropping into fits on the
+	// screen, so every row that can take THIS drop collapses — and no other, since
+	// a drop across groups would change membership and is refused.
+	it("collapses only the group whose row is being dragged", () => {
+		const flags = new Map<string, boolean>();
+		renderWith(groups, (p, ctx, spaceId) => {
+			flags.set(`${spaceId}:${p.id}`, ctx.groupDragActive);
+			return (
+				<div
+					key={`${spaceId}:${p.id}`}
+					data-testid={`row-${spaceId}-${p.id}`}
+					draggable
+					onDragStart={ctx.onDragStart}
+				>
+					{p.name}
+				</div>
+			);
+		});
+		fireEvent.dragStart(screen.getByTestId("row-sp_a-p1"), {
+			dataTransfer: { setData: vi.fn(), effectAllowed: "" },
+		});
+		expect(flags.get("sp_a:p1")).toBe(true);
+		expect(flags.get("sp_a:p2")).toBe(true);
+		expect(flags.get("sp_b:p1")).toBe(false);
+	});
+
+	it("does not reorder spaces when a header is dragged", () => {
 		renderWith(groups);
 		const header = screen.getByTestId("space-header-sp_a").parentElement!;
-		expect(header.querySelector('[role="presentation"][draggable="true"]')).not.toBeNull();
+		fireEvent.dragOver(header);
+		fireEvent.drop(header);
+		expect(vi.mocked(api.request.reorderSpaces)).not.toHaveBeenCalled();
 	});
 });

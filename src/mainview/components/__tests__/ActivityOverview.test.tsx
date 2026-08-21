@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ActivityOverview from "../ActivityOverview";
 import { I18nProvider } from "../../i18n";
@@ -102,7 +102,7 @@ describe("ActivityOverview — sensitive project in streamer mode", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
-			{ projectId: "p1", tasks: [mockTask] },
+			{ projectId: "p1", tasks: [mockTask], todoCount: 0 },
 		]);
 		localStorage.clear();
 		delete document.documentElement.dataset.streamer;
@@ -148,7 +148,7 @@ describe("ActivityOverview", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
-			{ projectId: "p1", tasks: [mockTask] },
+			{ projectId: "p1", tasks: [mockTask], todoCount: 0 },
 		]);
 		mockedApi.request.openFolder.mockResolvedValue(undefined);
 	});
@@ -233,7 +233,7 @@ describe("ActivityOverview", () => {
 
 	it("shows all projects even when there are no active tasks", async () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
-			{ projectId: "p1", tasks: [] },
+			{ projectId: "p1", tasks: [], todoCount: 0 },
 		]);
 
 		renderActivityOverview();
@@ -253,7 +253,7 @@ describe("ActivityOverview", () => {
 			builtin: true,
 			path: "/home/user/.dev3.0/ops/operations",
 		};
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "vp1", tasks: [] }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "vp1", tasks: [], todoCount: 0 }]);
 
 		render(
 			<I18nProvider>
@@ -268,6 +268,45 @@ describe("ActivityOverview", () => {
 		expect(screen.getByText("Code-driven tasks · no git")).toBeInTheDocument();
 		// The synthetic on-disk path must never be shown to the user.
 		expect(screen.queryByText("/home/user/.dev3.0/ops/operations")).not.toBeInTheDocument();
+	});
+
+	it("hides the reorder cluster on a board that cannot be reordered, without losing its column", async () => {
+		const gitProj: Project = { ...mockProject, id: "g1", name: "Alpha Repo", path: "/home/user/alpha" };
+		const builtin: Project = {
+			...mockProject,
+			id: "vp1",
+			name: "Operations",
+			kind: "virtual",
+			builtin: true,
+			path: "/home/user/.dev3.0/ops/operations",
+		};
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([]);
+
+		render(
+			<I18nProvider>
+				<ActivityOverview
+					projects={[gitProj, builtin]}
+					navigate={vi.fn()}
+					dispatch={vi.fn()}
+					bellCounts={new Map()}
+					onReorderProjects={vi.fn()}
+				/>
+			</I18nProvider>,
+		);
+
+		// A virtual board can never be reordered, so a grip and two disabled arrows
+		// on its row were three controls promising something they cannot do.
+		const opsRow = (await screen.findByText("[ Operations ]")).closest("[data-help-id='dashboard.project-row']")!;
+		const opsCluster = opsRow.querySelector("[aria-hidden='true'].md\\:flex");
+		expect(opsCluster).not.toBeNull();
+		// `invisible`, not removed: the row is pinned above the rest and their
+		// names have to start at the same x. It also drops out of the tab order.
+		expect(opsCluster!.className).toContain("invisible");
+		expect(opsRow.querySelector("[title='Move project up']")).not.toBeNull();
+
+		const repoRow = screen.getByText("Alpha Repo").closest("[data-help-id='dashboard.project-row']")!;
+		const repoCluster = repoRow.querySelector("[title='Move project up']")!.parentElement!;
+		expect(repoCluster.className).not.toContain("invisible");
 	});
 
 	it("pins the built-in Operations board first, above ordinary projects", async () => {
@@ -299,6 +338,7 @@ describe("ActivityOverview", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{ ...mockTask, id: "pr1", title: "Ship the parser", status: "review-by-colleague" },
 				],
@@ -318,6 +358,7 @@ describe("ActivityOverview", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{ ...mockTask, id: "low", title: "Low priority", priority: "P3" },
 					{ ...mockTask, id: "high", title: "High priority", priority: "P1" },
@@ -347,6 +388,7 @@ describe("ActivityOverview", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{ ...mockTask, id: "parked", title: "Parked task", priority: "P0", hibernated: true },
 					{ ...mockTask, id: "live", title: "Live task", priority: "P4" },
@@ -366,6 +408,7 @@ describe("ActivityOverview", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{
 						...mockTask,
@@ -397,6 +440,7 @@ describe("ActivityOverview", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{ ...mockTask, id: "c1", title: "Parked work", status: "in-progress", customColumnId: "col1" },
 				],
@@ -421,6 +465,7 @@ describe("ActivityOverview", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{ ...mockTask, id: "g1", title: "Orphan task", status: "in-progress", customColumnId: "ghost" },
 				],
@@ -464,7 +509,7 @@ describe("ActivityOverview — narrow viewport", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
-			{ projectId: "p1", tasks: [mockTask] },
+			{ projectId: "p1", tasks: [mockTask], todoCount: 0 },
 		]);
 		mockedApi.request.openFolder.mockResolvedValue(undefined);
 		Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
@@ -549,7 +594,7 @@ describe("ActivityOverview — narrow viewport", () => {
 			title: `Review item ${i + 1}`,
 			status: "review-by-user" as const,
 		}));
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: many }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: many, todoCount: 0 }]);
 
 		render(
 			<I18nProvider>
@@ -579,7 +624,7 @@ describe("ActivityOverview — narrow viewport", () => {
 			{ ...mockTask, id: "pr", title: "Colleague PR", status: "review-by-colleague" as const },
 			{ ...mockTask, id: "mine", title: "My review", status: "review-by-user" as const },
 		];
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks, todoCount: 0 }]);
 
 		render(
 			<I18nProvider>
@@ -597,7 +642,7 @@ describe("ActivityOverview — narrow viewport", () => {
 			{ ...mockTask, id: "mine", title: "My review", status: "review-by-user" as const, priority: "P3" as const },
 			{ ...mockTask, id: "colleague", title: "Colleague PR", status: "review-by-colleague" as const, priority: "P1" as const },
 		];
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks, todoCount: 0 }]);
 
 		render(
 			<I18nProvider>
@@ -615,7 +660,7 @@ describe("ActivityOverview — narrow viewport", () => {
 describe("ActivityOverview loading state", () => {
 	it("renders a skeleton placeholder while tasks are still loading", async () => {
 		vi.clearAllMocks();
-		let release: (value: { projectId: string; tasks: Task[] }[]) => void = () => {};
+		let release: (value: { projectId: string; tasks: Task[]; todoCount: number }[]) => void = () => {};
 		mockedApi.request.getAllProjectTasks.mockReturnValue(
 			new Promise((resolve) => {
 				release = resolve;
@@ -631,7 +676,7 @@ describe("ActivityOverview loading state", () => {
 		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
 		expect(screen.queryByText(mockProject.name)).toBeNull();
 
-		release([{ projectId: "p1", tasks: [mockTask] }]);
+		release([{ projectId: "p1", tasks: [mockTask], todoCount: 0 }]);
 		await waitFor(() => expect(screen.getByText(mockProject.name)).toBeInTheDocument());
 		expect(container.querySelector('[aria-busy="true"]')).toBeNull();
 	});
@@ -643,6 +688,7 @@ describe("ActivityOverview accessibility and copy regressions", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [
 					{ ...mockTask, id: "t1", status: "in-progress" as const },
 					{ ...mockTask, id: "t2", status: "in-progress" as const },
@@ -666,7 +712,7 @@ describe("ActivityOverview accessibility and copy regressions", () => {
 
 	it("keeps the drag affordance out of the tab order and off the accessibility tree", async () => {
 		vi.clearAllMocks();
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [mockTask] }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [mockTask], todoCount: 0 }]);
 
 		const { container } = render(
 			<I18nProvider>
@@ -691,7 +737,7 @@ describe("ActivityOverview accessibility and copy regressions", () => {
 
 	it("gives every truncating identifier a reachable full value", async () => {
 		vi.clearAllMocks();
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [mockTask] }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [mockTask], todoCount: 0 }]);
 
 		render(
 			<I18nProvider>
@@ -711,7 +757,7 @@ describe("ActivityOverview row complete action", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
-			{ projectId: "p1", tasks: [mockTask] },
+			{ projectId: "p1", tasks: [mockTask], todoCount: 0 },
 		]);
 	});
 
@@ -719,6 +765,7 @@ describe("ActivityOverview row complete action", () => {
 		mockedApi.request.getAllProjectTasks.mockResolvedValue([
 			{
 				projectId: "p1",
+				todoCount: 0,
 				tasks: [mockTask, { ...mockTask, id: "t2", title: "Sleeping", hibernated: true }],
 			},
 		]);
@@ -796,7 +843,7 @@ describe("ActivityOverview row complete action", () => {
 
 describe("ActivityOverview — spaces grouping", () => {
 	it("renders the flat, headerless dashboard when no spaces exist", async () => {
-		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [] }]);
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([{ projectId: "p1", tasks: [], todoCount: 0 }]);
 		renderActivityOverview();
 		await waitFor(() => expect(screen.getByText("My Project")).toBeInTheDocument());
 		expect(document.querySelector('[data-testid^="space-group-"]')).toBeNull();
@@ -814,5 +861,101 @@ describe("ActivityOverview — spaces grouping", () => {
 		await waitFor(() => expect(screen.getByTestId("space-header-sp_a")).toHaveTextContent("Client X"));
 		expect(within(screen.getByTestId("space-group-sp_a")).getByText("My Project")).toBeInTheDocument();
 		expect(within(screen.getByTestId("space-group-rest")).getByText("Loose Project")).toBeInTheDocument();
+	});
+});
+
+// A row carrying tasks and a footer is ~300px tall, so a handful of them never
+// fit on one screen: the user had to scroll to the drop target with the pointer
+// held down. While a drag is in flight every row that can take it is one line.
+describe("ActivityOverview — dragging a project collapses the list", () => {
+	const second: Project = { ...mockProject, id: "p2", name: "Second Project", path: "/tmp/second" };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([
+			{ projectId: "p1", tasks: [mockTask], todoCount: 4 },
+			{ projectId: "p2", tasks: [], todoCount: 0 },
+		]);
+		(mockedApi.request.getSpaces as ReturnType<typeof vi.fn>).mockResolvedValue({
+			version: 1,
+			spaces: [{ id: "sp_a", name: "Client X", parentId: null, projectIds: ["p1", "p2"], createdAt: 1 }],
+			order: ["sp_a"],
+		});
+	});
+
+	function startDragging(projectName: string) {
+		const row = screen.getByText(projectName).closest('[data-help-id="dashboard.project-row"]')!;
+		const grip = row.querySelector('[title="Drag to reorder project"]')!;
+		fireEvent.dragStart(grip, { dataTransfer: { setData: vi.fn(), effectAllowed: "" } });
+	}
+
+	it("drops the task rows and the board footer for the duration of the drag", async () => {
+		renderWithProjects([mockProject, second]);
+		expect(await screen.findByText(getTaskTitle(mockTask))).toBeInTheDocument();
+		startDragging("My Project");
+		expect(screen.queryByText(getTaskTitle(mockTask))).not.toBeInTheDocument();
+		expect(screen.queryByTestId("project-open-board-p1")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("project-open-board-p2")).not.toBeInTheDocument();
+		// The one thing a row being reordered is for: which project it is.
+		expect(screen.getByText("My Project")).toBeInTheDocument();
+		expect(screen.getByText("Second Project")).toBeInTheDocument();
+	});
+
+	it("hides the path so the row is a single line", async () => {
+		renderWithProjects([mockProject, second]);
+		expect(await screen.findByTitle("/home/user/my-project")).toBeInTheDocument();
+		startDragging("My Project");
+		expect(screen.queryByTitle("/home/user/my-project")).not.toBeInTheDocument();
+	});
+
+	it("restores the full rows when the drag ends", async () => {
+		renderWithProjects([mockProject, second]);
+		expect(await screen.findByText(getTaskTitle(mockTask))).toBeInTheDocument();
+		const row = screen.getByText("My Project").closest('[data-help-id="dashboard.project-row"]')!;
+		const grip = row.querySelector('[title="Drag to reorder project"]')!;
+		fireEvent.dragStart(grip, { dataTransfer: { setData: vi.fn(), effectAllowed: "" } });
+		fireEvent.dragEnd(grip);
+		expect(screen.getByText(getTaskTitle(mockTask))).toBeInTheDocument();
+		expect(screen.getByTestId("project-open-board-p1")).toBeInTheDocument();
+	});
+});
+
+// The row's whole left half already navigated into the board, but nothing said
+// so and nothing said what the board holds that this screen does not.
+describe("ActivityOverview — the board footer", () => {
+	it("offers Open board even on a project with nothing active", async () => {
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([
+			{ projectId: "p1", tasks: [], todoCount: 0 },
+		]);
+		renderWithProjects([mockProject]);
+		expect(await screen.findByTestId("project-open-board-p1")).toHaveTextContent("Open board");
+	});
+
+	it("states the work parked on the board that this screen never lists", async () => {
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([
+			{ projectId: "p1", tasks: [], todoCount: 42 },
+		]);
+		renderWithProjects([mockProject]);
+		expect(await screen.findByTestId("project-todo-count-p1")).toHaveTextContent("42 in To Do");
+	});
+
+	it("says nothing rather than zero when the board is empty", async () => {
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([
+			{ projectId: "p1", tasks: [], todoCount: 0 },
+		]);
+		renderWithProjects([mockProject]);
+		await screen.findByTestId("project-open-board-p1");
+		expect(screen.queryByTestId("project-todo-count-p1")).not.toBeInTheDocument();
+	});
+
+	it("opens that project's board", async () => {
+		const user = userEvent.setup();
+		const navigate = vi.fn();
+		mockedApi.request.getAllProjectTasks.mockResolvedValue([
+			{ projectId: "p1", tasks: [], todoCount: 3 },
+		]);
+		renderWithProjects([mockProject], navigate);
+		await user.click(await screen.findByTestId("project-open-board-p1"));
+		expect(navigate).toHaveBeenCalledWith({ screen: "project", projectId: "p1" });
 	});
 });

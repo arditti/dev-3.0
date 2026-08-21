@@ -4,15 +4,13 @@ import type { Project, Space, Task, TaskStatus } from "../../shared/types";
 import { compareTaskSortRank, getTaskTitle, isBuiltinOpsProject, isTaskDisconnected, orderProjectsForDisplay } from "../../shared/types";
 import type { AppAction, Route } from "../state";
 import { api } from "../rpc";
+import { deleteSpaceWithConfirm, moveSpace, renameSpace, toggleSpaceSensitive } from "../utils/spaceActions";
 import { useT } from "../i18n";
-import { toast } from "../toast";
-import { confirm } from "../confirm";
-import { useProjectPrivacy } from "../sensitive-projects";
+import { MASK_CLASS, useProjectPrivacy } from "../sensitive-projects";
 import { useSpaces } from "../useSpaces";
 import { filterDashboardGroups, groupProjectsForDashboard } from "../utils/spaceGroups";
 import ProjectSpaceChips from "./ProjectSpaceChips";
 import SpacePicker from "./SpacePicker";
-import AddProjectsToSpaceModal from "./AddProjectsToSpaceModal";
 import { useProjectSpaceMembership } from "../useProjectSpaceMembership";
 import SpaceGroupedProjects, { type RowReorderCtx } from "./SpaceGroupedProjects";
 import { getStatusLabel } from "../utils/statusLabel";
@@ -39,6 +37,12 @@ interface ActivityOverviewProps {
 	/** Rail filter: null = all, `HOME_GROUP_ID` = the computed Home group. */
 	selectedSpaceId?: string | null;
 	onNewSpace?: () => void;
+	/** Opens the space's membership editor — the dialog is hosted one level up,
+	 *  because the rail's own menu opens the same one. */
+	onEditSpaceProjects?: (space: Space) => void;
+	/** Present only while the rail is off screen: the filter's stand-in control,
+	 *  showing what is currently filtered and opening the picker sheet. */
+	spaceFilter?: { label: string; masked?: boolean; onOpen: () => void };
 }
 
 /** Statuses worth their own row — they're waiting on a human (questions, your
@@ -112,11 +116,14 @@ function ActionSheetButton({
 	);
 }
 
-function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemoveProject, onOpenAddProject, onReorderProjects, selectedSpaceId = null, onNewSpace }: ActivityOverviewProps) {
+function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemoveProject, onOpenAddProject, onReorderProjects, selectedSpaceId = null, onNewSpace, onEditSpaceProjects, spaceFilter }: ActivityOverviewProps) {
 	const t = useT();
 	const statusColors = useStatusColors();
 	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
 	const [tasksByProject, setTasksByProject] = useState<Map<string, Task[]>>(new Map());
+	// Work parked on each board that this screen never lists — the number that
+	// makes "Open board" worth clicking instead of a decorative arrow.
+	const [todoByProject, setTodoByProject] = useState<Map<string, number>>(new Map());
 	const [loading, setLoading] = useState(true);
 	const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
 	const [dropTarget, setDropTarget] = useState<{ projectId: string; side: DropSide } | null>(null);
@@ -136,38 +143,11 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 	const [projectQuery, setProjectQuery] = useState("");
 	// The row whose Spaces… picker is open, with the button it is anchored to.
 	const [spacesPicker, setSpacesPicker] = useState<{ projectId: string; anchor: HTMLElement } | null>(null);
-	const [addProjectsSpace, setAddProjectsSpace] = useState<Space | null>(null);
 	const membership = useProjectSpaceMembership(spacesFile);
 
 	const openSpacesPicker = useCallback((project: Project, anchor: HTMLElement) => {
 		setSpacesPicker({ projectId: project.id, anchor });
 	}, []);
-
-	async function handleRenameSpace(space: Space, name: string) {
-		try {
-			await api.request.renameSpace({ spaceId: space.id, name });
-		} catch (err) {
-			toast.error(t("spaces.failedRename", { error: String(err) }));
-		}
-	}
-
-	// Deleting a space unlinks its projects and nothing else — never removes a
-	// project from dev3 (see the Spaces decision record).
-	async function handleDeleteSpace(space: Space) {
-		const confirmed = await confirm({
-			title: t("spaces.deleteConfirmTitle"),
-			message: t("spaces.deleteConfirmBody", { name: space.name }),
-			confirmLabel: t("spaces.deleteConfirmAction"),
-			danger: true,
-		});
-		if (!confirmed) return;
-		try {
-			await api.request.deleteSpace({ spaceId: space.id });
-			toast.info(t("spaces.deleted", { name: space.name }));
-		} catch (err) {
-			toast.error(t("spaces.failedDelete", { error: String(err) }));
-		}
-	}
 
 	function openProject(projectId: string) {
 		navigate({ screen: "project", projectId });
@@ -243,10 +223,13 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 		try {
 			const results = await api.request.getAllProjectTasks();
 			const map = new Map<string, Task[]>();
-			for (const { projectId, tasks } of results) {
+			const todo = new Map<string, number>();
+			for (const { projectId, tasks, todoCount } of results) {
 				map.set(projectId, tasks);
+				todo.set(projectId, todoCount);
 			}
 			setTasksByProject(map);
+			setTodoByProject(todo);
 		} catch (err) {
 			console.error("Failed to load all project tasks:", err);
 		}
@@ -369,7 +352,13 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 	function renderProjectRow(project: Project, index: number, reorder?: RowReorderCtx, groupSpaceId?: string | null) {
 		const tasks = tasksByProject.get(project.id) ?? [];
 		const hasActiveTasks = tasks.length > 0;
+		const todoCount = todoByProject.get(project.id) ?? 0;
 		const isDragged = reorder ? reorder.isDragged : draggedProjectId === project.id;
+		// A drag is in flight in this row's reorder scope: every row that can take
+		// the drop shrinks to one line for the duration. A row with five tasks is
+		// ~300px tall, so a list of them never fits on one screen — the drop target
+		// was somewhere the user had to scroll to while holding the pointer down.
+		const compact = reorder ? reorder.groupDragActive : draggedProjectId !== null;
 		const isBuiltinOps = isBuiltinOpsProject(project);
 		const locked = privacy.isLocked(project);
 		// Virtual boards (builtin and user-created) cannot be reordered:
@@ -441,7 +430,8 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 			<div
 				key={project.id}
 				data-help-id="dashboard.project-row"
-				className={`relative bg-raised rounded-2xl border border-edge overflow-hidden transition-opacity ${isDragged ? "opacity-60" : ""}`}
+				className={`relative bg-raised border border-edge overflow-hidden transition-opacity ${compact ? "rounded-xl" : "rounded-2xl"} ${isDragged ? "opacity-60" : ""}`}
+				data-compact={compact || undefined}
 				onDragOver={reorder ? reorder.onDragOver : (event) => handleDragOver(event, project.id)}
 				onDragLeave={reorder ? reorder.onDragLeave : () => setDropTarget((current) => current?.projectId === project.id ? null : current)}
 				onDrop={reorder ? reorder.onDrop : (event) => handleDrop(event, project.id)}
@@ -449,12 +439,21 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 				{showDropBefore && <div className="absolute top-0 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />}
 				{showDropAfter && <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-accent rounded-full z-10" />}
 				{/* Project header */}
-				<div className={`group flex items-center gap-2 px-3 md:px-5 ${hasActiveTasks ? "py-3" : "py-2.5"} hover:bg-raised-hover transition-colors`}>
+				<div className={`group flex items-center gap-2 px-3 md:px-5 ${compact ? "py-1.5" : hasActiveTasks ? "py-3" : "py-2.5"} hover:bg-raised-hover transition-colors`}>
 					{/* Reorder cluster — desktop only. On touch, drag and the
 					    step buttons are unusable; reorder lives in the action sheet. */}
 					{/* A grouped row alone in its space has nothing to reorder. */}
 					{(!reorder || reorder.showReorder) && (
-					<div className="hidden md:flex -ml-1.5 items-center gap-0.5">
+					/* A virtual board cannot be reordered at all, so its cluster carried
+					   a dead grip and two permanently disabled buttons. Hidden with
+					   `invisible`, not removed: the row is pinned above the grouped rows
+					   and their names have to start at the same x. `visibility: hidden`
+					   also takes the two buttons out of the tab order, which
+					   `opacity-0` would not. */
+					<div
+						aria-hidden={cannotReorder || undefined}
+						className={`hidden md:flex -ml-1.5 items-center gap-0.5 ${cannotReorder ? "invisible" : ""}`}
+					>
 						{/* Pointer-only drag affordance. Deliberately NOT a button: it has
 						    no click or key handler, and the step buttons beside it are the
 						    keyboard path, so a focusable control here would be a dead tab
@@ -533,7 +532,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						title={locked ? t("streamer.projectLocked") : undefined}
 						className={`min-w-0 flex-1 flex items-center gap-3 text-left ${locked ? "cursor-not-allowed" : ""}`}
 					>
-						<div className={`${hasActiveTasks ? "w-8 h-8" : "w-6 h-6"} rounded-lg bg-accent/15 flex items-center justify-center flex-shrink-0`}>
+						<div className={`${compact ? "hidden" : hasActiveTasks ? "w-8 h-8" : "w-6 h-6"} rounded-lg bg-accent/15 flex items-center justify-center flex-shrink-0`}>
 							<svg aria-hidden="true" focusable="false" className={`${hasActiveTasks ? "w-4 h-4" : "w-3 h-3"} text-accent`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
 							</svg>
@@ -552,12 +551,16 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 								{"\u{F033E}"}
 							</span>
 						)}
-						<span className={`truncate select-text ${privacy.maskClass(project)}`} title={locked || isBuiltinOps ? undefined : project.name}>{isBuiltinOps ? t("ops.boardName") : project.name}</span>
-									{!isBuiltinOps && (
+						{/* The row's one navigation is into the board, so the name carries
+						    link emphasis on row hover. Without it the only cue was the
+						    background lifting one step, which reads as "row", not "link". */}
+						<span className={`truncate select-text ${locked ? "" : "group-hover:text-accent group-hover:underline decoration-accent/50 underline-offset-2"} ${privacy.maskClass(project)}`} title={locked || isBuiltinOps ? undefined : project.name}>{isBuiltinOps ? t("ops.boardName") : project.name}</span>
+									{!isBuiltinOps && !compact && (
 										<ProjectSpaceChips
 											spaces={spacesFile.spaces}
 											projectId={project.id}
 											omitSpaceId={groupSpaceId ?? undefined}
+											sensitiveProjectIds={sensitiveProjectIds}
 										/>
 									)}
 								{project.kind === "virtual" && (
@@ -566,13 +569,13 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 										{isBuiltinOps ? t("ops.badgeSystem") : t("ops.badge")}
 									</span>
 								)}
-								{isBuiltinOps && (
+								{isBuiltinOps && !compact && (
 									<span className="hidden md:inline-flex text-fg-3 text-nano font-mono border border-edge rounded px-1 py-0.5 leading-none flex-shrink-0">⌘0</span>
 								)}
 							</div>
 							{/* Subtitle (path / virtual hint) is dead weight on a phone —
 							    name + badge already identify the board. Desktop only. */}
-							{project.kind === "virtual" ? (
+							{compact ? null : project.kind === "virtual" ? (
 								<div className="hidden md:block text-fg-3 text-xs mt-0.5 truncate">{t("ops.tileSubtitle")}</div>
 							) : (
 								<div className="hidden md:block text-fg-3 text-xs mt-0.5 truncate font-mono select-text streamer-private" title={project.path}>{project.path}</div>
@@ -580,7 +583,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						</div>
 					</button>
 					{/* Desktop: resting-visible inline icon cluster, hover-emphasised. */}
-					<div className="hidden md:flex">
+					<div className={compact ? "hidden" : "hidden md:flex"}>
 						<ProjectActionButtons
 							project={project}
 							navigate={navigate}
@@ -588,7 +591,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							onOpenSpaces={allSpaceGroups !== null ? openSpacesPicker : undefined}
 						/>
 					</div>
-					<span className="flex items-center gap-3">
+					<span className={`items-center gap-3 ${compact ? "hidden" : "flex"}`}>
 						{hasActiveTasks ? (
 							<span className="text-fg-3 text-xs tabular-nums whitespace-nowrap">{t.plural(narrow ? "activity.taskCountShort" : "activity.taskCount", tasks.length)}</span>
 						) : (
@@ -596,13 +599,13 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						)}
 						{/* Chevron is redundant on narrow — the name + count already
 						    navigate, so it only crowds the row end where the kebab sits. */}
-						<svg aria-hidden="true" focusable="false" className="hidden md:block w-4 h-4 text-fg-muted group-hover:text-fg-3 transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<svg aria-hidden="true" focusable="false" className="hidden md:block w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-[color,transform] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
 						</svg>
 					</span>
 					{/* Narrow: a single kebab folds every per-project action + reorder
 					    into a bottom sheet. Rendered last so it sits at the true row end. */}
-					{narrow && (
+					{narrow && !compact && (
 						<button
 							type="button"
 							onClick={(event) => {
@@ -619,7 +622,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 					)}
 				</div>
 
-				{hasActiveTasks && (
+				{hasActiveTasks && !compact && (
 					<div className="border-t border-edge">
 						{/* Attention + custom-column tasks — shown individually. On narrow
 						    each row stacks (title on its own line, meta below) so the title
@@ -763,24 +766,46 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							</button>
 						)}
 
-						{/* Background tasks — collapsed summary line */}
-						{summarySegments.length > 0 && (
-							<div className="flex items-center gap-2 px-3 md:px-5 py-2 border-b border-edge last:border-b-0">
-								<div className="flex-1 flex items-center gap-3">
-									{summarySegments.map(({ status, count }) => (
-										<span key={status} className="flex items-center gap-1.5 text-xs text-fg-3">
-											<span
-												aria-hidden="true"
-												className="w-2 h-2 rounded-full"
-												style={{ backgroundColor: statusColors[status] }}
-											/>
-											<span className="tabular-nums">{summaryLabel(status, count, project)}</span>
-										</span>
-									))}
-								</div>
-							</div>
-						)}
 					</div>
+				)}
+
+				{/* Board footer. Always present, including on a project with nothing
+				    active: this is the row's honest statement of what it is NOT
+				    showing, and the only place the word "board" appears on desktop.
+				    It replaces the old background-summary line, which carried the
+				    same counts but led nowhere. */}
+				{!compact && (
+				<button
+					type="button"
+					onClick={() => openProject(project.id)}
+					aria-disabled={locked || undefined}
+					className={`group/board w-full flex items-center gap-3 px-3 md:px-5 py-2.5 min-h-[44px] md:min-h-0 border-t border-edge text-left transition-colors ${locked ? "cursor-not-allowed" : "hover:bg-raised-hover"}`}
+					data-testid={`project-open-board-${project.id}`}
+				>
+					<span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-medium text-fg-3 group-hover/board:text-accent transition-colors">
+						<svg aria-hidden="true" focusable="false" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+							<path strokeLinecap="round" strokeLinejoin="round" d="M7 17L17 7m0 0H9m8 0v8" />
+						</svg>
+						{t("activity.openBoard")}
+					</span>
+					<span className={`flex-1 min-w-0 flex items-center justify-end gap-3 ${privacy.maskClass(project)}`}>
+						{summarySegments.map(({ status, count }) => (
+							<span key={status} className="flex items-center gap-1.5 text-xs text-fg-3 flex-shrink-0">
+								<span
+									aria-hidden="true"
+									className="w-2 h-2 rounded-full"
+									style={{ backgroundColor: statusColors[status] }}
+								/>
+								<span className="tabular-nums">{summaryLabel(status, count, project)}</span>
+							</span>
+						))}
+						{todoCount > 0 && (
+							<span className="text-xs text-fg-3 tabular-nums flex-shrink-0" data-testid={`project-todo-count-${project.id}`}>
+								{t.plural("activity.todoOnBoard", todoCount)}
+							</span>
+						)}
+					</span>
+				</button>
 				)}
 			</div>
 		);
@@ -805,7 +830,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
 					</svg>
 				</button>
-				<div className="flex items-start justify-between gap-4">
+				<div className="flex items-center justify-between gap-4">
 					<div>
 						<h2 className="flex items-center gap-1.5 text-fg-2 text-sm font-medium">
 							{t.plural("dashboard.projectCount", visibleProjects.length)}
@@ -816,13 +841,20 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						)}
 					</div>
 					<div className="flex items-center gap-2 flex-shrink-0">
+						{/* Fallback only — the rail owns `New space` and passes no handler
+						    while it is on screen. When it does render there is no rail at
+						    all (commonly a first run with zero spaces), so it stays a full
+						    secondary rather than a whisper: it is the only way in. */}
 						{onNewSpace && (
 							<button
 								type="button"
 								onClick={onNewSpace}
-								className="px-3 py-1.5 min-h-[44px] md:min-h-0 border border-edge rounded-xl text-fg-2 text-sm hover:text-fg hover:border-edge-active transition-colors"
+								className="flex items-center gap-1.5 flex-shrink-0 px-4 py-1.5 min-h-[44px] md:min-h-0 border border-edge rounded-xl text-fg-2 text-sm hover:text-fg hover:border-edge-active transition-[color,border-color,transform] active:scale-[0.96]"
 								data-testid="dashboard-new-space"
 							>
+								<svg aria-hidden="true" focusable="false" className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+									<path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+								</svg>
 								{t("spaces.newSpace")}
 							</button>
 						)}
@@ -840,7 +872,24 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 				{/* Search over projects AND their space names — the same rule as the
 				    ⌘K palette. Only meaningful once spaces group the list. */}
 				{allSpaceGroups !== null && (
-					<div className="relative">
+					<div className="flex items-center gap-2">
+					{/* The filter sits with the search field, not in the header beside
+					    `Add project`: both narrow what the list shows, and a filter is
+					    not an action (§10). Only rendered while the rail is away. */}
+					{spaceFilter && (
+						<button
+							type="button"
+							onClick={spaceFilter.onOpen}
+							className="flex items-center gap-1.5 flex-shrink-0 max-w-[45%] px-3 py-2 min-h-[44px] md:min-h-0 bg-raised border border-edge rounded-xl text-fg-2 text-sm hover:text-fg hover:border-edge-active transition-colors"
+							data-testid="dashboard-space-filter"
+						>
+							<span aria-hidden="true" className="text-fg-muted text-sm leading-none flex-shrink-0" style={{ fontFamily: "'JetBrainsMono Nerd Font Mono'" }}>
+								{"\u{F0233}"}
+							</span>
+							<span className={`truncate ${spaceFilter.masked ? MASK_CLASS : ""}`}>{spaceFilter.label}</span>
+						</button>
+					)}
+					<div className="relative flex-1 min-w-0">
 						<input
 							type="text"
 							value={projectQuery}
@@ -858,6 +907,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							{""}
 						</span>
 					</div>
+				</div>
 				)}
 				{spaceGroups === null ? (
 					visibleProjects.map((project, index) => renderProjectRow(project, index))
@@ -866,7 +916,6 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 						{visibleProjects.filter(isBuiltinOpsProject).map((p) => renderProjectRow(p, 0))}
 						<SpaceGroupedProjects
 							groups={spaceGroups}
-							spaceOrder={spaceGroups.filter((g) => g.space !== null).map((g) => g.space!.id)}
 							sensitiveProjectIds={sensitiveProjectIds}
 							needsYouCountOf={(projectId) =>
 								(tasksByProject.get(projectId) ?? []).filter((task) => NEEDS_ME_STATUSES.includes(task.status)).length
@@ -874,26 +923,18 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							workingCountOf={(projectId) =>
 								(tasksByProject.get(projectId) ?? []).filter((task) => BACKGROUND_STATUSES.includes(task.status)).length
 							}
-							onAddProjects={(space) => setAddProjectsSpace(space)}
-							onRenameSpace={handleRenameSpace}
-							onDeleteSpace={handleDeleteSpace}
+							onEditProjects={onEditSpaceProjects}
+							onRenameSpace={(space, name) => void renameSpace(space, name, t)}
+							onDeleteSpace={(space) => void deleteSpaceWithConfirm(space, t)}
+							onMoveSpace={(space, delta) => void moveSpace(space, delta, spaces, t)}
+							onToggleSensitive={(space, next) => void toggleSpaceSensitive(space, next, t)}
+							spaceOrder={spaces.map((s) => s.id)}
 							renderProject={(p, ctx, spaceId) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id), ctx, spaceId)}
 							renderBottomBlockProject={(p) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id))}
 						/>
 					</>
 				)}
 
-				{addProjectsSpace && (
-					<AddProjectsToSpaceModal
-						space={addProjectsSpace}
-						projects={visibleProjects}
-						onClose={() => setAddProjectsSpace(null)}
-						onCreateProject={onOpenAddProject ? (space) => {
-							setAddProjectsSpace(null);
-							onOpenAddProject([space.id]);
-						} : undefined}
-					/>
-				)}
 				{spacesPicker && (
 					<SpacePicker
 						spaces={spaces}
