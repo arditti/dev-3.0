@@ -264,6 +264,8 @@ const settings = {
 	"addProject.tabClone": "Clonar desde URL",
 	"addProject.tabInit": "Nuevo",
 	"addProject.browseBtn": "Explorar...",
+	"addProject.safetyBase": "Las tareas parten de la rama base del proyecto — main o master. No tienes que hacer checkout de nada; si tu repo está en otra rama, dev-3.0 lo pregunta al crear la tarea.",
+	"addProject.safetyBranch": "Cada tarea recibe su propia rama en su propio worktree dentro de ~/.dev3.0. Tu copia de trabajo no se toca.",
 	"addProject.browseHint": "Selecciona uno o más repositorios git existentes en tu computadora",
 	"addProject.initHint": "Elige una carpeta vacía (o crea una). dev-3.0 ejecutará git init, añadirá un marcador .dev3/README.md y hará el primer commit por ti.",
 	"addProject.initBtn": "Elegir carpeta...",

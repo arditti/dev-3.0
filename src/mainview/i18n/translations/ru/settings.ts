@@ -266,6 +266,8 @@ const settings = {
 	"addProject.tabClone": "Клонировать по URL",
 	"addProject.tabInit": "Новый",
 	"addProject.browseBtn": "Обзор...",
+	"addProject.safetyBase": "Задачи стартуют от базовой ветки проекта — main или master. Вычекивать ничего не нужно; если репозиторий на другой ветке, dev-3.0 спросит при создании задачи.",
+	"addProject.safetyBranch": "У каждой задачи своя ветка в отдельном worktree внутри ~/.dev3.0. Рабочая копия не меняется.",
 	"addProject.browseHint": "Выберите один или несколько git-репозиториев на вашем компьютере",
 	"addProject.initHint": "Выберите пустую папку (или создайте новую). dev-3.0 выполнит git init, положит заглушку .dev3/README.md и сделает первый коммит за вас.",
 	"addProject.initBtn": "Выбрать папку...",

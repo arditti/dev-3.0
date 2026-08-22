@@ -117,6 +117,8 @@ export default {
 			boxShadow: {
 				// Theme-aware card lift: neutral black in dark, soft blue-grey in light
 				"card-hover": "var(--shadow-card-hover)",
+				// Floating layer: tooltips, hover cards, help cards. See --shadow-popover.
+				popover: "var(--shadow-popover)",
 			},
 			keyframes: {
 				"slide-in-right": {
@@ -132,11 +134,18 @@ export default {
 					"0%": { transform: "translateY(0.5rem)", opacity: "0" },
 					"100%": { transform: "translateY(0)", opacity: "1" },
 				},
+				// The undiscovered help button. Long cycle, mostly at rest: it has to
+				// be findable without competing with the work on the screen.
+				"help-attractor": {
+					"0%, 70%, 100%": { boxShadow: "0 0 0 0 rgb(var(--accent) / 0.35)" },
+					"85%": { boxShadow: "0 0 0 0.35rem rgb(var(--accent) / 0)" },
+				},
 			},
 			animation: {
 				"slide-in-right": "slide-in-right 0.3s ease-out",
 				"rail-flow": "rail-flow 2s ease-in-out infinite",
 				"slide-up": "slide-up 0.18s ease-out",
+				"help-attractor": "help-attractor 3.2s ease-out infinite",
 			},
 		},
 	},

@@ -4,6 +4,14 @@ const dashboard = {
 	"dashboard.noProjects": "No projects yet",
 	"dashboard.noProjectsHint": "Add a git repository to get started",
 	"dashboard.addProject": "Add project",
+	// First run: shown while no git project exists yet (the builtin Operations
+	// board does not count as one).
+	"dashboard.firstRun.title": "Add a repository and dev-3.0 starts working",
+	"dashboard.firstRun.body":
+		"dev-3.0 runs AI coding agents on your own git repositories. Every task you create gets its own branch, its own folder and its own terminal, so several agents can work at the same time without touching each other's files.",
+	"dashboard.firstRun.sandboxAction": "Try a sandbox repo",
+	"dashboard.firstRun.sandboxHint": "dev-3.0 makes a small throwaway repository of its own — none of your work involved.",
+	"dashboard.firstRun.sandboxFailed": "Unable to create the sandbox repository. ({error})",
 	"dashboard.openInFinder": "Open in Finder",
 	"dashboard.remove": "Remove",
 	"dashboard.confirmRemoveTitle": "Remove this project?",
@@ -93,6 +101,10 @@ const dashboard = {
 	"header.changelogLabel": "Change Log",
 	"header.changelogTooltip": "View changelog",
 	"header.helpTooltip": "Explain this screen",
+	"header.helpCallout.title": "Start here",
+	"header.helpCallout.body":
+		"This works on every screen: it outlines each part of what you are looking at and explains what it does. dev-3.0 has no manual — this is it.",
+	"header.helpCallout.dismiss": "Dismiss",
 	"header.githubTooltip": "Website",
 	"header.githubLabel": "Website",
 	"header.statsTooltip": "Productivity stats",

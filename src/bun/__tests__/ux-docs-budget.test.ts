@@ -27,14 +27,39 @@ const UX_DIR = fileURLToPath(new URL("../../../docs/ux", import.meta.url));
  * `decisions/` are pointers. The other 84 keep their full text because it exists nowhere
  * else — compact those by writing the record first, never by deleting the why.
  */
+/**
+ * `PRODUCT_UX_BIBLE.md` went 122 → 123 for the §10 blast-radius row (a dialog that touches the
+ * user's own repo states what it writes and what it pushes). Compaction ran first and only bought
+ * ~200 bytes: §5.4a's walk-through evidence, which its record already held. The rest of the file's
+ * fat is §10 rows whose why exists nowhere else — deleting those is the failure the note below
+ * warns about, so the file grew by the size of one new rule instead. `TOTAL_BUDGET_KB` is
+ * deliberately untouched: the tree cap is what actually bounds the per-feature token cost, and the
+ * log entry for this rule is a one-line pointer so it still fits.
+ */
 const BUDGET_KB: Record<string, number> = {
-	"PRODUCT_UX_BIBLE.md": 122,
+	"PRODUCT_UX_BIBLE.md": 123,
 	"ux-architecture.yaml": 110,
 	"UX_DECISIONS.md": 80,
 };
 
-/** The whole tree, so a new file cannot slip past a per-file budget. */
-const TOTAL_BUDGET_KB = 306;
+/**
+ * The whole tree, so a new file cannot slip past a per-file budget.
+ *
+ * Re-ratcheted 306 → 309 when first-run doctrine landed (bible §5.4a), and the reason is the
+ * zero-slack failure the comment above predicts: `main` had reached 305.1 KB of 306, so the tree
+ * cap was firing on any addition at all while every per-file cap still had room. Compaction ran
+ * first and hit the floor — `UX_DECISIONS.md` now folds 26 record-backed entries instead of 24
+ * (the 2026-08-21 prompt-preset entry was still carrying prose its record already held), and
+ * §5.4a is five rules with its why in `decisions/2026/08/22/first-run-advertises-help-mode.md`.
+ * The three per-file numbers are deliberately untouched.
+ *
+ * 309 → 310 for the §5.4a rule that a first-run-only action lives in the first-run strip rather
+ * than beside the screen's primary action. Compaction was attempted first and found nothing: every
+ * record-backed entry in `UX_DECISIONS.md` is already a one-line pointer (the longest remaining
+ * entries carry a why that exists nowhere else, which the note above forbids deleting), so the
+ * tree was genuinely at 309.3 of 309 with no fat left. The new log entry is itself a pointer.
+ */
+const TOTAL_BUDGET_KB = 310;
 
 const entries = readdirSync(UX_DIR, { withFileTypes: true });
 const kb = (name: string) => statSync(`${UX_DIR}/${name}`).size / 1024;

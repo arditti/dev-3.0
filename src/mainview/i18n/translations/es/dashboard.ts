@@ -4,6 +4,12 @@ const dashboard = {
 	"dashboard.noProjects": "Aún no hay proyectos",
 	"dashboard.noProjectsHint": "Agrega un repositorio git para comenzar",
 	"dashboard.addProject": "Agregar proyecto",
+	"dashboard.firstRun.title": "Agrega un repositorio y dev-3.0 empieza a trabajar",
+	"dashboard.firstRun.body":
+		"dev-3.0 ejecuta agentes de IA en tus propios repositorios git. Cada tarea que creas recibe su propia rama, su propia carpeta y su propia terminal, así que varios agentes trabajan a la vez sin tocar los archivos de los demás.",
+	"dashboard.firstRun.sandboxAction": "Probar en un repo de pruebas",
+	"dashboard.firstRun.sandboxHint": "dev-3.0 crea su propio repositorio desechable — tu trabajo no se toca.",
+	"dashboard.firstRun.sandboxFailed": "No se pudo crear el repositorio de pruebas. ({error})",
 	"dashboard.openInFinder": "Abrir en Finder",
 	"dashboard.remove": "Eliminar",
 	"dashboard.confirmRemoveTitle": "¿Eliminar este proyecto?",
@@ -93,6 +99,10 @@ const dashboard = {
 	"header.changelogLabel": "Change Log",
 	"header.changelogTooltip": "Ver registro de cambios",
 	"header.helpTooltip": "Explicar esta pantalla",
+	"header.helpCallout.title": "Empieza aquí",
+	"header.helpCallout.body":
+		"Funciona en todas las pantallas: delimita cada parte de lo que estás viendo y explica qué hace. dev-3.0 no tiene manual — esto lo es.",
+	"header.helpCallout.dismiss": "Cerrar",
 	"header.githubTooltip": "Sitio web",
 	"header.githubLabel": "Sitio web",
 	"header.statsTooltip": "Estadísticas de productividad",

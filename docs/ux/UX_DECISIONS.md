@@ -11,9 +11,19 @@ record wins and this file stays an index. Write the entry in full only while no 
 exists; that is the case for 84 of the entries below, and their reasoning lives nowhere
 else, so do not compact them by deleting it.
 
-## 2026-08-21 — Prompt presets share one picker under the description
+## 2026-08-22 — A first-run-only action lives in the first-run strip
+- **Rule:** the sandbox button sits inside the dashboard's first-run strip, never beside `Add project` — bible §5.4a. **Why:** `decisions/2026/08/22/the-sandbox-is-a-real-repo-dev3-owns.md`.
 
-Task-type presets that inject a built-in preamble (Coordinator, PR review) live in one `Task type` radiogroup directly under the description, never as separate toggles scattered through the create-task modal. Rejected keeping PR review in the branch block: it is unreachable on virtual projects, which is exactly where a coordinator belongs. Observed — see `decisions/2026/08/21/coordinator-task-type-preset.md`, `src/mainview/components/CreateTaskModal.tsx`.
+## 2026-08-22 — Blast-radius copy is not an info icon; the nav budget is 8, spent
+- **Rule:** a dialog acting on the user's own files or remotes states what dev3 writes, where, and what it pushes — bible §10, §4/§9. **Why:** `decisions/2026/08/22/blast-radius-copy-is-not-an-info-icon.md`.
+
+## 2026-08-22 — First run advertises help mode; the tour ban is lifted
+- **Rule:** the header `?` rests highlighted on `dashboard`/`project`/`task`/`project-settings` until help mode is opened once; the first-run panel takes the stats card's slot rather than adding one; an empty state may not name a control its column lacks; no tips at zero tasks. Multi-step tours stop being forbidden as a class. Bible §5.4a, §5.4, §10.
+- **Why:** `decisions/2026/08/22/first-run-advertises-help-mode.md`.
+
+## 2026-08-21 — Prompt presets share one picker under the description
+- **Rule:** preamble-injecting task types (Coordinator, PR review) live in one `Task type` radiogroup under the description, never as scattered toggles — `CreateTaskModal.tsx`.
+- **Why:** `decisions/2026/08/21/coordinator-task-type-preset.md`.
 
 ## 2026-08-21 — The manifest owns placement; the `better-*` skills own craft
 - **Rule:** `ux-principal` is mandatory only for a change that adds a destination, surface or action (or pushes a budget); craft on an existing control goes to the owning `better-*` skill. §9a keeps only dev3's deltas — bible §1/§9a.

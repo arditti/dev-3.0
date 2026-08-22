@@ -263,6 +263,8 @@ const settings = {
 	"addProject.tabLocal": "Local Folder",
 	"addProject.tabClone": "Clone from URL",
 	"addProject.tabInit": "New",
+	"addProject.safetyBase": "Tasks start from this project's base branch — main or master. Nothing to check out yourself; if your repo sits on another branch, the New Task dialog asks.",
+	"addProject.safetyBranch": "Each task gets its own branch in its own worktree under ~/.dev3.0. Your working copy is not touched.",
 	"addProject.browseBtn": "Browse...",
 	"addProject.browseHint": "Select one or more existing git repositories on your machine",
 	"addProject.initHint": "Pick an empty folder (or create one). dev-3.0 will run git init, add a .dev3/README.md placeholder, and make the first commit for you.",

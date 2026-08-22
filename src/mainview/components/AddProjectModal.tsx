@@ -244,13 +244,14 @@ function AddProjectModal({ dispatch, onClose, initialSpaceIds }: AddProjectModal
 				aria-modal="true"
 				aria-labelledby="add-project-dialog-title"
 				tabIndex={-1}
-				className="bg-overlay border border-edge rounded-2xl shadow-2xl w-[32.5rem] p-6 space-y-5 outline-none"
+				// The Clone tab is ~690px tall now; a short window has no scroll of its own here.
+				className="bg-overlay border border-edge rounded-2xl shadow-2xl w-[32.5rem] max-h-[90vh] overflow-y-auto p-6 space-y-5 outline-none"
 			>
 				<div className="flex items-center gap-1.5">
 					<h2 id="add-project-dialog-title" className="text-fg text-lg font-semibold">
 						{t("addProject.title")}
 					</h2>
-					<HelpSpot topicId="modal.add-project" />
+					<HelpSpot topicId="modal.add-project" className="w-5 h-5 text-base" />
 				</div>
 
 				{/* Kind toggle: Git repository | Operations */}
@@ -292,6 +293,14 @@ function AddProjectModal({ dispatch, onClose, initialSpaceIds }: AddProjectModal
 					</div>
 				) : (
 				<>
+				{/* Blast-radius copy (bible §10): standing, not dismissible — over half the
+				    userbase point this at a work monorepo and ask what it writes first.
+				    Two lines, deliberately. Longer copy is its own way of scaring people off. */}
+				<div className="bg-raised border border-edge rounded-xl px-3 py-2.5 space-y-1.5 text-fg-3 text-xs leading-5">
+					<p>{t("addProject.safetyBase")}</p>
+					<p>{t("addProject.safetyBranch")}</p>
+				</div>
+
 				{/* Tabs */}
 				<div className="flex gap-1 p-1 bg-raised rounded-xl">
 					<button
