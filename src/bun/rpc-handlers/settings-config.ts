@@ -227,9 +227,26 @@ async function checkForUpdate(): Promise<{ updateAvailable: boolean; version: st
 	return result;
 }
 
+/** True in the `dev3 remote` server, where the bundle-swap updater does not exist. */
+function isHeadless(): boolean {
+	return process.env.DEV3_HEADLESS === "1";
+}
+
 async function downloadUpdate(): Promise<{ ok: boolean; error?: string }> {
 	log.info("-> downloadUpdate");
 	const settings = await loadSettings();
+	// Headless has no bundle to download: the update is a brew upgrade or a CLI
+	// tarball, and "download" means pre-fetching it while the server keeps serving.
+	if (isHeadless()) {
+		const { buildPlan, stageUpdate } = await import("../self-update");
+		const { plan } = await buildPlan(settings.updateChannel);
+		if (plan.kind === "refused") return { ok: false, error: plan.reason };
+		if (plan.kind === "up-to-date") return { ok: true };
+		getPushMessage()?.("updateDownloadProgress", { status: "downloading", progress: 0 });
+		const staged = await stageUpdate(plan);
+		getPushMessage()?.("updateDownloadProgress", { status: staged.ok ? "complete" : "error", progress: 100 });
+		return staged.ok ? { ok: true } : { ok: false, error: staged.error };
+	}
 	const result = await updater.downloadUpdateForChannel(
 		settings.updateChannel,
 		(status, progress) => {
@@ -240,9 +257,46 @@ async function downloadUpdate(): Promise<{ ok: boolean; error?: string }> {
 	return result;
 }
 
-async function applyUpdate(): Promise<void> {
+async function applyUpdate(): Promise<{ restarting: boolean; message?: string }> {
 	log.info("-> applyUpdate");
+	if (isHeadless()) {
+		const settings = await loadSettings();
+		const { runSelfUpdate } = await import("../self-update");
+		const outcome = await runSelfUpdate({ channel: settings.updateChannel, restart: true });
+		// Throwing is how the renderer's Restart button reports a failure (it toasts
+		// the message), and a refusal IS a failure from the button's point of view.
+		if (!outcome.ok) throw new Error(outcome.message);
+		// A SUCCESS THAT IS NOT A RESTART STILL HAS TO BE REPORTED. An interactive
+		// `dev3 remote --no-detach` has no supervisor, so the update is installed and the
+		// process stays alive — resolving silently left the button spinning "Restarting…"
+		// with the sentence explaining the manual restart going nowhere.
+		return { restarting: outcome.restarting, message: outcome.message };
+	}
 	await updater.applyUpdate();
+	return { restarting: true };
+}
+
+/**
+ * What the update popover needs to warn before restarting: whether this is a
+ * headless box at all, and how many tasks are mid-flight right now.
+ *
+ * It is a WARNING, not a gate. A restart does not kill an agent — tmux sessions are
+ * detached and lifecycles are rehydrated at boot — so the button stays enabled; the
+ * count just lets someone on a phone decide to wait a minute.
+ */
+async function getUpdateRestartContext(): Promise<{ headless: boolean; tasksInProgress: number }> {
+	const headless = isHeadless();
+	let tasksInProgress = 0;
+	try {
+		const projects = [...await data.loadProjects(), ...await data.loadVirtualProjects()];
+		for (const project of projects) {
+			const tasks = await data.loadTasks(project);
+			tasksInProgress += tasks.filter((task) => task.status === "in-progress").length;
+		}
+	} catch (err) {
+		log.warn("getUpdateRestartContext: could not count in-progress tasks", { error: String(err) });
+	}
+	return { headless, tasksInProgress };
 }
 
 async function saveLastRoute({ route }: { route: string }): Promise<void> {
@@ -504,6 +558,7 @@ export const settingsConfigHandlers = {
 	checkForUpdate,
 	downloadUpdate,
 	applyUpdate,
+	getUpdateRestartContext,
 	saveLastRoute,
 	getLastRoute,
 	getAppVersion,

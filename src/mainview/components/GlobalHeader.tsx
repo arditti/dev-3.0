@@ -92,6 +92,7 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 	const overflowMenuRef = useRef<HTMLDivElement>(null);
 	const [showUpdateDropdown, setShowUpdateDropdown] = useState(false);
 	const [restarting, setRestarting] = useState(false);
+	const [restartContext, setRestartContext] = useState<{ headless: boolean; tasksInProgress: number } | null>(null);
 	const [showToast, setShowToast] = useState(false);
 	const [countdown, setCountdown] = useState(0);
 	const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -139,13 +140,35 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 		}
 	}, [updateVersion, updateAnnouncement]);
 
-	// Auto-restart when countdown reaches 0
+	// Auto-restart when countdown reaches 0.
+	//
+	// NEVER ON A HEADLESS BOX. On the desktop, whoever ignored the toast for five
+	// minutes is sitting at the machine and a relaunch costs them a window. On a
+	// `dev3 remote` server the same countdown would restart the box from a tab left
+	// open on a phone — which is the exact moment the quiet-window policy says not to,
+	// because a connected browser means someone is looking at it. There, updating is
+	// either a deliberate tap or the server's own decision once the box goes quiet.
+	// `=== false`, NOT `!== true`: the "we do not know yet" state must not auto-restart.
+	// `restartContext` starts null and the fetch below sets it back to null on any
+	// failure, so `!== true` treated an RPC error — or the race before it resolves —
+	// as "this is a desktop", which is exactly how a phone tab could restart a remote
+	// server unattended. Not knowing means not restarting; the button still works.
 	useEffect(() => {
-		if (countdown === 0 && showToast) {
+		if (countdown === 0 && showToast && restartContext?.headless === false) {
 			if (countdownRef.current) clearInterval(countdownRef.current);
 			handleRestart();
 		}
-	}, [countdown, showToast]);
+	}, [countdown, showToast, restartContext]);
+
+	// What a restart would interrupt, and whether it keeps the remote link. Fetched
+	// once per offered update rather than polled: it feeds a warning on a deliberate
+	// action, not a live indicator.
+	useEffect(() => {
+		if (!updateVersion) return;
+		api.request.getUpdateRestartContext()
+			.then(setRestartContext)
+			.catch(() => setRestartContext(null));
+	}, [updateVersion]);
 
 	// Close whichever header dropdown is open on Escape.
 	useEscapeKey(
@@ -254,7 +277,14 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 			// here so an update triggered right after a navigation still restores
 			// to the correct surface.
 			await api.request.saveLastRoute({ route: JSON.stringify(route) });
-			await api.request.applyUpdate();
+			const outcome = await api.request.applyUpdate();
+			// Installed, but this process is not being replaced (a foreground headless
+			// server has nothing to relaunch it). Stop pretending a restart is coming.
+			if (outcome && !outcome.restarting) {
+				setRestarting(false);
+				dismissToast();
+				toast.info(outcome.message ?? t("update.installedNoRestart"), { source: "update" });
+			}
 		} catch (err) {
 			setRestarting(false);
 			toast.error(t("update.applyFailed", { error: String(err) }), { source: "update" });
@@ -595,6 +625,8 @@ function GlobalHeader({ route, projects, tasks, navigate, goBack, goForward, can
 									version={updateVersion}
 									changelog={updateChangelog}
 									restarting={restarting}
+									tasksInProgress={restartContext?.tasksInProgress ?? 0}
+									keepsRemoteLink={restartContext?.headless ?? false}
 									onRestart={handleRestart}
 									onSeeAllChanges={() => {
 										setShowUpdateDropdown(false);

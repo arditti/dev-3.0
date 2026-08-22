@@ -16,6 +16,9 @@ vi.mock("../../rpc", () => ({
 			getSystemMemory: vi.fn().mockResolvedValue(null),
 			getTasks: vi.fn(),
 			applyUpdate: vi.fn(),
+			// The update plaque asks what a restart would interrupt (and whether it keeps
+			// the remote link) as soon as an update is offered.
+			getUpdateRestartContext: vi.fn().mockResolvedValue({ headless: false, tasksInProgress: 0 }),
 			saveLastRoute: vi.fn(),
 			renameTask: vi.fn(),
 			// `behindOrigin` > 0 keeps the pull button rendered — it hides when there is nothing to pull.
@@ -635,6 +638,9 @@ describe("GlobalHeader — update countdown", () => {
 		mockedApi.request.getTasks.mockResolvedValue([]);
 		mockedApi.request.applyUpdate.mockResolvedValue(undefined as any);
 		mockedApi.request.saveLastRoute.mockResolvedValue(undefined as any);
+		// Auto-restart now requires a KNOWN non-headless context, so each test states
+		// it — `clearAllMocks` clears calls but not an implementation a sibling set.
+		mockedApi.request.getUpdateRestartContext.mockResolvedValue({ headless: false, tasksInProgress: 0 });
 	});
 
 	afterEach(() => {
@@ -730,6 +736,30 @@ describe("GlobalHeader — update countdown", () => {
 		expect(mockedApi.request.applyUpdate).toHaveBeenCalled();
 	});
 
+	// The auto-restart gate must FAIL CLOSED. It reads the restart context over RPC;
+	// while that is unknown — pending, or failed — the box may be a headless
+	// `dev3 remote` server, where an unattended restart from a phone tab is exactly
+	// what the quiet-window policy refuses. Not knowing means not restarting.
+	it("does NOT auto-restart on a headless box", async () => {
+		mockedApi.request.getUpdateRestartContext.mockResolvedValue({ headless: true, tasksInProgress: 0 });
+		renderHeader({ screen: "dashboard" }, [project1], vi.fn(), [], { updateVersion: "1.2.3" });
+
+		act(() => { vi.advanceTimersByTime(300_000); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+		expect(mockedApi.request.applyUpdate).not.toHaveBeenCalled();
+	});
+
+	it("does NOT auto-restart when the restart context could not be read", async () => {
+		mockedApi.request.getUpdateRestartContext.mockRejectedValue(new Error("no answer"));
+		renderHeader({ screen: "dashboard" }, [project1], vi.fn(), [], { updateVersion: "1.2.3" });
+
+		act(() => { vi.advanceTimersByTime(300_000); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+		expect(mockedApi.request.applyUpdate).not.toHaveBeenCalled();
+	});
+
 	it("shows an error toast and re-enables restart when applyUpdate fails (issue #813)", async () => {
 		mockedApi.request.applyUpdate.mockRejectedValue(new Error("Update not ready to apply"));
 		renderHeader(
@@ -753,7 +783,28 @@ describe("GlobalHeader — update countdown", () => {
 		expect(screen.queryByText("Restarting...")).not.toBeInTheDocument();
 	});
 
-	it("saves current route via RPC before applying update", () => {
+	// An interactive `dev3 remote --no-detach` has no supervisor, so the server
+	// installs the update and stays alive. The handler resolved without a value, so
+	// the button spun "Restarting..." forever and the sentence explaining the manual
+	// restart went nowhere.
+	it("stops spinning and says so when the update installed but nothing restarts", async () => {
+		mockedApi.request.applyUpdate.mockResolvedValue({
+			restarting: false,
+			message: "Installed 1.46.0. This server runs in the foreground, so restart it yourself.",
+		} as never);
+		renderHeader({ screen: "dashboard" }, [project1], vi.fn(), [], { updateVersion: "1.2.3" });
+
+		act(() => { fireEvent.click(screen.getByText(/Restart to Update \(\d+s\)/)); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+		expect(toast.info).toHaveBeenCalledWith(
+			expect.stringContaining("restart it yourself"),
+			{ source: "update" },
+		);
+		expect(screen.queryByText("Restarting...")).not.toBeInTheDocument();
+	});
+
+	it("saves current route via RPC before applying update", async () => {
 		renderHeader(
 			{ screen: "project", projectId: "p1" },
 			[project1],
@@ -763,6 +814,9 @@ describe("GlobalHeader — update countdown", () => {
 		);
 
 		act(() => { vi.advanceTimersByTime(300_000); });
+		// The gate waits for the restart context, so the auto-restart is one microtask
+		// behind the countdown now.
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
 		expect(mockedApi.request.saveLastRoute).toHaveBeenCalledWith({
 			route: JSON.stringify({ screen: "project", projectId: "p1" }),
