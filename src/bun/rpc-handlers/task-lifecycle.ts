@@ -1,4 +1,4 @@
-import type { LaunchVariant, NativeTerminalAvailability, Project, Task, TaskPriority, TaskStatus, TaskTerminalBackendInfo } from "../../shared/types";
+import type { LaunchVariant, NativeTerminalAvailability, Project, Task, TaskPriority, TaskStatus, TaskTerminalBackendInfo, TaskType } from "../../shared/types";
 import type { TerminalBackendIdentity } from "../../shared/terminal-backend-identity";
 import { ACTIVE_STATUSES, DRAFT_TASK_ACTIVATION_ERROR, titleFromDescription } from "../../shared/types";
 import * as data from "../data";
@@ -105,7 +105,7 @@ async function getAllProjectTasks(): Promise<{ projectId: string; tasks: Task[];
 	return results;
 }
 
-async function createTask(params: { projectId: string; description: string; status?: TaskStatus; existingBranch?: string; scratch?: boolean; draft?: boolean; opsWorkDir?: string; priority?: TaskPriority }): Promise<Task> {
+async function createTask(params: { projectId: string; description: string; title?: string; status?: TaskStatus; existingBranch?: string; scratch?: boolean; draft?: boolean; opsWorkDir?: string; priority?: TaskPriority; taskType?: TaskType }): Promise<Task> {
 	log.info("→ createTask", {
 		projectId: params.projectId,
 		requestedStatus: params.status ?? "todo",
@@ -115,6 +115,7 @@ async function createTask(params: { projectId: string; description: string; stat
 		hasExistingBranch: Boolean(params.existingBranch),
 		hasOpsWorkDir: Boolean(params.opsWorkDir),
 		priority: params.priority,
+		taskType: params.taskType,
 	});
 	const project = await data.getProject(params.projectId);
 	const isScratch = params.scratch === true;
@@ -146,8 +147,13 @@ async function createTask(params: { projectId: string; description: string; stat
 		...(isScratch ? { scratch: true } : {}),
 		...(isDraft ? { draft: true } : {}),
 		...(isDraft && !params.description.trim() ? { title: draftPlaceholderTitle() } : {}),
+		// A preset preamble leads the description, so the caller supplies the title
+		// derived from the user's own text. Never for a scratch task, whose
+		// description is a placeholder.
+		...(!isScratch && params.title?.trim() ? { title: params.title.trim() } : {}),
 		...(params.opsWorkDir ? { opsWorkDir: params.opsWorkDir } : {}),
 		...(params.priority ? { priority: params.priority } : {}),
+		...(params.taskType ? { taskType: params.taskType } : {}),
 	};
 	const initialStatus = isActive(status) ? "todo" : status;
 	const createdTask = await data.addTask(project, description, initialStatus, Object.keys(extras).length ? extras : undefined);

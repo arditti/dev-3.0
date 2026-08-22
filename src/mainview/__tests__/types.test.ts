@@ -22,6 +22,10 @@ import {
 	orderSpaces,
 	spacesOfProject,
 	isSpaceSensitive,
+	normalizeTaskType,
+	taskCompletesManually,
+	withPresetPrompt,
+	withoutPresetPrompt,
 } from "../../shared/types";
 import type { Label, Project, Space, Task, TaskStatus, TaskTimeInput } from "../../shared/types";
 
@@ -694,6 +698,101 @@ describe("taskSortRank / compareTaskSortRank", () => {
 
 	it("still bands live tasks strictly by priority", () => {
 		expect(compareTaskSortRank(t("P1"), t("P2"))).toBeLessThan(0);
+	});
+
+	// The lift Arseny asked for: the task you talk to in order to reach the others
+	// must never be scrolled to, even past a fire.
+	it("lifts a live coordinator above a live P0", () => {
+		const coordinator = { priority: "P3" as const, taskType: "coordinator" as const };
+		expect(compareTaskSortRank(coordinator, t("P0"))).toBeLessThan(0);
+	});
+
+	it("keeps several coordinators ordered among themselves by their own priority", () => {
+		const co = (priority: Task["priority"]) => ({ priority, taskType: "coordinator" as const });
+		expect(compareTaskSortRank(co("P1"), co("P2"))).toBeLessThan(0);
+		expect(compareTaskSortRank(co("P4"), co("P0"))).toBeGreaterThan(0);
+	});
+
+	// A lift would advertise an agent that is not there.
+	it("drops the lift while the coordinator is parked or its session died", () => {
+		const hibernated = { priority: "P3" as const, taskType: "coordinator" as const, hibernated: true };
+		expect(compareTaskSortRank(hibernated, t("P4"))).toBeGreaterThan(0);
+		const disconnected = {
+			priority: "P3" as const,
+			taskType: "coordinator" as const,
+			status: "in-progress" as const,
+			worktreePath: "/wt",
+			runtimeState: { runtime: "idle" as const, updatedAt: 1 },
+		};
+		expect(compareTaskSortRank(disconnected, t("P4"))).toBeGreaterThan(0);
+	});
+});
+
+describe("task type", () => {
+	it("recognises only known types, case-insensitively", () => {
+		expect(normalizeTaskType("coordinator")).toBe("coordinator");
+		expect(normalizeTaskType("  Coordinator ")).toBe("coordinator");
+		expect(normalizeTaskType("pr-review")).toBe("pr-review");
+		expect(normalizeTaskType("standard")).toBeNull();
+		expect(normalizeTaskType("review")).toBeNull();
+	});
+
+	// The two stored types are deliberately not equally loud.
+	it("gives a PR review none of the coordinator's powers", () => {
+		expect(taskCompletesManually({ taskType: "pr-review" })).toBe(false);
+		expect(compareTaskSortRank({ priority: "P3", taskType: "pr-review" }, { priority: "P0" }))
+			.toBeGreaterThan(0);
+	});
+
+	it("says a coordinator completes by hand even with the flag unset", () => {
+		expect(taskCompletesManually({ taskType: "coordinator" })).toBe(true);
+		expect(taskCompletesManually({ taskType: "coordinator", manualCompletion: false })).toBe(true);
+	});
+
+	it("leaves an ordinary task's completion policy to its own flag", () => {
+		expect(taskCompletesManually({})).toBe(false);
+		expect(taskCompletesManually({ manualCompletion: true })).toBe(true);
+	});
+});
+
+describe("preset prompt preambles", () => {
+	const prompt = "You are the COORDINATOR.";
+
+	it("round-trips a description carrying the user's own text", () => {
+		const built = withPresetPrompt("do the thing", prompt);
+		expect(built.startsWith(prompt)).toBe(true);
+		expect(withoutPresetPrompt(built, prompt)).toBe("do the thing");
+	});
+
+	it("does not mistake the user's own divider for the boundary", () => {
+		const built = withPresetPrompt("first\n\n---\n\nsecond", prompt);
+		expect(withoutPresetPrompt(built, prompt)).toBe("first\n\n---\n\nsecond");
+	});
+
+	it("leaves a description that never carried the preamble untouched", () => {
+		expect(withoutPresetPrompt("just my text", prompt)).toBe("just my text");
+	});
+
+	// The strip runs over text a human owns, so every one of these guards a
+	// character of THEIR words, not the shape of our own output.
+	it("returns everything after the preamble when the user deleted the divider", () => {
+		expect(withoutPresetPrompt(`${prompt}\n\nmy words survive`, prompt)).toBe("\n\nmy words survive");
+	});
+
+	it("removes nothing at all when the preamble itself was hand-edited", () => {
+		const edited = "You are the BOSS.\n\n---\n\nmy words";
+		expect(withoutPresetPrompt(edited, prompt)).toBe(edited);
+	});
+
+	it("returns an empty string only when nothing followed the preamble", () => {
+		expect(withoutPresetPrompt(prompt, prompt)).toBe("");
+	});
+
+	// Guards the repeated-conversion path in `dev3 task update --type`.
+	it("stacks nothing when strip-then-build runs twice", () => {
+		const once = withPresetPrompt(withoutPresetPrompt("mine", prompt), prompt);
+		const twice = withPresetPrompt(withoutPresetPrompt(once, prompt), prompt);
+		expect(twice).toBe(once);
 	});
 });
 

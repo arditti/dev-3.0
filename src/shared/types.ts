@@ -256,6 +256,44 @@ export function comparePriority(
 	return priorityRank(a) - priorityRank(b);
 }
 
+// ---- Task type ----
+
+/**
+ * Every task type dev3 stores. `coordinator` runs the other tasks; `pr-review`
+ * looks at someone's changes. They are not equally loud on purpose: a coordinator
+ * is marked with a border and lifted above every priority, while a PR review is
+ * only named on the card — it is an ordinary task with a job, not a task that
+ * outranks the board.
+ */
+export const TASK_TYPES = ["coordinator", "pr-review"] as const;
+
+export type TaskType = (typeof TASK_TYPES)[number];
+
+/** Narrows free-form input (CLI, older data file) to a known task type. */
+export function normalizeTaskType(input: string): TaskType | null {
+	const value = input.trim().toLowerCase();
+	return (TASK_TYPES as readonly string[]).includes(value) ? (value as TaskType) : null;
+}
+
+export function isCoordinatorTask(task: { taskType?: TaskType | null }): boolean {
+	return task.taskType === "coordinator";
+}
+
+/**
+ * Does the human own this task's completion? True for the explicit "I decide"
+ * flag and unconditionally for a coordinator, whose whole job outlives any
+ * single branch it happens to have merged.
+ *
+ * Derived rather than stored, so no writer — CLI, agent hook, or a future UI
+ * toggle — can leave a coordinator auto-completing. Every merge-detection path
+ * must ask this, never `task.manualCompletion` directly.
+ */
+export function taskCompletesManually(
+	task: { manualCompletion?: boolean; taskType?: TaskType | null },
+): boolean {
+	return task.manualCompletion === true || isCoordinatorTask(task);
+}
+
 /**
  * Rank offset added to a hibernated task so it sinks below every live P4 while
  * hibernated tasks stay internally ordered by their own priority. Any value
@@ -272,6 +310,18 @@ export const HIBERNATED_SORT_OFFSET = 10;
 export const DISCONNECTED_SORT_OFFSET = 5;
 
 /**
+ * Rank offset lifting a live coordinator above every live priority band: it is
+ * the task the user talks to in order to reach all the others, so it must never
+ * be scrolled to. Negative and wider than the P0–P4 spread, so the coordinator
+ * band (−10…−6) cannot collide with the live band (0…4).
+ *
+ * Deliberately applied ONLY while the coordinator is live — a hibernated or
+ * disconnected coordinator sinks like any other task, because a lift would
+ * advertise an agent that is not there.
+ */
+export const COORDINATOR_SORT_OFFSET = -10;
+
+/**
  * The subset of a task the shared sort comparator reads. Every field is
  * optional: a caller ranking a stub (a test, a CLI row) only has to supply what
  * it actually knows, and a missing field simply keeps the task in the live band.
@@ -279,7 +329,15 @@ export const DISCONNECTED_SORT_OFFSET = 5;
 export type TaskSortFields = Partial<
 	Pick<
 		Task,
-		"priority" | "hibernated" | "status" | "worktreePath" | "runtimeState" | "draft" | "preparing" | "shuttingDown"
+		| "priority"
+		| "hibernated"
+		| "status"
+		| "worktreePath"
+		| "runtimeState"
+		| "draft"
+		| "preparing"
+		| "shuttingDown"
+		| "taskType"
 	>
 >;
 
@@ -299,15 +357,20 @@ export function isTaskDisconnected(task: TaskSortFields): boolean {
 
 /**
  * Sort rank of a task: its {@link priorityRank}, plus {@link HIBERNATED_SORT_OFFSET}
- * when hibernated or {@link DISCONNECTED_SORT_OFFSET} when its session died.
- * Neither state writes `priority`, so a woken or resumed task returns to its
+ * when hibernated, {@link DISCONNECTED_SORT_OFFSET} when its session died, or
+ * {@link COORDINATOR_SORT_OFFSET} when it is a live coordinator. None of the
+ * three writes `priority`, so a woken, resumed or demoted task returns to its
  * rightful place in the queue.
+ *
+ * The sink bands are tested first on purpose: a parked coordinator is not the
+ * thing to look at, so it loses the lift for as long as it is parked.
  */
 export function taskSortRank(task: TaskSortFields): number {
-	const offset = task.hibernated
-		? HIBERNATED_SORT_OFFSET
-		: isTaskDisconnected(task) ? DISCONNECTED_SORT_OFFSET : 0;
-	return priorityRank(task.priority) + offset;
+	const rank = priorityRank(task.priority);
+	if (task.hibernated) return rank + HIBERNATED_SORT_OFFSET;
+	if (isTaskDisconnected(task)) return rank + DISCONNECTED_SORT_OFFSET;
+	if (isCoordinatorTask(task)) return rank + COORDINATOR_SORT_OFFSET;
+	return rank;
 }
 
 /**
@@ -367,6 +430,73 @@ As the very last step (after any commits), you MUST hand the task back to the us
     dev3 task move --status review-by-user
 
 Do not skip this step. Move the task exactly once, at the end.`;
+
+/**
+ * Preamble the PR-review task-type preset injects into a new task's description.
+ * English-only for the same reason as {@link COORDINATOR_PROMPT}: an agent reads
+ * it, one copy has to serve both the create flow and `dev3 task update --type`,
+ * and the bun side cannot reach the renderer's translations. Overridable in
+ * Settings and per project for anyone who wants it in their own language.
+ */
+export const DEFAULT_PR_REVIEW_PROMPT = `Review the code changes on this branch.
+
+Your task is to perform a thorough code review — do NOT modify any code.
+
+Start by analyzing what was changed, then evaluate:
+- Correctness and potential bugs
+- Adherence to the repository's conventions and best practices
+- Code clarity, naming, and structure
+- Edge cases and error handling
+- Security considerations
+
+Provide a structured review with actionable feedback.`;
+
+/**
+ * Preamble the Coordinator task-type preset injects into a new task's
+ * description. Deliberately NOT an i18n string: every rule here was written in
+ * English after a real coordinator got it wrong, an agent reads it rather than a
+ * human, and a translation that softens one clause changes behaviour. Users who
+ * want it in their own language override it in Settings. Kept generic on purpose
+ * — repo conventions belong in AGENTS.md, not here.
+ */
+export const COORDINATOR_PROMPT = `You are the COORDINATOR of this board. You manage other tasks; you do not do their work.
+
+WHAT YOU DO
+- Create, brief, sequence and unblock other dev3 tasks (\`dev3 task create\`, \`dev3 message\`, \`dev3 peek\`). Read their reports and check them for honesty.
+- Resolve overlaps between tasks: file contention, duplicated scope, who does which half.
+- Keep this task's notes and overview current. A child's worktree is destroyed when its task ends; your notes outlive it.
+
+NO CODE, and the line is precise — both halves matter.
+- Allowed, because a coordinator who cannot establish state is useless: a commit SHA, pull-request and CI state, run logs, machine load, process lists, what a child reported, what the user complained about.
+- Not allowed: forming an engineering judgement by reading source. That is the children's job.
+- Need a cheap re-check yourself? Use a sub-agent. Anything that touches the repository gets a real dev3 task.
+
+EVERY REPLY IS A SELF-CONTAINED STATUS. This is the rule that matters most and the one nobody guesses.
+The user does not see or read your conversations with child tasks. A reply that only makes sense to someone who followed the thread is worthless to them. End every message with the state of the board: which tasks exist, where each one stands, what landed, what is waiting on the user.
+
+YOUR PICTURE OF THE BOARD IS A SNAPSHOT, not a feed. Nothing tells you when a child finishes, and a completed task takes its terminal, worktree and agent with it. Re-read the board (\`dev3 task list\`, \`dev3 peek\`) immediately before every status you send, or you will report a task as working after it is gone.
+
+NAME EVERY TASK BY NUMBER AND ID at every mention — "Seq NNNN (<id>)" — in the body of the message, not only in a header. Never "it" or "that task": the user runs many in parallel.
+
+RELAY THE RULING, NOT YOUR READING OF IT. When the user decides in one line, tell HIM how you understood it before you tell the child. A misread two-word instruction cannot always be undone.
+
+NEVER ATTRIBUTE WORDS THE USER DID NOT SAY. An option he picked is his decision but not his words. Quote him verbatim, or label it as an option he chose.
+
+PERMISSION DOES NOT TRAVEL, AND IT IS SPENT WHEN USED. Push, pull request, merge, tags, publishing anything outward, issues in other people's repositories: all need the user's OWN word in the CHILD's own session. Your relay does not authorise it, and a well-built child will refuse — correctly. Permission for one branch is not permission for the next.
+
+NEVER request completion for a task you do not own, or for work that exists only in a disposable worktree. NEVER change a task's priority unless the user asks — priority is his judgement of importance.
+
+FACTS MAY GO CHILD-TO-CHILD: a file, a line, a measurement. DECISIONS COME THROUGH YOU: scope, priority, who does which half, whether something ships.
+
+MARK YOUR RECOMMENDATION AS RECOMMENDED. When you put options in front of the user, say which one you recommend and why. Staying neutral hands your job back to him.
+
+ANNOUNCE A REVERSAL AS A REVERSAL, out loud, and withdraw it from everyone you already passed it to.
+
+DO NOT TURN "NOT CHECKED" INTO "BROKEN" when relaying. They are different findings, and the second one sends someone to fix working code.
+
+MEASUREMENT HYGIENE. A timing number taken on a loaded machine is void; byte counts, counters and pass/fail are not. Require the machine's load next to any timing figure, and never ask two tasks to run heavy test suites at the same time.
+
+A GREEN TEST IS NOT PROOF. Ask every child what it did NOT verify. Anything that reports success while doing nothing is a product-level red flag, not noise.`;
 
 export function getPrimaryStopTarget(autoReviewEnabled?: boolean): TaskStatus {
 	return autoReviewEnabled ? "review-by-ai" : "review-by-user";
@@ -1004,11 +1134,17 @@ export interface GlobalSettings {
 	 */
 	pxpipeProxyEnabled?: boolean;
 	/**
-	 * Custom text the Review toggle in the create-task popup injects into the
+	 * Custom text the PR review preset in the create-task popup injects into the
 	 * description. Absent/blank ⇒ the localized built-in prompt. A project can
-	 * override it; see resolveReviewModePrompt.
+	 * override it; see resolvePresetPrompt.
 	 */
 	reviewModePrompt?: string;
+	/**
+	 * Custom text the Coordinator preset in the create-task popup injects into
+	 * the description. Absent/blank ⇒ the built-in COORDINATOR_PROMPT. A project
+	 * can override it; see resolvePresetPrompt.
+	 */
+	coordinatorPrompt?: string;
 	/**
 	 * Cross-provider "favorite" agent configs shown as quick-pick chips on the
 	 * launch picker (Launch/Retry, Spawn, Bug Hunters). Thin pointers, capped at
@@ -1353,6 +1489,8 @@ export interface ProjectSettingsUpdate extends Dev3RepoConfig {
 	sensitive?: boolean;
 	/** Blank string clears the project override and falls back to global. */
 	reviewModePrompt?: string;
+	/** Blank string clears the project override and falls back to global. */
+	coordinatorPrompt?: string;
 }
 
 export interface Project {
@@ -1411,24 +1549,71 @@ export interface Project {
 	 */
 	sensitive?: boolean;
 	/**
-	 * Project-level override of the Review toggle's prompt. Absent/blank ⇒ the
-	 * global setting, then the localized built-in. See resolveReviewModePrompt.
+	 * Project-level override of the PR review preset's prompt. Absent/blank ⇒ the
+	 * global setting, then the localized built-in. See resolvePresetPrompt.
 	 */
 	reviewModePrompt?: string;
+	/**
+	 * Project-level override of the Coordinator preset's prompt. Absent/blank ⇒
+	 * the global setting, then the built-in. See resolvePresetPrompt.
+	 */
+	coordinatorPrompt?: string;
 }
 
 /**
- * The Review toggle's prompt in effect: project override, then the global custom
- * one, then the localized built-in text. Blank at a layer means "not set", so a
- * cleared field falls through instead of injecting an empty prompt.
+ * A task-type preset's prompt in effect: project override, then the global custom
+ * one, then the built-in text. Blank at a layer means "not set", so a cleared
+ * field falls through instead of injecting an empty prompt.
  */
-export function resolveReviewModePrompt(
-	project: Pick<Project, "reviewModePrompt"> | null | undefined,
-	globalSettings: Pick<GlobalSettings, "reviewModePrompt"> | null | undefined,
+export function resolvePresetPrompt(
+	projectValue: string | undefined,
+	globalValue: string | undefined,
 	builtinDefault: string,
 ): string {
 	const set = (value: string | undefined) => (value && value.trim() ? value : undefined);
-	return set(project?.reviewModePrompt) ?? set(globalSettings?.reviewModePrompt) ?? builtinDefault;
+	return set(projectValue) ?? set(globalValue) ?? builtinDefault;
+}
+
+/**
+ * The preamble a task type puts above the user's own text: project override,
+ * then app-wide setting, then the built-in default. One function so the create
+ * flow and `dev3 task update --type` can never disagree about what a type means.
+ */
+export function presetPromptForTaskType(
+	type: TaskType,
+	project: Pick<Project, "coordinatorPrompt" | "reviewModePrompt">,
+	settings: Pick<GlobalSettings, "coordinatorPrompt" | "reviewModePrompt"> | null | undefined,
+): string {
+	return type === "coordinator"
+		? resolvePresetPrompt(project.coordinatorPrompt, settings?.coordinatorPrompt, COORDINATOR_PROMPT)
+		: resolvePresetPrompt(project.reviewModePrompt, settings?.reviewModePrompt, DEFAULT_PR_REVIEW_PROMPT);
+}
+
+/** Divider between a preset preamble and the user's own text in a description. */
+export const PRESET_PROMPT_SEPARATOR = "\n\n---\n\n";
+
+/** A description made of `prompt`, then the user's own text when there is any. */
+export function withPresetPrompt(userText: string, prompt: string): string {
+	const own = userText.trim();
+	return own ? prompt + PRESET_PROMPT_SEPARATOR + own : prompt;
+}
+
+/**
+ * Inverse of {@link withPresetPrompt}, and a no-op when the preamble is not
+ * there. It runs over a description a human has been editing freely, so it is
+ * written to never cost a character of their text:
+ *
+ * - The separator is matched at exactly `prompt.length`, never by first
+ *   occurrence, so a user's own `---` line cannot be taken for the boundary.
+ * - A preamble edited by hand no longer matches, so nothing is removed at all —
+ *   a stale copy left in place is recoverable, deleted words are not.
+ * - A missing separator returns everything after the preamble rather than
+ *   nothing, so deleting the `---` line and typing on does not erase the text.
+ */
+export function withoutPresetPrompt(description: string, prompt: string): string {
+	if (!description.startsWith(prompt)) return description;
+	const rest = description.slice(prompt.length);
+	return rest.startsWith(PRESET_PROMPT_SEPARATOR) ? rest.slice(PRESET_PROMPT_SEPARATOR.length) : rest;
 }
 
 /**
@@ -1843,6 +2028,22 @@ export interface Task {
 	 * every pre-existing task, so older app versions see an ordinary task.
 	 */
 	foreignCode?: boolean;
+	/**
+	 * What kind of task this is, when the kind carries behaviour. A property of
+	 * the task, not a column and not a runtime phase. Only `"coordinator"` exists:
+	 * a task whose job is to run other tasks. It forbids nothing at the data
+	 * layer, and gates exactly three things — the card is marked, a live one sorts
+	 * above every priority band ({@link COORDINATOR_SORT_OFFSET}), and its
+	 * completion always belongs to the human ({@link taskCompletesManually}),
+	 * because a coordinator outlives any branch it merged.
+	 *
+	 * Set at creation from the task-type picker, and flipped either way afterwards
+	 * with `dev3 task update --type`. The CLI keeps the preamble in the
+	 * description in step with the field, so the badge never claims a role the
+	 * agent behind it was never told about. Absent on every pre-existing task, so
+	 * older app versions see an ordinary task.
+	 */
+	taskType?: TaskType | null;
 	/**
 	 * For tasks in a virtual ("Operations") project only: the user-chosen fixed
 	 * working folder picked at creation (e.g. `~/Downloads`). When absent, the
@@ -3691,7 +3892,14 @@ export type AppRPCSchema = {
 				response: ConversationMatch[];
 			};
 			createTask: {
-				params: { projectId: string; description: string; status?: TaskStatus; existingBranch?: string; scratch?: boolean; draft?: boolean; opsWorkDir?: string; priority?: TaskPriority };
+				/**
+				 * Optional board title. Set when the description leads with a built-in
+				 * prompt preamble, so the card is named after the user's own text
+				 * instead of the first 80 characters of the preamble. Distinct from
+				 * `renameTask`'s customTitle: this does NOT mark the title user-edited,
+				 * so an agent may still rename it.
+				 */
+				params: { projectId: string; description: string; title?: string; status?: TaskStatus; existingBranch?: string; scratch?: boolean; draft?: boolean; opsWorkDir?: string; priority?: TaskPriority; taskType?: TaskType };
 				response: Task;
 			};
 			hibernateTask: {
