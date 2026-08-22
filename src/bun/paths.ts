@@ -1,9 +1,20 @@
-import { resolveUserHome } from "../shared/user-home";
+import { resolveDev3Home } from "../shared/dev3-home";
 
-const HOME = resolveUserHome();
+// Deliberately NOT re-exported. 45 suites mock this module with a factory that
+// lists its exports by name, so a module importing the resolver through here
+// would get `undefined` whenever one of those suites reaches it. Import it from
+// `shared/dev3-home` directly.
 
-/** Root directory for all dev-3.0 data: projects, tasks, worktrees, logs */
-export const DEV3_HOME = `${HOME}/.dev3.0`;
+/**
+ * Root directory for all dev-3.0 data: projects, tasks, worktrees, logs.
+ *
+ * Resolved once at module load, because the launcher sets `$DEV3_HOME` before the
+ * app boots and a root that could drift mid-run would split one instance's state
+ * across two directories. Callers that must re-read the environment per call (the
+ * native-terminal path helpers, whose tests repoint it between cases) call
+ * `resolveDev3Home` directly instead.
+ */
+export const DEV3_HOME = resolveDev3Home();
 
 /**
  * Root for virtual ("Operations") boards. A virtual project's synthetic `path`
