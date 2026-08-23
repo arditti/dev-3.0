@@ -292,6 +292,7 @@ function LaunchVariantsModal({
 				aria-modal="true"
 				aria-labelledby="launch-variants-title"
 				tabIndex={-1}
+				data-tour-anchor="launch.modal"
 				className="bg-overlay rounded-2xl shadow-2xl shadow-black/50 border border-edge-active w-full max-w-3xl mx-4 overflow-hidden outline-none"
 				onClick={(e) => e.stopPropagation()}
 			>

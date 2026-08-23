@@ -275,7 +275,25 @@ Evidence: [first-run-advertises-help-mode](../../decisions/2026/08/22/first-run-
   only screen on nothing.
 - A **first-run-only action** (the sandbox button) belongs **inside the first-run strip**, never beside the
   screen's own primary action: `decisions/2026/08/22/the-sandbox-is-a-real-repo-dev3-owns.md`.
-- Multi-step tours are no longer banned as a class.
+
+#### 5.4b Guided tours — the sequence surface — `Observed`
+
+Help mode answers *what is this*; a tour answers *what do I press* — unanswerable per zone, because
+the answer spans four surfaces. One mechanism (`mainview/tour.ts` + `TourOverlay`), never a bespoke
+wizard. Evidence:
+[a-guided-tour-points-it-does-not-drive](../../decisions/2026/08/23/a-guided-tour-points-it-does-not-drive.md).
+
+- **A step owns the screen** — its control and card are the only live things. Pointing alone failed
+  live: the user pressed past the step and the tour lost the thread.
+- **The step's button presses that control**, never fakes progress; a step waiting on the user's
+  own choice has no button.
+- **Progress is observed, not reported.** A step ends when the DOM shows the next
+  `data-tour-anchor`; participating costs one attribute, never a callback.
+- **A lost anchor offers restart-or-leave**, never a silent end. Out is Skip or Esc, never a slip.
+- **One owned dead end starts it** (an empty sandbox board), every visit until walked to the end
+  (`completedTours`); help mode's banner restarts it after.
+- **Where the user will not type, dev3 types** (prefill from one shared constant), and a tour is
+  never the only route to a control — a shortcut through the product, not a gate in front.
 
 ### 5.5 Diagnostics — crash & error surface (remote/mobile) — `Observed`
 
