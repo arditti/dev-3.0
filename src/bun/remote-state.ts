@@ -114,7 +114,14 @@ function sanitizeHandoff(raw: unknown): RemoteHandoff | null {
 			};
 		}
 	}
-	return { port: h.port, fromPid: h.fromPid, tunnel };
+	return {
+		port: h.port,
+		fromPid: h.fromPid,
+		tunnel,
+		// No liveness check to make: this URL describes a tunnel that was stopped on
+		// purpose, and the successor only compares its own new URL against it.
+		...maybe("stableTunnelUrl", typeof h.stableTunnelUrl === "string" && h.stableTunnelUrl ? h.stableTunnelUrl : null),
+	};
 }
 
 function sanitizeUpdateRecord(raw: unknown): RemoteUpdateRecord | null {

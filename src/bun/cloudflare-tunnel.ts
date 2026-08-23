@@ -10,6 +10,7 @@ import {
 	tunnelCommandName,
 	type ResolvedTunnelProvider,
 } from "./tunnel-provider";
+import { customTunnelHostIsStable, recordCustomTunnelUrl } from "./tunnel-host-memory";
 
 const log = createLogger("tunnel");
 
@@ -58,6 +59,12 @@ export interface TunnelEntry {
 	 * watch the edge instead of trusting a live process with a dead tunnel.
 	 */
 	publicProbeUrl: string | null;
+	/**
+	 * This custom provider has been observed handing out the same hostname across
+	 * restarts (see tunnel-host-memory.ts), so a self-update can stop the tunnel
+	 * instead of leaking the process to keep the URL alive.
+	 */
+	stableHostname: boolean;
 	consecutiveHealthFailures: number;
 	healthCheckInFlight: boolean;
 	healthCheckTimer: ReturnType<typeof setInterval> | null;
@@ -405,6 +412,7 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 		subToken: randomBytes(24).toString("base64url"),
 		metricsReadyUrl: null,
 		publicProbeUrl: null,
+		stableHostname: false,
 		consecutiveHealthFailures: 0,
 		healthCheckInFlight: false,
 		healthCheckTimer: null,
@@ -459,11 +467,13 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;
 			entry.url = url;
 			entry.state = "connected";
+			if (isCustom) entry.stableHostname = recordCustomTunnelUrl(provider.command!, url);
 			log.info("Tunnel connected", {
 				id: opts.id,
 				url,
 				probe: isCustom ? "public-url" : "metrics-ready",
 				edgeCheck: edgeReady ? "ready" : "unconfirmed",
+				...(isCustom ? { hostname: entry.stableHostname ? "stable" : "unproven" } : {}),
 			});
 			if (!edgeReady) {
 				log.warn("Tunnel edge not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });
@@ -530,6 +540,26 @@ export function releaseMainTunnelForHandoff(): { pid: number; url: string; metri
 }
 
 /**
+ * Stop the main tunnel INSTEAD of leaking it across a self-update, for a provider
+ * whose hostname is known to be stable. Returns the URL the successor should come
+ * back on, or null when this tunnel has to be handed over the leaky way.
+ *
+ * The leak exists only because a quick tunnel's hostname is random per process.
+ * When the same command reliably yields the same hostname, respawning is strictly
+ * better: no orphan survives an abandoned restart, the successor owns a process it
+ * spawned itself (with output to scrape and an exit promise), and the session
+ * cookie still matches because the host did not change.
+ */
+export function stopMainTunnelForStableHandoff(): string | null {
+	const entry = tunnels.get(MAIN_ID);
+	if (!entry || entry.state !== "connected" || !entry.url || !entry.stableHostname) return null;
+	const url = entry.url;
+	stopEntry(MAIN_ID);
+	log.info("Stopped a stable-hostname tunnel rather than leaking it across the restart", { url });
+	return url;
+}
+
+/**
  * Register a cloudflared this process did not spawn as the main tunnel.
  *
  * The URL is taken on trust from the handoff record (its writer had it from
@@ -544,6 +574,11 @@ export function adoptMainTunnel(opts: {
 	targetPort: number;
 }): void {
 	stopEntry(MAIN_ID);
+	// An adopted process has no metrics endpoint under a custom provider, and no
+	// exit promise either — without a probe it would be trusted forever. Its own
+	// public URL is the only health signal available, and it is a better one.
+	const provider = resolveRemoteTunnelProvider();
+	const custom = provider.kind === "custom" && !!provider.command;
 	const entry: TunnelEntry = {
 		id: MAIN_ID,
 		kind: "main",
@@ -557,7 +592,8 @@ export function adoptMainTunnel(opts: {
 		startedAt: Date.now(),
 		subToken: randomBytes(24).toString("base64url"),
 		metricsReadyUrl: opts.metricsReadyUrl,
-		publicProbeUrl: null,
+		publicProbeUrl: custom && !opts.metricsReadyUrl ? opts.url : null,
+		stableHostname: custom ? customTunnelHostIsStable(provider.command!) : false,
 		consecutiveHealthFailures: 0,
 		healthCheckInFlight: false,
 		healthCheckTimer: null,

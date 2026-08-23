@@ -3636,6 +3636,14 @@ export interface RemoteHandoff {
 	 * monitor already polls.
 	 */
 	tunnel: { pid: number; url: string; metricsReadyUrl: string | null } | null;
+	/**
+	 * The URL the successor is expected to come back on, set when a custom
+	 * provider's hostname is known to be stable and its tunnel was therefore
+	 * STOPPED rather than leaked. The successor spawns its own tunnel and compares:
+	 * an equal URL means the browser session survived, a different one means the
+	 * stability observation was wrong and the QR has to be re-scanned.
+	 */
+	stableTunnelUrl?: string | null;
 }
 
 /** From-version, to-version and when, for `dev3 remote status` after the fact. */

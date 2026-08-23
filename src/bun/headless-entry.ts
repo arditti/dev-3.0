@@ -371,6 +371,20 @@ if (wantTunnel && handoff?.tunnel) {
 		const tunnelUrl = await startTunnel(getServerPort());
 		if (tunnelUrl) {
 			console.log(`[dev3 remote] Tunnel ready: ${tunnelUrl}`);
+			// The predecessor stopped a stable-hostname tunnel expecting this one to
+			// land on the same URL. Say so either way: an equal URL means every open
+			// browser session survived the update, a different one means the QR is stale.
+			if (handoff?.stableTunnelUrl) {
+				const survived = handoff.stableTunnelUrl === tunnelUrl;
+				log.info("Compared the respawned tunnel against the URL the previous build served", {
+					expected: handoff.stableTunnelUrl,
+					actual: tunnelUrl,
+					sessionsSurvived: survived,
+				});
+				if (!survived) {
+					console.error("[dev3 remote] The tunnel hostname changed across the restart — re-scan the QR to reconnect.");
+				}
+			}
 		} else {
 			console.error("[dev3 remote] Tunnel failed to start — falling back to local-only URL");
 		}
