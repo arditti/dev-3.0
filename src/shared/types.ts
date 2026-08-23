@@ -1072,6 +1072,23 @@ export interface NativeTerminalAvailability {
 	diagnostics: string[];
 }
 
+/**
+ * Which tunnel exposes the remote-access server publicly.
+ *
+ * `provider: "custom"` runs the user's own CLI (ngrok, or any ngrok-like
+ * service) instead of the built-in Cloudflare quick tunnel. The command is a
+ * shell line with a `{port}` placeholder; the public URL is scraped from the
+ * command's output — by default the first `https://…` URL it prints,
+ * overridable with `urlPattern` for CLIs whose output contains other URLs.
+ */
+export interface RemoteTunnelSettings {
+	provider: "cloudflare" | "custom";
+	/** Shell command template, e.g. `ngrok http {port} --log stdout`. Required for `custom`. */
+	command?: string;
+	/** Optional regex matching the public URL in the command's output. */
+	urlPattern?: string;
+}
+
 export interface GlobalSettings {
 	defaultAgentId: string;
 	defaultConfigId: string;
@@ -1203,6 +1220,11 @@ export interface GlobalSettings {
 	 * Settings "Token-saving proxy" section. See PxpipeProxyStatus.
 	 */
 	pxpipeProxyEnabled?: boolean;
+	/**
+	 * Bring-your-own-tunnel for remote access. Absent ⇒ the built-in Cloudflare
+	 * quick tunnel. See RemoteTunnelSettings.
+	 */
+	remoteTunnel?: RemoteTunnelSettings;
 	/**
 	 * Custom text the PR review preset in the create-task popup injects into the
 	 * description. Absent/blank ⇒ the localized built-in prompt. A project can
@@ -5078,9 +5100,9 @@ export type AppRPCSchema = {
 			};
 			getRemoteAccessQR: {
 				params: { tunnel?: boolean; host?: string };
-				response: { qrDataUrl: string; accessUrl: string; tunnelState: string; cloudflaredInstalled: boolean; interfaces: RemoteNetInterface[]; selectedHost: string };
+				response: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom"; interfaces: RemoteNetInterface[]; selectedHost: string };
 			};
-			checkCloudflared: {
+			checkTunnelBinary: {
 				params: void;
 				response: { installed: boolean };
 			};
@@ -5474,7 +5496,7 @@ export type AppRPCSchema = {
 			zoomReset: {};
 			osc52Clipboard: { taskId: string; text: string; len: number };
 			qrTokenConsumed: {};
-			showRemoteAccessQR: { qrDataUrl: string; accessUrl: string; tunnelState: string; cloudflaredInstalled: boolean; autoStartTunnel?: boolean };
+			showRemoteAccessQR: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom"; autoStartTunnel?: boolean };
 			/**
 			 * Universal menu-action dispatch. The bun side fires this whenever the
 			 * native menu emits an `application-menu-clicked` event whose action is

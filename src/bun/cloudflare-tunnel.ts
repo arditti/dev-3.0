@@ -3,6 +3,12 @@ import os from "node:os";
 import { spawn, spawnSync } from "./spawn";
 import { createLogger } from "./logger";
 import { isProcessAlive } from "./remote-state";
+import {
+	buildCustomTunnelArgv,
+	isCustomTunnelBinaryAvailable,
+	resolveRemoteTunnelProvider,
+	type ResolvedTunnelProvider,
+} from "./tunnel-provider";
 
 const log = createLogger("cf-tunnel");
 
@@ -74,7 +80,16 @@ export const TUNNEL_EDGE_READY = { timeoutMs: 25_000, pollMs: 500 };
 
 const tunnels = new Map<string, TunnelEntry>();
 
-export function isCloudflaredAvailable(): boolean {
+/**
+ * Availability of whatever will actually run for the MAIN remote-access
+ * tunnel: `cloudflared` for the built-in provider, or the first word of the
+ * user's custom command (Settings → System → Remote access tunnel).
+ */
+export function isTunnelBinaryAvailable(): boolean {
+	const provider = resolveRemoteTunnelProvider();
+	if (provider.kind === "custom" && provider.command) {
+		return isCustomTunnelBinaryAvailable(provider.command);
+	}
 	const result = spawnSync(["which", "cloudflared"]);
 	return result.exitCode === 0;
 }
@@ -172,8 +187,10 @@ export function buildTunnelArgv(targetPort: number): string[] {
  *   or: ... https://something.trycloudflare.com ...
  * Returns the full URL or null.
  */
+const CLOUDFLARE_URL_REGEX = /https:\/\/[a-zA-Z0-9_-]+\.trycloudflare\.com/;
+
 export function parseTunnelUrl(line: string): string | null {
-	const match = line.match(/https:\/\/[a-zA-Z0-9_-]+\.trycloudflare\.com/);
+	const match = line.match(CLOUDFLARE_URL_REGEX);
 	return match ? match[0] : null;
 }
 
@@ -210,8 +227,8 @@ function logCloudflaredLine(id: string, line: string): void {
  * released as soon as the public URL appeared, which discarded every later
  * reconnect error and could eventually back-pressure the child process.
  */
-function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<string | null> {
-	const reader = stderr.getReader();
+function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: RegExp): Promise<string | null> {
+	const reader = stream.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
 	let urlResolved = false;
@@ -225,7 +242,7 @@ function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<stri
 		const metricsReadyUrl = parseTunnelMetricsUrl(line);
 		if (metricsReadyUrl) entry.metricsReadyUrl = metricsReadyUrl;
 		if (!urlResolved) {
-			const url = parseTunnelUrl(line);
+			const url = line.match(urlRegex)?.[0] ?? null;
 			if (url) {
 				urlResolved = true;
 				resolveUrl(url);
@@ -246,7 +263,7 @@ function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<stri
 			buffer += decoder.decode();
 			if (buffer) processLine(buffer);
 		} catch (err) {
-			log.warn("Failed to read cloudflared stderr", { id: entry.id, error: String(err) });
+			log.warn("Failed to read tunnel process output", { id: entry.id, error: String(err) });
 		} finally {
 			if (!urlResolved) resolveUrl(null);
 			try { reader.releaseLock(); } catch { /* already released */ }
@@ -258,6 +275,19 @@ function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<stri
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** First non-null URL across the monitored streams; null once all end without one. */
+function firstUrl(promises: Promise<string | null>[]): Promise<string | null> {
+	return new Promise((resolve) => {
+		let pending = promises.length;
+		for (const p of promises) {
+			void p.then((url) => {
+				if (url) resolve(url);
+				else if (--pending === 0) resolve(null);
+			});
+		}
+	});
 }
 
 /**
@@ -339,9 +369,21 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 	};
 	tunnels.set(opts.id, entry);
 
+	// Bring-your-own-tunnel applies to the MAIN remote-access tunnel only for
+	// now; per-task port tunnels keep the built-in Cloudflare quick tunnels.
+	const provider: ResolvedTunnelProvider =
+		opts.kind === "main"
+			? resolveRemoteTunnelProvider()
+			: { kind: "cloudflare", command: null, urlRegex: null };
+	const isCustom = provider.kind === "custom" && !!provider.command;
+
 	try {
-		const proc = spawn(buildTunnelArgv(opts.targetPort), { stdout: "ignore", stderr: "pipe" });
+		const argv = isCustom ? buildCustomTunnelArgv(provider.command!, opts.targetPort) : buildTunnelArgv(opts.targetPort);
+		// cloudflared logs to stderr; a custom CLI may print its URL on either
+		// stream, so pipe and scan both.
+		const proc = spawn(argv, { stdout: isCustom ? "pipe" : "ignore", stderr: "pipe" });
 		entry.process = proc;
+		if (isCustom) log.info("Starting custom tunnel command", { id: opts.id, targetPort: opts.targetPort });
 
 		// Reset state when the cloudflared process exits unexpectedly.
 		proc.exited.then((exitCode) => {
@@ -356,11 +398,16 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			}
 		});
 
-		const url = await waitForUrl(monitorStderr(entry, proc.stderr!), URL_WAIT_TIMEOUT_MS);
+		const urlRegex = isCustom ? provider.urlRegex! : CLOUDFLARE_URL_REGEX;
+		const urlPromises = [monitorOutput(entry, proc.stderr!, urlRegex)];
+		if (isCustom && proc.stdout) urlPromises.push(monitorOutput(entry, proc.stdout as ReadableStream, urlRegex));
+		const url = await waitForUrl(firstUrl(urlPromises), URL_WAIT_TIMEOUT_MS);
 		if (url) {
 			// Wait until the edge actually routes the hostname before publishing it,
 			// so a browser scanning the QR / opening the link never hits NXDOMAIN.
-			const edgeReady = await waitForEdgeReady(entry, TUNNEL_EDGE_READY.timeoutMs, TUNNEL_EDGE_READY.pollMs);
+			// A custom provider has no local readiness endpoint — its URL is
+			// published as soon as it is printed.
+			const edgeReady = isCustom || (await waitForEdgeReady(entry, TUNNEL_EDGE_READY.timeoutMs, TUNNEL_EDGE_READY.pollMs));
 			// Bail if the tunnel was stopped or its process died during the wait —
 			// never resurrect a dead entry into "connected".
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;

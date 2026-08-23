@@ -27,7 +27,7 @@ import { ensureDev3CliSymlink } from "./cli-self-install";
 import { applyFullShellEnvToProcess, getUserShell, resolveShellEnv } from "./shell-env";
 import { startSocketServer, stopSocketServer } from "./cli-socket-server";
 import { startRemoteAccessServer, pushToBrowserClients, getServerPort, getAccessUrl } from "./remote-access-server";
-import { startTunnel, stopTunnel, isCloudflaredAvailable, getTunnelUrl } from "./cloudflare-tunnel";
+import { startTunnel, stopTunnel, isTunnelBinaryAvailable, getTunnelUrl } from "./cloudflare-tunnel";
 import { renderHeadlessBanner, startQrAutoRefresh, stopQrAutoRefresh, markQrConsumed, printExposedPortsLive } from "./remote-console";
 import { writeRemoteState, clearRemoteStateIfOwnedBy, readRemoteHandoff, readRemoteState, carriedOverState } from "./remote-state";
 import { BUILD_TIME, BUILD_VERSION } from "../shared/build-info.generated";
@@ -361,12 +361,13 @@ if (wantTunnel && handoff?.tunnel) {
 	adoptMainTunnel({ ...handoff.tunnel, targetPort: getServerPort() });
 	console.log(`[dev3 remote] Kept the tunnel from the previous build: ${handoff.tunnel.url}`);
 } else if (wantTunnel) {
-	if (!isCloudflaredAvailable()) {
-		console.error("\n[dev3 remote] `cloudflared` is not installed — skipping public tunnel.");
-		console.error("              On Homebrew: `brew install cloudflared`.");
+	if (!isTunnelBinaryAvailable()) {
+		console.error("\n[dev3 remote] The tunnel binary is not installed — skipping public tunnel.");
+		console.error("              Built-in provider: `brew install cloudflared`. A custom tunnel");
+		console.error("              command is configured in Settings → System → Remote access tunnel.");
 		console.error("              Or pass --no-tunnel to silence this warning.\n");
 	} else {
-		console.log("[dev3 remote] Starting Cloudflare tunnel...");
+		console.log("[dev3 remote] Starting public tunnel...");
 		const tunnelUrl = await startTunnel(getServerPort());
 		if (tunnelUrl) {
 			console.log(`[dev3 remote] Tunnel ready: ${tunnelUrl}`);

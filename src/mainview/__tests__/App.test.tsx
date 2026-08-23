@@ -59,7 +59,8 @@ vi.mock("../rpc", () => ({
 				qrDataUrl: "data:image/png;base64,test",
 				accessUrl: "http://127.0.0.1:1234/?token=test",
 				tunnelState: "idle",
-				cloudflaredInstalled: false,
+				tunnelBinaryInstalled: false,
+				tunnelProvider: "cloudflare" as const,
 				interfaces: [],
 				selectedHost: "127.0.0.1",
 			}),
@@ -1880,7 +1881,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,test",
 				accessUrl: "http://192.168.0.1:1234/?token=test",
 				tunnelState: "idle",
-				cloudflaredInstalled: false,
+				tunnelBinaryInstalled: false,
+				tunnelProvider: "cloudflare" as const,
 			};
 
 			window.dispatchEvent(new CustomEvent("rpc:showRemoteAccessQR", { detail: qrData }));
@@ -1902,7 +1904,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,test",
 				accessUrl: "https://public.trycloudflare.com/?token=test",
 				tunnelState: "connected",
-				cloudflaredInstalled: true,
+				tunnelBinaryInstalled: true,
+				tunnelProvider: "cloudflare" as const,
 			};
 
 			window.dispatchEvent(new CustomEvent("rpc:showRemoteAccessQR", { detail: qrData }));
@@ -1925,7 +1928,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "http://192.168.0.1:1234/?token=test",
 					tunnelState: "idle",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 				},
 			}));
 			await waitFor(() => expect(screen.getByText("Copy URL")).toBeInTheDocument());
@@ -1941,7 +1945,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "https://public.trycloudflare.com/?token=test",
 					tunnelState: "starting",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 				},
 			}));
 			await waitFor(() => expect(remoteButton.className).toContain("remote-access-active"));
@@ -1951,7 +1956,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "https://public.trycloudflare.com/?token=test",
 					tunnelState: "failed",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 				},
 			}));
 			await waitFor(() => expect(remoteButton.className).not.toContain("remote-access-active"));
@@ -1965,7 +1971,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,test",
 				accessUrl: "http://192.168.0.1:1234/?token=test",
 				tunnelState: "idle",
-				cloudflaredInstalled: false,
+				tunnelBinaryInstalled: false,
+				tunnelProvider: "cloudflare" as const,
 			};
 			window.dispatchEvent(new CustomEvent("rpc:showRemoteAccessQR", { detail: qrData }));
 
@@ -1992,7 +1999,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "http://192.168.0.1:1234/?token=test",
 					tunnelState: "idle",
-					cloudflaredInstalled: false,
+					tunnelBinaryInstalled: false,
+					tunnelProvider: "cloudflare" as const,
 				},
 			}));
 
@@ -2011,7 +2019,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,local",
 				accessUrl: "http://192.168.0.1:1234/?token=local",
 				tunnelState: "idle",
-				cloudflaredInstalled: true,
+				tunnelBinaryInstalled: true,
+				tunnelProvider: "cloudflare" as const,
 				interfaces: [],
 				selectedHost: "192.168.0.1",
 			});
@@ -2021,7 +2030,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,tunnel",
 					accessUrl: "https://foo.trycloudflare.com/?token=t",
 					tunnelState: "connected",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 				},
 			}));
 
@@ -2045,7 +2055,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,test",
 				accessUrl: "http://192.168.0.1:1234/?token=test",
 				tunnelState: "idle",
-				cloudflaredInstalled: false,
+				tunnelBinaryInstalled: false,
+				tunnelProvider: "cloudflare" as const,
 			};
 
 			// Open → consume → should be disabled
@@ -2076,7 +2087,8 @@ describe("App keyboard shortcuts", () => {
 						qrDataUrl: "data:image/png;base64,stale",
 						accessUrl: "https://stale.trycloudflare.com/?token=old",
 						tunnelState: "connected",
-						cloudflaredInstalled: true,
+						tunnelBinaryInstalled: true,
+						tunnelProvider: "cloudflare" as const,
 					},
 				}));
 				window.dispatchEvent(new CustomEvent("rpc:qrTokenConsumed"));
@@ -2086,7 +2098,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,recovered",
 					accessUrl: "https://recovered.trycloudflare.com/?token=new",
 					tunnelState: "connected",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [],
 					selectedHost: "",
 				});
@@ -2111,7 +2124,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,tunnel",
 				accessUrl: "https://public.trycloudflare.com/?token=t",
 				tunnelState: "connected",
-				cloudflaredInstalled: true,
+				tunnelBinaryInstalled: true,
+				tunnelProvider: "cloudflare" as const,
 				interfaces: [],
 				selectedHost: "",
 			});
@@ -2123,7 +2137,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,local",
 					accessUrl: "http://192.168.0.1:1234/?token=l",
 					tunnelState: "idle",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [],
 					selectedHost: "192.168.0.1",
 					autoStartTunnel: true,
@@ -2150,7 +2165,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,local",
 					accessUrl: "http://192.168.0.1:1234/?token=l",
 					tunnelState: "idle",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [],
 					selectedHost: "192.168.0.1",
 					autoStartTunnel: true,
@@ -2167,7 +2183,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,tunnel",
 					accessUrl: "https://public.trycloudflare.com/?token=t",
 					tunnelState: "connected",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [],
 					selectedHost: "",
 				});
@@ -2186,7 +2203,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,local",
 					accessUrl: "http://192.168.0.1:1234/?token=l",
 					tunnelState: "idle",
-					cloudflaredInstalled: false,
+					tunnelBinaryInstalled: false,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [],
 					selectedHost: "192.168.0.1",
 				},
@@ -2209,7 +2227,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,live",
 					accessUrl: "https://public.trycloudflare.com/?token=c",
 					tunnelState: "connected",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [],
 					selectedHost: "",
 					autoStartTunnel: true,
@@ -2260,7 +2279,8 @@ describe("App keyboard shortcuts", () => {
 				qrDataUrl: "data:image/png;base64,test2",
 				accessUrl: "http://127.0.0.1:1234/?token=test",
 				tunnelState: "idle",
-				cloudflaredInstalled: false,
+				tunnelBinaryInstalled: false,
+				tunnelProvider: "cloudflare" as const,
 				interfaces,
 				selectedHost: "127.0.0.1",
 			});
@@ -2269,7 +2289,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "http://192.168.0.1:1234/?token=test",
 					tunnelState: "idle",
-					cloudflaredInstalled: false,
+					tunnelBinaryInstalled: false,
+					tunnelProvider: "cloudflare" as const,
 					interfaces,
 					selectedHost: "192.168.0.1",
 				},
@@ -2294,7 +2315,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "http://192.168.0.1:1234/?token=test",
 					tunnelState: "idle",
-					cloudflaredInstalled: false,
+					tunnelBinaryInstalled: false,
+					tunnelProvider: "cloudflare" as const,
 				},
 			}));
 			const toggle = await screen.findByLabelText("Accessible from anywhere (Cloudflare Tunnel)");
@@ -2317,7 +2339,8 @@ describe("App keyboard shortcuts", () => {
 					qrDataUrl: "data:image/png;base64,test",
 					accessUrl: "https://abc.trycloudflare.com/?token=test",
 					tunnelState: "connected",
-					cloudflaredInstalled: true,
+					tunnelBinaryInstalled: true,
+					tunnelProvider: "cloudflare" as const,
 					interfaces: [
 						{ name: "en0", address: "192.168.0.1", internal: false },
 						{ name: "loopback", address: "127.0.0.1", internal: true },

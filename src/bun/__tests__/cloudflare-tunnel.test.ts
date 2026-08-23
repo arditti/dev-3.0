@@ -19,7 +19,7 @@ vi.mock("../logger", () => ({
 
 import { spawn as mockSpawn, spawnSync as mockSpawnSync } from "../spawn";
 import {
-	isCloudflaredAvailable,
+	isTunnelBinaryAvailable,
 	startTunnel,
 	stopTunnel,
 	getTunnelUrl,
@@ -241,23 +241,23 @@ describe("parseTunnelMetricsUrl", () => {
 });
 
 // ================================================================
-// isCloudflaredAvailable
+// isTunnelBinaryAvailable
 // ================================================================
 
-describe("isCloudflaredAvailable", () => {
+describe("isTunnelBinaryAvailable", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
 	it("returns true when which cloudflared exits 0", () => {
 		(mockSpawnSync as Mock).mockReturnValue({ exitCode: 0 });
-		expect(isCloudflaredAvailable()).toBe(true);
+		expect(isTunnelBinaryAvailable()).toBe(true);
 		expect(mockSpawnSync).toHaveBeenCalledWith(["which", "cloudflared"]);
 	});
 
 	it("returns false when exit code is non-zero", () => {
 		(mockSpawnSync as Mock).mockReturnValue({ exitCode: 1 });
-		expect(isCloudflaredAvailable()).toBe(false);
+		expect(isTunnelBinaryAvailable()).toBe(false);
 	});
 });
 

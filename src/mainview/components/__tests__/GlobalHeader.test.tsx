@@ -31,7 +31,7 @@ vi.mock("../../rpc", () => ({
 				qrDataUrl: "data:image/png;base64,test",
 				accessUrl: "http://192.168.0.1:1234/?token=test",
 				tunnelState: "idle",
-				cloudflaredInstalled: true,
+				tunnelBinaryInstalled: true,
 				interfaces: [],
 				selectedHost: "192.168.0.1",
 			}),

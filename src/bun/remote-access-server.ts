@@ -77,9 +77,14 @@ export function checkOrigin(req: Request): boolean {
 	const origin = req.headers.get("origin");
 	if (!origin) return true;
 	const host = req.headers.get("host");
-	if (!host) return false;
+	// A Host-rewriting tunnel proxy (ngrok-style BYO tunnels) sends
+	// `Host: localhost:<port>` and carries the public hostname in
+	// X-Forwarded-Host — compare against that too (first entry if proxies chain).
+	const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || null;
+	if (!host && !forwardedHost) return false;
 	try {
-		return new URL(origin).host === host;
+		const originHost = new URL(origin).host;
+		return originHost === host || originHost === forwardedHost;
 	} catch {
 		return false;
 	}
