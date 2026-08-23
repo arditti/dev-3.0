@@ -1031,6 +1031,7 @@ function ActivityOverview({ projects, dispatch, navigate, bellCounts, onRemovePr
 							onMoveSpace={(space, delta) => void moveSpace(space, delta, spaces, t)}
 							onToggleSensitive={(space, next) => void toggleSpaceSensitive(space, next, t)}
 							spaceOrder={spaces.map((s) => s.id)}
+							selectedSpaceId={selectedSpaceId}
 							renderProject={(p, ctx, spaceId) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id), ctx, spaceId)}
 							renderBottomBlockProject={(p) => renderProjectRow(p, visibleProjects.findIndex((v) => v.id === p.id))}
 						/>

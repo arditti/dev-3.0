@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { isSpaceSensitive, type Project, type Space } from "../../shared/types";
 import type { DashboardGroup } from "../utils/spaceGroups";
 import { MASK_CLASS } from "../sensitive-projects";
@@ -84,6 +84,10 @@ interface SpaceGroupedProjectsProps {
 	/** Every space id in order — the visible groups are a filtered subset, so the
 	 *  edges of `Move up` / `Move down` cannot be read off `groups`. */
 	spaceOrder?: string[];
+	/** The rail/sheet's current filter. Picking a specific space is a request to
+	 *  see it, so a stale collapse from a previous session must not hide the very
+	 *  group the user just asked for. */
+	selectedSpaceId?: string | null;
 }
 
 /**
@@ -106,11 +110,22 @@ function SpaceGroupedProjects({
 	onMoveSpace,
 	onToggleSensitive,
 	spaceOrder,
+	selectedSpaceId,
 }: SpaceGroupedProjectsProps) {
 	const t = useT();
 	const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
 	const [dragged, setDragged] = useState<{ spaceId: string; projectId: string } | null>(null);
 	const [dropTarget, setDropTarget] = useState<{ spaceId: string; projectId: string; side: "before" | "after" } | null>(null);
+
+	useEffect(() => {
+		if (!selectedSpaceId || !collapsed.has(selectedSpaceId)) return;
+		setCollapsed((prev) => {
+			const next = new Set(prev);
+			next.delete(selectedSpaceId);
+			writeCollapsed(next);
+			return next;
+		});
+	}, [selectedSpaceId, collapsed]);
 
 	function toggleCollapsed(spaceId: string) {
 		setCollapsed((prev) => {

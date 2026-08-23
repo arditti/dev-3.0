@@ -42,7 +42,7 @@ const groups: DashboardGroup[] = [
 	{ space: null, projects: [proj("p3")] },
 ];
 
-function renderGroups(sensitive: ReadonlySet<string> = new Set()) {
+function renderGroups(sensitive: ReadonlySet<string> = new Set(), selectedSpaceId?: string | null) {
 	return render(
 		<I18nProvider>
 			<SpaceGroupedProjects
@@ -52,6 +52,7 @@ function renderGroups(sensitive: ReadonlySet<string> = new Set()) {
 				workingCountOf={() => 0}
 				renderProject={(p) => <div data-testid={`row-${p.id}`}>{p.name}</div>}
 				renderBottomBlockProject={(p) => <div data-testid={`rest-row-${p.id}`}>{p.name}</div>}
+				selectedSpaceId={selectedSpaceId}
 			/>
 		</I18nProvider>,
 	);
@@ -81,6 +82,21 @@ describe("SpaceGroupedProjects", () => {
 		expect(screen.getAllByTestId("row-p1")).toHaveLength(1); // only Beta's copy remains
 		expect(screen.queryByTestId("row-p2")).not.toBeInTheDocument();
 		expect(JSON.parse(localStorage.getItem("dev3-collapsed-spaces")!)).toEqual(["sp_a"]);
+	});
+
+	it("auto-expands a space that the rail/sheet filter just selected, even if it was left collapsed", () => {
+		localStorage.setItem("dev3-collapsed-spaces", JSON.stringify(["sp_a"]));
+		renderGroups(new Set(), "sp_a");
+		expect(screen.getAllByTestId("row-p1")).toHaveLength(2);
+		expect(screen.getByTestId("row-p2")).toBeInTheDocument();
+		expect(JSON.parse(localStorage.getItem("dev3-collapsed-spaces")!)).toEqual([]);
+	});
+
+	it("leaves other collapsed spaces alone when a different space is selected", () => {
+		localStorage.setItem("dev3-collapsed-spaces", JSON.stringify(["sp_a", "sp_b"]));
+		renderGroups(new Set(), "sp_a");
+		expect(screen.getByTestId("row-p2")).toBeInTheDocument(); // sp_a expanded
+		expect(JSON.parse(localStorage.getItem("dev3-collapsed-spaces")!)).toEqual(["sp_b"]);
 	});
 
 	// §9a.6: what says "these rows belong to this space" is proximity, so the gap
