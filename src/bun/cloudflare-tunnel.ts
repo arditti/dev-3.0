@@ -52,6 +52,12 @@ export interface TunnelEntry {
 	startedAt: number;
 	subToken: string;
 	metricsReadyUrl: string | null;
+	/**
+	 * Readiness probe for a custom provider, which exposes no local metrics port:
+	 * its own public URL. Set once the URL is scraped, so the health monitor can
+	 * watch the edge instead of trusting a live process with a dead tunnel.
+	 */
+	publicProbeUrl: string | null;
 	consecutiveHealthFailures: number;
 	healthCheckInFlight: boolean;
 	healthCheckTimer: ReturnType<typeof setInterval> | null;
@@ -78,6 +84,13 @@ const HEALTH_FAILURE_LIMIT = 3;
 // We gate "connected" on cloudflared's own /ready endpoint (200 only with a
 // live edge connection). Tunable so tests don't wait the real timeout.
 export const TUNNEL_EDGE_READY = { timeoutMs: 25_000, pollMs: 500 };
+/**
+ * A custom provider is probed over the public internet rather than a local
+ * metrics port, so it polls less often and gives up sooner — the URL is
+ * published best-effort either way, and the tunnel is usually live on the first
+ * probe.
+ */
+export const CUSTOM_TUNNEL_EDGE_READY = { timeoutMs: 10_000, pollMs: 750 };
 
 const tunnels = new Map<string, TunnelEntry>();
 
@@ -316,6 +329,32 @@ async function waitForEdgeReady(entry: TunnelEntry, timeoutMs: number, pollMs: n
 	return false;
 }
 
+/**
+ * Readiness for a custom provider, which has no local metrics endpoint: probe
+ * the scraped public URL until the edge answers at all. ANY HTTP status counts
+ * as routable — a tunnel that gates access returns 401/403/404 from its own
+ * edge, which still proves the hostname resolves and forwards. Only a transport
+ * failure (DNS, refused connection, TLS, timeout) means it is not up yet.
+ */
+async function waitForPublicUrlReady(entry: TunnelEntry, url: string, timeoutMs: number, pollMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (entry.process === null) return false; // process exited during the wait
+		try {
+			await fetch(url, {
+				method: "HEAD",
+				redirect: "manual",
+				signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+			});
+			return true;
+		} catch {
+			// Not routable yet — keep polling until the deadline.
+		}
+		await delay(pollMs);
+	}
+	return false;
+}
+
 async function waitForUrl(urlPromise: Promise<string | null>, timeoutMs: number): Promise<string | null> {
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	try {
@@ -365,6 +404,7 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 		startedAt: Date.now(),
 		subToken: randomBytes(24).toString("base64url"),
 		metricsReadyUrl: null,
+		publicProbeUrl: null,
 		consecutiveHealthFailures: 0,
 		healthCheckInFlight: false,
 		healthCheckTimer: null,
@@ -410,16 +450,23 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			// so a browser scanning the QR / opening the link never hits NXDOMAIN.
 			// A custom provider has no local readiness endpoint — its URL is
 			// published as soon as it is printed.
-			const edgeReady = isCustom || (await waitForEdgeReady(entry, TUNNEL_EDGE_READY.timeoutMs, TUNNEL_EDGE_READY.pollMs));
+			if (isCustom) entry.publicProbeUrl = url;
+			const edgeReady = isCustom
+				? await waitForPublicUrlReady(entry, url, CUSTOM_TUNNEL_EDGE_READY.timeoutMs, CUSTOM_TUNNEL_EDGE_READY.pollMs)
+				: await waitForEdgeReady(entry, TUNNEL_EDGE_READY.timeoutMs, TUNNEL_EDGE_READY.pollMs);
 			// Bail if the tunnel was stopped or its process died during the wait —
 			// never resurrect a dead entry into "connected".
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;
 			entry.url = url;
 			entry.state = "connected";
-			// Do not claim a confirmed edge for a provider we never probed.
-			log.info("Tunnel connected", { id: opts.id, url, edgeCheck: isCustom ? "skipped" : String(edgeReady) });
+			log.info("Tunnel connected", {
+				id: opts.id,
+				url,
+				probe: isCustom ? "public-url" : "metrics-ready",
+				edgeCheck: edgeReady ? "ready" : "unconfirmed",
+			});
 			if (!edgeReady) {
-				log.warn("Tunnel /ready not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });
+				log.warn("Tunnel edge not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });
 			}
 			startHealthMonitor(entry);
 			return entry;
@@ -510,6 +557,7 @@ export function adoptMainTunnel(opts: {
 		startedAt: Date.now(),
 		subToken: randomBytes(24).toString("base64url"),
 		metricsReadyUrl: opts.metricsReadyUrl,
+		publicProbeUrl: null,
 		consecutiveHealthFailures: 0,
 		healthCheckInFlight: false,
 		healthCheckTimer: null,
@@ -539,9 +587,64 @@ async function restartEntry(entry: TunnelEntry): Promise<void> {
 	}
 }
 
+/**
+ * Ongoing health for a custom provider: keep probing its public URL, so a live
+ * command whose tunnel has silently dropped is caught instead of being trusted
+ * on process liveness alone. Any HTTP answer is healthy — see
+ * `waitForPublicUrlReady` for why a 401/403 still proves the edge routes.
+ */
+async function checkPublicUrlHealth(entry: TunnelEntry, probeUrl: string): Promise<void> {
+	entry.healthCheckInFlight = true;
+	try {
+		let reachable = false;
+		let detail = "";
+		try {
+			const response = await fetch(probeUrl, {
+				method: "HEAD",
+				redirect: "manual",
+				signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+			});
+			reachable = true;
+			detail = `status ${response.status}`;
+		} catch (err) {
+			detail = String(err);
+		}
+
+		if (tunnels.get(entry.id) !== entry) return;
+		if (reachable) {
+			if (entry.consecutiveHealthFailures > 0) {
+				log.info("Tunnel edge recovered", { id: entry.id, previousFailures: entry.consecutiveHealthFailures });
+			}
+			entry.consecutiveHealthFailures = 0;
+			return;
+		}
+
+		entry.consecutiveHealthFailures += 1;
+		log.warn("Tunnel public URL unreachable", {
+			id: entry.id,
+			probe: "public-url",
+			detail,
+			consecutiveFailures: entry.consecutiveHealthFailures,
+		});
+		if (entry.consecutiveHealthFailures >= HEALTH_FAILURE_LIMIT) {
+			log.warn("Tunnel unhealthy; restarting", { id: entry.id, url: entry.url });
+			await restartEntry(entry);
+		}
+	} finally {
+		entry.healthCheckInFlight = false;
+	}
+}
+
 async function checkHealth(id: string): Promise<void> {
 	const entry = tunnels.get(id);
 	if (!entry || entry.state !== "connected" || entry.healthCheckInFlight) return;
+
+	// A custom provider has no local metrics port, but it does have a public URL,
+	// which is a better signal than "the process is still alive".
+	if (!entry.metricsReadyUrl && entry.publicProbeUrl) {
+		await checkPublicUrlHealth(entry, entry.publicProbeUrl);
+		return;
+	}
 
 	// AN ADOPTED TUNNEL WITH NO `/ready` URL IS WATCHED BY ITS PID, or not at all.
 	// An entry we spawned has a `process` whose `exited` hook resets it; an inherited

@@ -17,6 +17,22 @@ vi.mock("../logger", () => ({
 	createLogger: () => loggerMocks,
 }));
 
+// The provider is resolved from the user's real settings file, which must never
+// decide what these tests exercise. Default to the built-in provider; the
+// bring-your-own-tunnel cases opt in explicitly.
+const providerMocks = vi.hoisted(() => ({
+	resolveRemoteTunnelProvider: vi.fn<() => import("../tunnel-provider").ResolvedTunnelProvider>(() => ({
+		kind: "cloudflare",
+		command: null,
+		urlRegex: null,
+	})),
+}));
+
+vi.mock("../tunnel-provider", async () => {
+	const actual = await vi.importActual<typeof import("../tunnel-provider")>("../tunnel-provider");
+	return { ...actual, resolveRemoteTunnelProvider: providerMocks.resolveRemoteTunnelProvider };
+});
+
 import { spawn as mockSpawn, spawnSync as mockSpawnSync } from "../spawn";
 import {
 	isTunnelBinaryAvailable,
@@ -33,20 +49,28 @@ import {
 	adoptMainTunnel,
 	releaseMainTunnelForHandoff,
 	TUNNEL_EDGE_READY,
+	CUSTOM_TUNNEL_EDGE_READY,
 	_resetState,
 } from "../cloudflare-tunnel";
+import { GENERIC_TUNNEL_URL_REGEX } from "../tunnel-provider";
 
 // The edge-readiness gate polls cloudflared's /ready over the real timeout in
 // production; shrink it for every test so a start without a mocked /ready falls
 // through to the best-effort "connected" quickly instead of hanging.
 const REAL_EDGE_READY = { ...TUNNEL_EDGE_READY };
+const REAL_CUSTOM_EDGE_READY = { ...CUSTOM_TUNNEL_EDGE_READY };
 beforeEach(() => {
 	TUNNEL_EDGE_READY.timeoutMs = 15;
 	TUNNEL_EDGE_READY.pollMs = 1;
+	CUSTOM_TUNNEL_EDGE_READY.timeoutMs = 15;
+	CUSTOM_TUNNEL_EDGE_READY.pollMs = 1;
+	providerMocks.resolveRemoteTunnelProvider.mockReturnValue({ kind: "cloudflare", command: null, urlRegex: null });
 });
 afterEach(() => {
 	TUNNEL_EDGE_READY.timeoutMs = REAL_EDGE_READY.timeoutMs;
 	TUNNEL_EDGE_READY.pollMs = REAL_EDGE_READY.pollMs;
+	CUSTOM_TUNNEL_EDGE_READY.timeoutMs = REAL_CUSTOM_EDGE_READY.timeoutMs;
+	CUSTOM_TUNNEL_EDGE_READY.pollMs = REAL_CUSTOM_EDGE_READY.pollMs;
 	vi.unstubAllGlobals();
 });
 
@@ -345,7 +369,7 @@ describe("startTunnel", () => {
 		expect(url).toBe("https://slow-edge.trycloudflare.com");
 		expect(getTunnelState()).toBe("connected"); // best-effort fallback, not stuck
 		expect(loggerMocks.warn).toHaveBeenCalledWith(
-			"Tunnel /ready not confirmed within timeout; publishing URL best-effort",
+			"Tunnel edge not confirmed within timeout; publishing URL best-effort",
 			expect.objectContaining({ url: "https://slow-edge.trycloudflare.com" }),
 		);
 	});
@@ -742,5 +766,109 @@ describe("releaseMainTunnelForHandoff / adoptMainTunnel", () => {
 		} finally {
 			killSpy.mockRestore();
 		}
+	});
+});
+
+// ================================================================
+// Custom provider readiness — a public-URL probe stands in for cloudflared's
+// local /ready endpoint, which a bring-your-own tunnel does not have.
+// ================================================================
+
+describe("custom tunnel edge readiness", () => {
+	const COMMAND = "fake-tunnel {port}";
+
+	beforeEach(() => {
+		_resetState();
+		vi.clearAllMocks();
+		providerMocks.resolveRemoteTunnelProvider.mockReturnValue({
+			kind: "custom",
+			command: COMMAND,
+			urlRegex: GENERIC_TUNNEL_URL_REGEX,
+		});
+	});
+
+	function setupCustomSpawn(lines: string[]) {
+		const encoder = new TextEncoder();
+		const stream = (out: string[]) => new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const line of out) controller.enqueue(encoder.encode(line + "\n"));
+				controller.close();
+			},
+		});
+		(mockSpawn as Mock).mockReturnValue({
+			kill: vi.fn(),
+			exited: new Promise<void>(() => {}),
+			stdout: stream(lines),
+			stderr: stream([]),
+		});
+	}
+
+	it("probes the scraped public URL instead of a metrics endpoint", async () => {
+		const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+		vi.stubGlobal("fetch", fetchMock);
+		setupCustomSpawn(["Public: https://byo-abc.example.com"]);
+
+		const url = await startTunnel(8080);
+		expect(url).toBe("https://byo-abc.example.com");
+		expect(getTunnelState()).toBe("connected");
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://byo-abc.example.com",
+			expect.objectContaining({ method: "HEAD" }),
+		);
+		expect(loggerMocks.info).toHaveBeenCalledWith(
+			"Tunnel connected",
+			expect.objectContaining({ probe: "public-url", edgeCheck: "ready" }),
+		);
+	});
+
+	it("treats an auth-gated response as a routable edge", async () => {
+		// A tunnel that gates access answers 403 from its own edge — that still
+		// proves the hostname resolves and forwards, which is what readiness means.
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 403 })));
+		setupCustomSpawn(["Public: https://gated.example.com"]);
+
+		await startTunnel(8080);
+		expect(getTunnelState()).toBe("connected");
+		expect(loggerMocks.info).toHaveBeenCalledWith(
+			"Tunnel connected",
+			expect.objectContaining({ edgeCheck: "ready" }),
+		);
+		expect(loggerMocks.warn).not.toHaveBeenCalledWith(
+			"Tunnel edge not confirmed within timeout; publishing URL best-effort",
+			expect.anything(),
+		);
+	});
+
+	it("publishes best-effort with a warning when the public URL never answers", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ENOTFOUND"); }));
+		setupCustomSpawn(["Public: https://never-up.example.com"]);
+
+		const url = await startTunnel(8080);
+		expect(url).toBe("https://never-up.example.com");
+		expect(getTunnelState()).toBe("connected"); // best-effort, never stuck
+		expect(loggerMocks.info).toHaveBeenCalledWith(
+			"Tunnel connected",
+			expect.objectContaining({ probe: "public-url", edgeCheck: "unconfirmed" }),
+		);
+		expect(loggerMocks.warn).toHaveBeenCalledWith(
+			"Tunnel edge not confirmed within timeout; publishing URL best-effort",
+			expect.objectContaining({ url: "https://never-up.example.com" }),
+		);
+	});
+
+	it("keeps watching the public URL after connecting, instead of trusting process liveness", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+		setupCustomSpawn(["Public: https://watched.example.com"]);
+		await startTunnel(8080);
+
+		// The edge drops while the command stays alive — the case process liveness
+		// alone cannot see.
+		vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
+		await tunnelManager.checkHealth("main");
+
+		expect(loggerMocks.warn).toHaveBeenCalledWith(
+			"Tunnel public URL unreachable",
+			expect.objectContaining({ probe: "public-url", consecutiveFailures: 1 }),
+		);
 	});
 });
