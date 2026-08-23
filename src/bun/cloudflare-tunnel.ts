@@ -7,10 +7,11 @@ import {
 	buildCustomTunnelArgv,
 	isCustomTunnelBinaryAvailable,
 	resolveRemoteTunnelProvider,
+	tunnelCommandName,
 	type ResolvedTunnelProvider,
 } from "./tunnel-provider";
 
-const log = createLogger("cf-tunnel");
+const log = createLogger("tunnel");
 
 export type TunnelState = "idle" | "starting" | "connected" | "failed";
 export type TunnelKind = "main" | "task-port" | "task-shared";
@@ -209,16 +210,17 @@ export function parseTunnelMetricsUrl(line: string): string | null {
 	return `${base}/ready`;
 }
 
-function logCloudflaredLine(id: string, line: string): void {
+/** Attribute a piped output line to the tool that printed it, not always cloudflared. */
+function logTunnelLine(id: string, line: string, source: string): void {
 	const trimmed = line.trim();
 	if (!trimmed) return;
 	const extra = { id, line: trimmed };
 	if (/\b(ERR|ERROR|FTL|FATAL)\b/i.test(trimmed)) {
-		log.error("cloudflared", extra);
+		log.error(source, extra);
 	} else if (/\b(WRN|WARN|WARNING)\b/i.test(trimmed)) {
-		log.warn("cloudflared", extra);
+		log.warn(source, extra);
 	} else {
-		log.info("cloudflared", extra);
+		log.info(source, extra);
 	}
 }
 
@@ -227,7 +229,7 @@ function logCloudflaredLine(id: string, line: string): void {
  * released as soon as the public URL appeared, which discarded every later
  * reconnect error and could eventually back-pressure the child process.
  */
-function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: RegExp): Promise<string | null> {
+function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: RegExp, source: string): Promise<string | null> {
 	const reader = stream.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
@@ -238,7 +240,7 @@ function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: Reg
 	});
 
 	function processLine(line: string): void {
-		logCloudflaredLine(entry.id, line);
+		logTunnelLine(entry.id, line, source);
 		const metricsReadyUrl = parseTunnelMetricsUrl(line);
 		if (metricsReadyUrl) entry.metricsReadyUrl = metricsReadyUrl;
 		if (!urlResolved) {
@@ -399,8 +401,9 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 		});
 
 		const urlRegex = isCustom ? provider.urlRegex! : CLOUDFLARE_URL_REGEX;
-		const urlPromises = [monitorOutput(entry, proc.stderr!, urlRegex)];
-		if (isCustom && proc.stdout) urlPromises.push(monitorOutput(entry, proc.stdout as ReadableStream, urlRegex));
+		const source = isCustom ? tunnelCommandName(provider.command!) : "cloudflared";
+		const urlPromises = [monitorOutput(entry, proc.stderr!, urlRegex, source)];
+		if (isCustom && proc.stdout) urlPromises.push(monitorOutput(entry, proc.stdout as ReadableStream, urlRegex, source));
 		const url = await waitForUrl(firstUrl(urlPromises), URL_WAIT_TIMEOUT_MS);
 		if (url) {
 			// Wait until the edge actually routes the hostname before publishing it,
@@ -413,7 +416,8 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;
 			entry.url = url;
 			entry.state = "connected";
-			log.info("Tunnel connected", { id: opts.id, url, edgeReady });
+			// Do not claim a confirmed edge for a provider we never probed.
+			log.info("Tunnel connected", { id: opts.id, url, edgeCheck: isCustom ? "skipped" : String(edgeReady) });
 			if (!edgeReady) {
 				log.warn("Tunnel /ready not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });
 			}
@@ -421,7 +425,7 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			return entry;
 		}
 
-		log.warn("Tunnel URL not found in stderr within timeout", { id: opts.id });
+		log.warn("Tunnel URL not found in process output within timeout", { id: opts.id, provider: provider.kind });
 		entry.state = "failed";
 		stopEntry(opts.id);
 		return entry;

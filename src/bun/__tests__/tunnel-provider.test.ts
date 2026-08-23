@@ -20,7 +20,22 @@ import {
 	compileUrlPattern,
 	isCustomTunnelBinaryAvailable,
 	resolveRemoteTunnelProvider,
+	tunnelCommandName,
 } from "../tunnel-provider";
+
+describe("tunnelCommandName", () => {
+	it("names the tool the command runs", () => {
+		expect(tunnelCommandName("ngrok http {port} --log stdout")).toBe("ngrok");
+	});
+
+	it("strips a path so the log label stays short", () => {
+		expect(tunnelCommandName("/opt/tools/bin/expose --port {port}")).toBe("expose");
+	});
+
+	it("falls back to a generic label for a blank command", () => {
+		expect(tunnelCommandName("   ")).toBe("custom-tunnel");
+	});
+});
 
 describe("resolveRemoteTunnelProvider", () => {
 	it("defaults to cloudflare when nothing is configured", () => {

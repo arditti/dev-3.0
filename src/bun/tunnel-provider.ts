@@ -60,6 +60,12 @@ export function buildCustomTunnelArgv(command: string, targetPort: number): stri
 	return process.platform === "win32" ? ["cmd", "/c", line] : ["sh", "-c", line];
 }
 
+/** The tool a custom command runs, used to attribute its output lines in logs. */
+export function tunnelCommandName(command: string): string {
+	const binary = command.trim().split(/\s+/)[0] ?? "";
+	return binary.split(/[\\/]/).pop() || "custom-tunnel";
+}
+
 /** Best-effort availability: the command's first word resolves on PATH. */
 export function isCustomTunnelBinaryAvailable(command: string): boolean {
 	const binary = command.trim().split(/\s+/)[0];
