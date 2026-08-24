@@ -128,6 +128,7 @@ function renderModal(
 		globalSettings?: GlobalSettings;
 		task?: Task;
 		onGlobalSettingsChange?: (settings: GlobalSettings) => void;
+		agents?: CodingAgent[];
 	},
 ) {
 	return render(
@@ -136,7 +137,7 @@ function renderModal(
 				task={opts?.task ?? baseTask}
 				project={project}
 				targetStatus={opts?.targetStatus ?? "in-progress"}
-				agents={agents}
+				agents={opts?.agents ?? agents}
 				globalSettings={opts?.globalSettings ?? makeGlobalSettings()}
 				dispatch={opts?.dispatch ?? vi.fn()}
 				onClose={opts?.onClose ?? vi.fn()}
@@ -204,6 +205,42 @@ describe("LaunchVariantsModal", () => {
 
 			expect(getSelectedText(getHarnessButtons()[0])).toBe("Claude");
 			expect(getSelectedText(getModelButtons()[0])).toBe("Sonnet 5");
+			expect(getSelectedText(getModeButtons()[0])).toBe("Default");
+		});
+
+		it("preselects a bypass mode on the sandbox, and only there", () => {
+			// A first-run user cannot judge "do you want to proceed?" from the agent
+			// CLI, and the guided tour would wait on work that never starts.
+			const gs = makeGlobalSettings({ defaultAgentId: "builtin-claude", defaultConfigId: "claude-default" });
+			renderModal(makeProject({ sandbox: true }), { globalSettings: gs });
+			expect(getSelectedText(getModeButtons()[0])).toContain("Bypass");
+		});
+
+		it("keeps the user's model on the sandbox and swaps only the mode", () => {
+			// Live QA caught the first version taking the first bypass preset outright,
+			// which dragged an Opus 5 default onto Fable 5. Presets come in twins, so
+			// the sandbox must land on the bypass twin of the SAME model.
+			const paired: CodingAgent = {
+				id: "builtin-claude",
+				name: "Claude",
+				baseCommand: "claude",
+				isDefault: true,
+				configurations: [
+					{ id: "bypass-fable", name: "Bypass (Fable 5)", model: "claude-fable-5", permissionMode: "bypassPermissions" },
+					{ id: "auto-sonnet", name: "Auto (Sonnet 5)", model: "claude-sonnet-5", permissionMode: "auto" },
+					{ id: "bypass-sonnet", name: "Bypass (Sonnet 5)", model: "claude-sonnet-5", permissionMode: "bypassPermissions" },
+				],
+				defaultConfigId: "auto-sonnet",
+			};
+			const gs = makeGlobalSettings({ defaultAgentId: "builtin-claude", defaultConfigId: "auto-sonnet" });
+			renderModal(makeProject({ sandbox: true }), { globalSettings: gs, agents: [paired] });
+			expect(getSelectedText(getModelButtons()[0])).toBe("Sonnet 5");
+			expect(getSelectedText(getModeButtons()[0])).toContain("Bypass");
+		});
+
+		it("leaves the user's own default alone off the sandbox", () => {
+			const gs = makeGlobalSettings({ defaultAgentId: "builtin-claude", defaultConfigId: "claude-default" });
+			renderModal(makeProject(), { globalSettings: gs });
 			expect(getSelectedText(getModeButtons()[0])).toBe("Default");
 		});
 

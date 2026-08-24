@@ -91,6 +91,51 @@ per-screen would unmount mid-step. Five rules, mirrored in bible §5.4b:
    `completedTours`; afterwards help mode's banner carries "Walk me through the
    first task". A skip no longer counts as done.
 
+5. **Waiting is declared; the ending is an anchor going away.** A step carrying
+   `waitsForAnchor` expects its anchor later — the artifact panel exists only once the
+   agent publishes a report — so while it is missing the card parks, says it is waiting
+   on the agent, and hides its Next; neither the lost state nor a resync fires. The
+   last step's anchor disappearing exits as completed, because the merge-completion
+   dialog closing is precisely the end of the loop. The `dev-server` step stays manual
+   for a related reason: an artifact that arrived while the user was reading the
+   terminal step would already be on screen, and auto-advance only fires on
+   *appearance*, so it would have hung forever.
+
+**The sandbox launches in a bypass preset.** `Auto` maps to Claude Code's own
+`--permission-mode auto` with no `--dangerously-skip-permissions`, so the agent CLI —
+not dev3 — stops and asks about ordinary shell commands. Live QA watched exactly that
+happen on `rtk ls`: the first task never started, and a first-run user has no basis to
+judge the question. `LaunchVariantsModal.makeDefaultVariant` therefore preselects, **when
+`project.sandbox`**, the bypass *twin* of whatever the normal resolution would have
+picked — same `model`, same `effort`, only the permission mode different — falling
+back to any bypass preset and then to the normal pick. The first version took the
+first bypass configuration outright, and the second live run showed why that is
+wrong: an `Auto (Opus 5, Medium)` default launched the sandbox on `Bypass (Fable 5,
+Medium)`, silently changing the model as well as the mode. The user's own global
+default is untouched everywhere else, and the mode picker still shows what it picked.
+
+Two more rules came straight out of the live run, and both are about not lying:
+while a `waitsForAnchor` step is waiting, **nothing is shielded** — QA caught the agent
+asking for permission behind a full-screen shield, with no way to type the answer it
+was waiting for — and `click-anchor` on a **disabled** control flashes the ring instead
+of pressing it, because `Merge` stays disabled until the agent has committed and a
+click that silently does nothing reads as a broken card.
+
+The tour now runs to the actual end of a task: terminal → dev server → the agent's
+artifact → the diff → `Merge` → the "branch merged, complete the task?" dialog. Merge
+is pressed by the card (`click-anchor`) and dev3's own merge watcher raises that
+dialog, so the last step is a real dialog rather than a tour-invented one. The
+completion `✓` on the board card is deliberately NOT the ending: it would have walked
+the user off the task screen for one click.
+
+The sandbox repo changed shape to serve this: one page (`index.html`) with one green
+button, a dependency-free `server.js`, and `devScript: "node server.js"` with
+`portCount: 1` on the project, so the dev-server button has something to run. `node`
+rather than `python3` or `bun` because a machine with an npm-installed agent CLI has
+it, and the file is CommonJS so it runs under either runtime. The first prompt is the
+smallest visible change in the repo plus "show them in a dev3 artifact" — the
+before/after belongs in the agent's own report, not in tour steps.
+
 The `launch` step is anchored on the whole Launch dialog rather than its variant
 rows, because the button that launches sits in the dialog's footer — a hole around
 the rows would have shielded the user out of the one control the step is about.
@@ -125,6 +170,23 @@ is never blocked by dev3's own ignorance.
   quits, exactly as if the user had walked off. `__tests__/tour.test.ts` scans the
   components for every anchor in both directions, which is the only thing standing
   between a rename and a dead onboarding.
+- **The sandbox's dev server assumes `node` on PATH.** Absent, the dev-server window
+  prints a not-found error and the tour's dev-server step points at a button that does
+  nothing useful. The step is manual, so nothing hangs — but the sandbox's promise of
+  "no toolchain" is now "no toolchain beyond node".
+- **The sandbox's bypass preselect is a real bypass.** An agent with no permission
+  gate in a throwaway repo is the point, but it is the same machine — a first task
+  that goes badly wrong is not confined to the sandbox folder. Accepted because the
+  alternative, observed live, is a newcomer staring at a question they cannot answer.
+  A harness whose presets are not twinned (no bypass entry for the default's model)
+  still falls back to *some* bypass preset, so the model can change there — accepted,
+  because a sandbox that stops to ask is worse than a sandbox on another model.
+- **The artifact step depends on the agent doing as it is told.** An agent that fixes
+  the colour but publishes no artifact leaves the tour parked on a step that can only
+  be skipped. The prompt asks for it explicitly, which is a request, not a guarantee.
+- **The ending depends on dev3 raising the merge-completion dialog.** A suppressed or
+  toast-downgraded prompt (`shouldPrompt === false`, or `manualCompletion`) leaves the
+  tour on the merge step with its button re-pressable and Skip as the way out.
 - Ratcheting the `docs/ux` budget again (310 → 313) buys the manifest entry that
   stops the next agent inventing a second walk-through mechanism.
 
