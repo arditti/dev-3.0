@@ -11,7 +11,7 @@ const log = createLogger("tunnel-provider");
  * `cloudflare` is the built-in default (cloudflared quick tunnel, see
  * cloudflare-tunnel.ts). `custom` is bring-your-own-tunnel: any ngrok-like CLI
  * that takes a local port and prints a public https URL, configured in
- * Settings → System → Remote access tunnel.
+ * Settings → System → Tunnel provider.
  */
 export interface ResolvedTunnelProvider {
 	kind: "cloudflare" | "custom";

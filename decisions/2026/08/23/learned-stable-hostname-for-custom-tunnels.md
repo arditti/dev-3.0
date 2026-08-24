@@ -35,6 +35,15 @@ survived. An abandoned restart restarts the tunnel rather than re-adopting a pro
 no longer exists. Adopted custom tunnels also gain the public-URL health probe, since they
 have neither a metrics endpoint nor an exit promise.
 
+Per-task port tunnels also run through the custom provider, but they do **not**
+participate in the learning: the memory holds a single `(command, url)` pair, so
+concurrent port tunnels producing different URLs would flip-flop the record and
+destroy the main tunnel's proof; and the stability bit exists only for the main
+tunnel's self-update handoff, which port tunnels never take part in. `startEntry`
+records the observation only for `kind === "main"`. A fixed-hostname command that
+lands two live tunnels on one URL is logged as a warning — dev3 cannot arbitrate
+that collision, only name it.
+
 ## Risks
 
 A provider that is stable for two runs and rotates on the third loses its sessions across

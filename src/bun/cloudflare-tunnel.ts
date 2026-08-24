@@ -18,7 +18,8 @@ export type TunnelState = "idle" | "starting" | "connected" | "failed";
 export type TunnelKind = "main" | "task-port" | "task-shared";
 
 /**
- * One running cloudflared process + the metadata we need to address it.
+ * One running tunnel process (cloudflared or a custom command) + the metadata
+ * we need to address it.
  *
  *  - `id` is a stable key used in the manager map:
  *      • `"main"` for the headless web-UI tunnel (single instance per process)
@@ -104,7 +105,7 @@ const tunnels = new Map<string, TunnelEntry>();
 /**
  * Availability of whatever will actually run for the MAIN remote-access
  * tunnel: `cloudflared` for the built-in provider, or the first word of the
- * user's custom command (Settings → System → Remote access tunnel).
+ * user's custom command (Settings → System → Tunnel provider).
  */
 export function isTunnelBinaryAvailable(): boolean {
 	const provider = resolveRemoteTunnelProvider();
@@ -391,6 +392,26 @@ function matchesFilter(entry: TunnelEntry, filter?: TunnelFilter): boolean {
 	return true;
 }
 
+/**
+ * A fixed-hostname custom provider can serve only one tunnel at a time — a
+ * second concurrent invocation lands on the same public URL and the edge routes
+ * it to whichever process won. dev3 cannot fix that, but it can say it plainly
+ * instead of letting two surfaces advertise one URL that serves only one of them.
+ */
+function warnOnDuplicateUrl(entry: TunnelEntry): void {
+	if (!entry.url) return;
+	for (const other of tunnels.values()) {
+		if (other !== entry && other.url === entry.url) {
+			log.warn("Two live tunnels share one public URL — a fixed-hostname command cannot serve concurrent tunnels; make the hostname depend on {port}", {
+				id: entry.id,
+				conflictsWith: other.id,
+				url: entry.url,
+			});
+			return;
+		}
+	}
+}
+
 async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 	const existing = tunnels.get(opts.id);
 	if (existing && (existing.state === "starting" || existing.state === "connected")) {
@@ -419,12 +440,9 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 	};
 	tunnels.set(opts.id, entry);
 
-	// Bring-your-own-tunnel applies to the MAIN remote-access tunnel only for
-	// now; per-task port tunnels keep the built-in Cloudflare quick tunnels.
-	const provider: ResolvedTunnelProvider =
-		opts.kind === "main"
-			? resolveRemoteTunnelProvider()
-			: { kind: "cloudflare", command: null, urlRegex: null };
+	// One provider for every tunnel kind: the main remote-access tunnel and
+	// per-task port tunnels all run through the configured provider.
+	const provider: ResolvedTunnelProvider = resolveRemoteTunnelProvider();
 	const isCustom = provider.kind === "custom" && !!provider.command;
 
 	try {
@@ -467,13 +485,17 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;
 			entry.url = url;
 			entry.state = "connected";
-			if (isCustom) entry.stableHostname = recordCustomTunnelUrl(provider.command!, url);
+			// Hostname-stability learning belongs to the main tunnel alone: the memory
+			// holds one (command, url) pair, concurrent port tunnels would flip-flop it,
+			// and the stability bit only feeds the main tunnel's self-update handoff.
+			if (isCustom && opts.kind === "main") entry.stableHostname = recordCustomTunnelUrl(provider.command!, url);
+			if (isCustom) warnOnDuplicateUrl(entry);
 			log.info("Tunnel connected", {
 				id: opts.id,
 				url,
 				probe: isCustom ? "public-url" : "metrics-ready",
 				edgeCheck: edgeReady ? "ready" : "unconfirmed",
-				...(isCustom ? { hostname: entry.stableHostname ? "stable" : "unproven" } : {}),
+				...(isCustom && opts.kind === "main" ? { hostname: entry.stableHostname ? "stable" : "unproven" } : {}),
 			});
 			if (!edgeReady) {
 				log.warn("Tunnel edge not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });

@@ -364,7 +364,7 @@ if (wantTunnel && handoff?.tunnel) {
 	if (!isTunnelBinaryAvailable()) {
 		console.error("\n[dev3 remote] The tunnel binary is not installed — skipping public tunnel.");
 		console.error("              Built-in provider: `brew install cloudflared`. A custom tunnel");
-		console.error("              command is configured in Settings → System → Remote access tunnel.");
+		console.error("              command is configured in Settings → System → Tunnel provider.");
 		console.error("              Or pass --no-tunnel to silence this warning.\n");
 	} else {
 		console.log("[dev3 remote] Starting public tunnel...");

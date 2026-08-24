@@ -990,3 +990,84 @@ describe("custom tunnel hostname stability", () => {
 		}
 	});
 });
+
+// ================================================================
+// Custom provider on per-task port tunnels — one provider for every kind
+// ================================================================
+
+describe("custom provider on per-task tunnels", () => {
+	const COMMAND = "fake-tunnel {port}";
+
+	beforeEach(() => {
+		_resetState();
+		vi.clearAllMocks();
+		providerMocks.resolveRemoteTunnelProvider.mockReturnValue({
+			kind: "custom",
+			command: COMMAND,
+			urlRegex: GENERIC_TUNNEL_URL_REGEX,
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+	});
+
+	function setupCustomSpawn(urlByCall: string[]) {
+		let call = 0;
+		const encoder = new TextEncoder();
+		const stream = (out: string[]) => new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const line of out) controller.enqueue(encoder.encode(line + "\n"));
+				controller.close();
+			},
+		});
+		(mockSpawn as Mock).mockImplementation(() => ({
+			pid: 9000 + call,
+			kill: vi.fn(),
+			exited: new Promise<void>(() => {}),
+			stdout: stream([`Public: ${urlByCall[Math.min(call++, urlByCall.length - 1)]}`]),
+			stderr: stream([]),
+		}));
+	}
+
+	it("spawns the custom command for a task-port tunnel, with the port substituted", async () => {
+		setupCustomSpawn(["https://p3000.example.com"]);
+
+		const entry = await tunnelManager.start({ id: "task:t1:port:3000", kind: "task-port", targetPort: 3000, taskId: "t1" });
+
+		expect(entry.url).toBe("https://p3000.example.com");
+		const argv = (mockSpawn as Mock).mock.calls[0][0] as string[];
+		expect(argv[argv.length - 1]).toBe("fake-tunnel 3000");
+		expect(argv).not.toContain("cloudflared");
+	});
+
+	it("keeps hostname-stability learning out of port tunnels — the memory belongs to the main tunnel", async () => {
+		setupCustomSpawn(["https://p3000.example.com"]);
+
+		const entry = await tunnelManager.start({ id: "task:t1:port:3000", kind: "task-port", targetPort: 3000, taskId: "t1" });
+
+		expect(hostMemoryMocks.recordCustomTunnelUrl).not.toHaveBeenCalled();
+		expect(entry.stableHostname).toBe(false);
+	});
+
+	it("warns when two live tunnels land on one public URL (fixed-hostname command)", async () => {
+		setupCustomSpawn(["https://fixed.example.com", "https://fixed.example.com"]);
+
+		await tunnelManager.start({ id: "main", kind: "main", targetPort: 8080 });
+		await tunnelManager.start({ id: "task:t1:port:3000", kind: "task-port", targetPort: 3000, taskId: "t1" });
+
+		expect(loggerMocks.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Two live tunnels share one public URL"),
+			expect.objectContaining({ id: "task:t1:port:3000", conflictsWith: "main" }),
+		);
+	});
+
+	it("stays quiet when concurrent tunnels get distinct hostnames", async () => {
+		setupCustomSpawn(["https://a.example.com", "https://b.example.com"]);
+
+		await tunnelManager.start({ id: "main", kind: "main", targetPort: 8080 });
+		await tunnelManager.start({ id: "task:t1:port:3000", kind: "task-port", targetPort: 3000, taskId: "t1" });
+
+		expect(loggerMocks.warn).not.toHaveBeenCalledWith(
+			expect.stringContaining("Two live tunnels share one public URL"),
+			expect.anything(),
+		);
+	});
+});
