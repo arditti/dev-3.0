@@ -102,7 +102,9 @@ type RemoteAccessQRData = {
 	tunnelState: string;
 	tunnelBinaryInstalled: boolean;
 	/** Which provider serves the public tunnel; absent ⇒ built-in Cloudflare. */
-	tunnelProvider?: "cloudflare" | "custom";
+	tunnelProvider?: "cloudflare" | "custom" | "misconfigured";
+	/** Why the last main-tunnel start failed (e.g. "command-not-found"). */
+	tunnelFailureReason?: string | null;
 	interfaces?: RemoteNetInterface[];
 	selectedHost?: string;
 };
@@ -2857,14 +2859,14 @@ function App() {
 									className="accent-accent w-4 h-4"
 								/>
 								<span className="text-fg text-sm">
-									{t(remoteQR.tunnelProvider === "custom" ? "remote.anywhereToggleCustom" : "remote.anywhereToggle")}
+									{t(remoteQR.tunnelProvider === "cloudflare" || !remoteQR.tunnelProvider ? "remote.anywhereToggle" : "remote.anywhereToggleCustom")}
 								</span>
 							</label>
 
-							{tunnelWanted && !remoteQR.tunnelBinaryInstalled && remoteQR.tunnelProvider === "custom" && (
+							{tunnelWanted && !remoteQR.tunnelBinaryInstalled && remoteQR.tunnelProvider === "misconfigured" && (
 								<div className="text-left space-y-2">
-									<p className="text-danger text-xs font-medium">{t("remote.customTunnelNotFound")}</p>
-									<p className="text-fg-2 text-xs">{t("remote.customTunnelNotFoundHint")}</p>
+									<p className="text-danger text-xs font-medium">{t("remote.customTunnelEmpty")}</p>
+									<p className="text-fg-2 text-xs">{t("remote.customTunnelEmptyHint")}</p>
 									<div className="flex items-center gap-4">
 										<button
 											type="button"
@@ -2892,7 +2894,7 @@ function App() {
 								</div>
 							)}
 
-							{tunnelWanted && !remoteQR.tunnelBinaryInstalled && remoteQR.tunnelProvider !== "custom" && (
+							{tunnelWanted && !remoteQR.tunnelBinaryInstalled && remoteQR.tunnelProvider !== "custom" && remoteQR.tunnelProvider !== "misconfigured" && (
 								<div className="text-left space-y-2">
 									<p className="text-danger text-xs font-medium">{t("remote.cloudflaredNotFound")}</p>
 									<p className="text-fg-2 text-xs">{t("remote.cloudflaredInstallHint")}</p>
@@ -2973,9 +2975,29 @@ function App() {
 							)}
 
 							{tunnelWanted && remoteQR.tunnelState === "failed" && (
-								<div className="flex items-center gap-2">
-									<div className="w-2 h-2 rounded-full bg-danger" />
-									<span className="text-danger text-xs">{t("remote.tunnelFailed")}</span>
+								<div className="text-left space-y-2">
+									<div className="flex items-center gap-2">
+										<div className="w-2 h-2 rounded-full bg-danger" />
+										<span className="text-danger text-xs">
+											{t(remoteQR.tunnelFailureReason === "command-not-found" ? "remote.customTunnelNotFound" : "remote.tunnelFailed")}
+										</span>
+									</div>
+									{remoteQR.tunnelFailureReason === "command-not-found" && (
+										<>
+											<p className="text-fg-2 text-xs">{t("remote.customTunnelNotFoundHint")}</p>
+											<button
+												type="button"
+												data-testid="remote-tunnel-settings-link-failed"
+												onClick={() => {
+													closeRemoteQR();
+													navigate({ screen: "settings", section: "system" });
+												}}
+												className="text-xs text-accent hover:text-accent-emphasis transition-colors"
+											>
+												{t("remote.tunnelSettingsLink")}
+											</button>
+										</>
+									)}
 								</div>
 							)}
 						</div>

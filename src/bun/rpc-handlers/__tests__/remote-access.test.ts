@@ -20,6 +20,7 @@ vi.mock("../../tunnel-provider", () => ({
 vi.mock("../../cloudflare-tunnel", () => ({
 	isTunnelBinaryAvailable: mocks.isTunnelBinaryAvailable,
 	getTunnelState: mocks.getTunnelState,
+	getMainTunnelFailureReason: () => null,
 	startTunnel: mocks.startTunnel,
 	stopTunnel: mocks.stopTunnel,
 }));

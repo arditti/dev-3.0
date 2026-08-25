@@ -20,6 +20,7 @@ import type { RemoteNetInterface } from "../shared/types";
 import { NATIVE_STREAM_SINCE_PARAM, parseSinceParam } from "../shared/native-terminal-stream";
 import { PATHS } from "./electrobun-platform";
 import { createLogger } from "./logger";
+import { isCustomTunnelProviderActive } from "./tunnel-provider";
 import { initSecret, createQrToken, createSessionToken, exchangeQrForSession, refreshSession, verifySessionToken, SESSION_TOKEN_TTL_S } from "./jwt";
 import { getTunnelUrl, getTunnelState, tunnelManager } from "./cloudflare-tunnel";
 import { loadSettingsSync } from "./settings";
@@ -79,8 +80,14 @@ export function checkOrigin(req: Request): boolean {
 	const host = req.headers.get("host");
 	// A Host-rewriting tunnel proxy (ngrok-style BYO tunnels) sends
 	// `Host: localhost:<port>` and carries the public hostname in
-	// X-Forwarded-Host — compare against that too (first entry if proxies chain).
-	const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || null;
+	// X-Forwarded-Host (first entry if proxies chain). That header is
+	// client-controlled on a direct connection — an attacker setting both it
+	// and Origin would make the check compare a value against itself — so it
+	// is honored ONLY while a custom provider is configured; the default
+	// posture stays Origin === Host (#1498 §3).
+	const forwardedHost = isCustomTunnelProviderActive()
+		? req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || null
+		: null;
 	if (!host && !forwardedHost) return false;
 	try {
 		const originHost = new URL(origin).host;

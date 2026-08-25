@@ -6,7 +6,7 @@
  * secret file, so cookie issuance, validation, and restart survival are
  * exercised end-to-end at the Request/Response seam.
  */
-import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -36,6 +36,16 @@ vi.mock("../cloudflare-tunnel", () => ({
 	getTunnelUrl: vi.fn().mockReturnValue(null),
 	getTunnelState: vi.fn().mockReturnValue("stopped"),
 	tunnelManager: { list: vi.fn().mockReturnValue([]) },
+}));
+
+// checkOrigin honors X-Forwarded-Host only under a custom tunnel provider;
+// tests flip this instead of the settings file on disk.
+const tunnelProviderMocks = vi.hoisted(() => ({
+	customActive: { value: false },
+}));
+
+vi.mock("../tunnel-provider", () => ({
+	isCustomTunnelProviderActive: () => tunnelProviderMocks.customActive.value,
 }));
 
 vi.mock("../settings", () => ({
@@ -181,33 +191,75 @@ describe("checkOrigin", () => {
 	});
 
 	// Host-rewriting tunnel proxies: Host arrives as localhost:<port>, the
-	// public hostname rides in X-Forwarded-Host.
-	it("allows Origin matching X-Forwarded-Host when the proxy rewrote Host", () => {
-		expect(checkOrigin(reqWith({
-			host: "localhost:4242",
-			"x-forwarded-host": "me-app.tunnel.example.com",
-			origin: "https://me-app.tunnel.example.com",
-		}))).toBe(true);
+	// public hostname rides in X-Forwarded-Host — honored only while a custom
+	// provider is configured, because the header is client-controlled on a
+	// direct connection.
+	describe("with a custom tunnel provider configured", () => {
+		beforeEach(() => {
+			tunnelProviderMocks.customActive.value = true;
+		});
+		afterEach(() => {
+			tunnelProviderMocks.customActive.value = false;
+		});
+
+		it("allows Origin matching X-Forwarded-Host when the proxy rewrote Host", () => {
+			expect(checkOrigin(reqWith({
+				host: "localhost:4242",
+				"x-forwarded-host": "me-app.tunnel.example.com",
+				origin: "https://me-app.tunnel.example.com",
+			}))).toBe(true);
+		});
+
+		it("uses only the first X-Forwarded-Host entry when proxies chain", () => {
+			expect(checkOrigin(reqWith({
+				host: "localhost:4242",
+				"x-forwarded-host": "me-app.tunnel.example.com, inner.proxy.local",
+				origin: "https://me-app.tunnel.example.com",
+			}))).toBe(true);
+			expect(checkOrigin(reqWith({
+				host: "localhost:4242",
+				"x-forwarded-host": "me-app.tunnel.example.com, evil.example.com",
+				origin: "https://evil.example.com",
+			}))).toBe(false);
+		});
+
+		it("still rejects a foreign origin when X-Forwarded-Host is present", () => {
+			expect(checkOrigin(reqWith({
+				host: "localhost:4242",
+				"x-forwarded-host": "me-app.tunnel.example.com",
+				origin: "https://evil.example.com",
+			}))).toBe(false);
+		});
 	});
 
-	it("uses only the first X-Forwarded-Host entry when proxies chain", () => {
+	// The case that would have caught the ungated version: an attacker who
+	// controls the request controls BOTH Origin and X-Forwarded-Host, making
+	// the check compare a value against itself.
+	it("rejects an attacker setting both Origin and X-Forwarded-Host on the default provider", () => {
 		expect(checkOrigin(reqWith({
-			host: "localhost:4242",
-			"x-forwarded-host": "me-app.tunnel.example.com, inner.proxy.local",
-			origin: "https://me-app.tunnel.example.com",
-		}))).toBe(true);
+			host: "abc.trycloudflare.com",
+			"x-forwarded-host": "evil.com",
+			origin: "https://evil.com",
+		}))).toBe(false);
 		expect(checkOrigin(reqWith({
-			host: "localhost:4242",
-			"x-forwarded-host": "me-app.tunnel.example.com, evil.example.com",
-			origin: "https://evil.example.com",
+			host: "192.168.1.5:4242",
+			"x-forwarded-host": "evil.com",
+			origin: "https://evil.com",
 		}))).toBe(false);
 	});
 
-	it("still rejects a foreign origin when X-Forwarded-Host is present", () => {
+	it("ignores X-Forwarded-Host entirely while the built-in provider is active", () => {
+		// Host-preserving cloudflared still matches on Host, so nothing breaks…
+		expect(checkOrigin(reqWith({
+			host: "abc.trycloudflare.com",
+			"x-forwarded-host": "whatever.example.com",
+			origin: "https://abc.trycloudflare.com",
+		}))).toBe(true);
+		// …and a rewritten Host without a custom provider does not authenticate.
 		expect(checkOrigin(reqWith({
 			host: "localhost:4242",
 			"x-forwarded-host": "me-app.tunnel.example.com",
-			origin: "https://evil.example.com",
+			origin: "https://me-app.tunnel.example.com",
 		}))).toBe(false);
 	});
 });

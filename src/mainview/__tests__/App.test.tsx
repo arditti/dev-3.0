@@ -61,6 +61,7 @@ vi.mock("../rpc", () => ({
 				tunnelState: "idle",
 				tunnelBinaryInstalled: false,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 				interfaces: [],
 				selectedHost: "127.0.0.1",
 			}),
@@ -1883,6 +1884,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "idle",
 				tunnelBinaryInstalled: false,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 			};
 
 			window.dispatchEvent(new CustomEvent("rpc:showRemoteAccessQR", { detail: qrData }));
@@ -1906,6 +1908,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "connected",
 				tunnelBinaryInstalled: true,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 			};
 
 			window.dispatchEvent(new CustomEvent("rpc:showRemoteAccessQR", { detail: qrData }));
@@ -1930,6 +1933,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 				},
 			}));
 			await waitFor(() => expect(screen.getByText("Copy URL")).toBeInTheDocument());
@@ -1947,6 +1951,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "starting",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 				},
 			}));
 			await waitFor(() => expect(remoteButton.className).toContain("remote-access-active"));
@@ -1958,6 +1963,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "failed",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 				},
 			}));
 			await waitFor(() => expect(remoteButton.className).not.toContain("remote-access-active"));
@@ -1973,6 +1979,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "idle",
 				tunnelBinaryInstalled: false,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 			};
 			window.dispatchEvent(new CustomEvent("rpc:showRemoteAccessQR", { detail: qrData }));
 
@@ -2001,6 +2008,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: false,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 				},
 			}));
 
@@ -2021,6 +2029,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "idle",
 				tunnelBinaryInstalled: true,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 				interfaces: [],
 				selectedHost: "192.168.0.1",
 			});
@@ -2032,6 +2041,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "connected",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 				},
 			}));
 
@@ -2057,6 +2067,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "idle",
 				tunnelBinaryInstalled: false,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 			};
 
 			// Open → consume → should be disabled
@@ -2089,6 +2100,7 @@ describe("App keyboard shortcuts", () => {
 						tunnelState: "connected",
 						tunnelBinaryInstalled: true,
 						tunnelProvider: "cloudflare" as const,
+						tunnelFailureReason: null,
 					},
 				}));
 				window.dispatchEvent(new CustomEvent("rpc:qrTokenConsumed"));
@@ -2100,6 +2112,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "connected",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [],
 					selectedHost: "",
 				});
@@ -2126,6 +2139,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "connected",
 				tunnelBinaryInstalled: true,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 				interfaces: [],
 				selectedHost: "",
 			});
@@ -2139,6 +2153,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [],
 					selectedHost: "192.168.0.1",
 					autoStartTunnel: true,
@@ -2167,6 +2182,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [],
 					selectedHost: "192.168.0.1",
 					autoStartTunnel: true,
@@ -2185,6 +2201,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "connected",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [],
 					selectedHost: "",
 				});
@@ -2205,6 +2222,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: false,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [],
 					selectedHost: "192.168.0.1",
 				},
@@ -2229,6 +2247,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "connected",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [],
 					selectedHost: "",
 					autoStartTunnel: true,
@@ -2281,6 +2300,7 @@ describe("App keyboard shortcuts", () => {
 				tunnelState: "idle",
 				tunnelBinaryInstalled: false,
 				tunnelProvider: "cloudflare" as const,
+				tunnelFailureReason: null,
 				interfaces,
 				selectedHost: "127.0.0.1",
 			});
@@ -2291,6 +2311,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: false,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces,
 					selectedHost: "192.168.0.1",
 				},
@@ -2317,6 +2338,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "idle",
 					tunnelBinaryInstalled: false,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 				},
 			}));
 			const toggle = await screen.findByLabelText("Accessible from anywhere (Cloudflare Tunnel)");
@@ -2341,6 +2363,7 @@ describe("App keyboard shortcuts", () => {
 					tunnelState: "connected",
 					tunnelBinaryInstalled: true,
 					tunnelProvider: "cloudflare" as const,
+					tunnelFailureReason: null,
 					interfaces: [
 						{ name: "en0", address: "192.168.0.1", internal: false },
 						{ name: "loopback", address: "127.0.0.1", internal: true },

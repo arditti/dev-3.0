@@ -4,8 +4,8 @@ import type { RemoteNetInterface } from "../../shared/types";
 /** Give Cloudflare's quick-tunnel hostname time to propagate before publishing it to the UI. */
 export const TUNNEL_DNS_SETTLE_DELAY_MS = 5_000;
 
-async function getRemoteAccessQR(params: { tunnel?: boolean; host?: string }): Promise<{ qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom"; interfaces: RemoteNetInterface[]; selectedHost: string }> {
-	const { isTunnelBinaryAvailable, getTunnelState, startTunnel } = await import("../cloudflare-tunnel");
+async function getRemoteAccessQR(params: { tunnel?: boolean; host?: string }): Promise<{ qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason: string | null; interfaces: RemoteNetInterface[]; selectedHost: string }> {
+	const { isTunnelBinaryAvailable, getTunnelState, getMainTunnelFailureReason, startTunnel } = await import("../cloudflare-tunnel");
 	const { resolveRemoteTunnelProvider } = await import("../tunnel-provider");
 	const { getServerPort } = await import("../remote-access-server");
 	const tunnelBinaryInstalled = isTunnelBinaryAvailable();
@@ -33,14 +33,10 @@ async function getRemoteAccessQR(params: { tunnel?: boolean; host?: string }): P
 		tunnelState: getTunnelState(),
 		tunnelBinaryInstalled,
 		tunnelProvider,
+		tunnelFailureReason: getMainTunnelFailureReason(),
 		interfaces: getLocalInterfaces(),
 		selectedHost: resolveAccessHost(host),
 	};
-}
-
-async function checkTunnelBinary(): Promise<{ installed: boolean }> {
-	const { isTunnelBinaryAvailable } = await import("../cloudflare-tunnel");
-	return { installed: isTunnelBinaryAvailable() };
 }
 
 async function startTunnel(): Promise<{ url: string | null; state: string }> {
@@ -57,7 +53,6 @@ async function stopTunnel(): Promise<void> {
 
 export const remoteAccessHandlers = {
 	getRemoteAccessQR,
-	checkTunnelBinary,
 	startTunnel,
 	stopTunnel,
 };

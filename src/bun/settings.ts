@@ -58,15 +58,16 @@ function sanitizeShortcutOverrides(raw: unknown): GlobalSettings["keyboardShortc
 }
 
 /**
- * `provider: "custom"` is meaningful only with a non-blank command; anything
- * else collapses to "no custom tunnel" (undefined ⇒ built-in Cloudflare).
+ * `provider: "custom"` survives even with a blank command: the user's choice
+ * to leave Cloudflare must fail closed (no tunnel starts, the UI says the
+ * command is empty), never silently collapse back to the built-in provider —
+ * see the `misconfigured` kind in tunnel-provider.ts.
  */
 function sanitizeRemoteTunnel(raw: unknown): GlobalSettings["remoteTunnel"] {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const r = raw as Record<string, unknown>;
 	if (r.provider !== "custom") return undefined;
-	const command = typeof r.command === "string" && r.command.trim() ? r.command : undefined;
-	if (!command) return undefined;
+	const command = typeof r.command === "string" ? r.command : "";
 	const urlPattern = typeof r.urlPattern === "string" && r.urlPattern.trim() ? r.urlPattern : undefined;
 	return { provider: "custom", command, urlPattern };
 }

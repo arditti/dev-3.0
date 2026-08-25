@@ -58,6 +58,7 @@ import {
 	adoptMainTunnel,
 	releaseMainTunnelForHandoff,
 	stopMainTunnelForStableHandoff,
+	getMainTunnelFailureReason,
 	TUNNEL_EDGE_READY,
 	CUSTOM_TUNNEL_EDGE_READY,
 	_resetState,
@@ -1034,7 +1035,7 @@ describe("custom provider on per-task tunnels", () => {
 
 		expect(entry.url).toBe("https://p3000.example.com");
 		const argv = (mockSpawn as Mock).mock.calls[0][0] as string[];
-		expect(argv[argv.length - 1]).toBe("fake-tunnel 3000");
+		expect(argv[argv.length - 1]).toBe("exec fake-tunnel 3000");
 		expect(argv).not.toContain("cloudflared");
 	});
 
@@ -1069,5 +1070,115 @@ describe("custom provider on per-task tunnels", () => {
 			expect.stringContaining("Two live tunnels share one public URL"),
 			expect.anything(),
 		);
+	});
+});
+
+// ================================================================
+// Fail-closed misconfiguration + runtime-derived availability
+// ================================================================
+
+describe("misconfigured custom provider (blank command)", () => {
+	beforeEach(() => {
+		_resetState();
+		vi.clearAllMocks();
+		providerMocks.resolveRemoteTunnelProvider.mockReturnValue({
+			kind: "misconfigured",
+			command: null,
+			urlRegex: null,
+		});
+	});
+
+	it("starts NOTHING — never falls back to cloudflared", async () => {
+		const url = await startTunnel(8080);
+
+		expect(url).toBeNull();
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(getMainTunnelFailureReason()).toBe("command-empty");
+	});
+
+	it("reports the binary as unavailable so the modal explains instead of toggling", () => {
+		expect(isTunnelBinaryAvailable()).toBe(false);
+	});
+});
+
+describe("custom command availability is derived from the run, not a PATH probe", () => {
+	beforeEach(() => {
+		_resetState();
+		vi.clearAllMocks();
+		providerMocks.resolveRemoteTunnelProvider.mockReturnValue({
+			kind: "custom",
+			// The shapes a string probe gets wrong: quoted path + env assignment.
+			command: 'NGROK_AUTHTOKEN=abc "/opt/my tools/tunnel.sh" {port}',
+			urlRegex: GENERIC_TUNNEL_URL_REGEX,
+		});
+	});
+
+	it("never pre-judges a custom command", () => {
+		expect(isTunnelBinaryAvailable()).toBe(true);
+		expect(mockSpawnSync).not.toHaveBeenCalled();
+	});
+
+	it("records command-not-found when sh exits 127 before printing a URL", async () => {
+		const encoder = new TextEncoder();
+		const stream = (out: string[]) => new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const line of out) controller.enqueue(encoder.encode(line + "\n"));
+				controller.close();
+			},
+		});
+		(mockSpawn as Mock).mockReturnValue({
+			pid: 4141,
+			kill: vi.fn(),
+			exited: Promise.resolve(127),
+			stdout: stream([]),
+			stderr: stream(["sh: tunnel.sh: command not found"]),
+		});
+
+		const url = await startTunnel(8080);
+
+		expect(url).toBeNull();
+		expect(getMainTunnelFailureReason()).toBe("command-not-found");
+	});
+});
+
+describe("metrics line from a custom CLI is ignored", () => {
+	beforeEach(() => {
+		_resetState();
+		vi.clearAllMocks();
+		providerMocks.resolveRemoteTunnelProvider.mockReturnValue({
+			kind: "custom",
+			command: "fake-tunnel {port}",
+			urlRegex: GENERIC_TUNNEL_URL_REGEX,
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+	});
+
+	it("keeps the public-URL health probe even when the CLI prints a metrics-server line", async () => {
+		const encoder = new TextEncoder();
+		const stream = (out: string[]) => new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const line of out) controller.enqueue(encoder.encode(line + "\n"));
+				controller.close();
+			},
+		});
+		(mockSpawn as Mock).mockReturnValue({
+			pid: 4242,
+			kill: vi.fn(),
+			exited: new Promise<void>(() => {}),
+			stdout: stream([
+				"Starting metrics server on 127.0.0.1:9999/metrics",
+				"Public: https://byo.example.com",
+			]),
+			stderr: stream([]),
+		});
+
+		await startTunnel(8080);
+
+		const entry = tunnelManager.get("main");
+		expect(entry?.url).toBe("https://byo.example.com");
+		// A /ready endpoint that is not cloudflared's must not displace the
+		// public-URL probe this provider relies on.
+		expect(entry?.metricsReadyUrl).toBeNull();
+		expect(entry?.publicProbeUrl).toBe("https://byo.example.com");
 	});
 });

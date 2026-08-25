@@ -5,7 +5,7 @@ import { createLogger } from "./logger";
 import { isProcessAlive } from "./remote-state";
 import {
 	buildCustomTunnelArgv,
-	isCustomTunnelBinaryAvailable,
+	extractTunnelUrl,
 	resolveRemoteTunnelProvider,
 	tunnelCommandName,
 	type ResolvedTunnelProvider,
@@ -103,15 +103,31 @@ export const CUSTOM_TUNNEL_EDGE_READY = { timeoutMs: 10_000, pollMs: 750 };
 const tunnels = new Map<string, TunnelEntry>();
 
 /**
+ * Why the LAST main-tunnel start failed, for the Remote Access modal — the
+ * entry itself is deleted on failure, so the reason has to outlive it.
+ * `command-not-found` and `command-empty` both point the user at the tunnel
+ * settings rather than a generic "failed".
+ */
+export type TunnelFailureReason = "command-not-found" | "command-empty" | "no-url";
+let mainTunnelFailureReason: TunnelFailureReason | null = null;
+
+export function getMainTunnelFailureReason(): TunnelFailureReason | null {
+	return mainTunnelFailureReason;
+}
+
+/**
  * Availability of whatever will actually run for the MAIN remote-access
  * tunnel: `cloudflared` for the built-in provider, or the first word of the
  * user's custom command (Settings → System → Tunnel provider).
  */
 export function isTunnelBinaryAvailable(): boolean {
 	const provider = resolveRemoteTunnelProvider();
-	if (provider.kind === "custom" && provider.command) {
-		return isCustomTunnelBinaryAvailable(provider.command);
-	}
+	// A custom command is never pre-judged: shell-quoted paths and leading
+	// VAR=value assignments defeat any string probe. Availability is derived
+	// from the outcome instead — a `sh -c` that exits 127 IS "command not
+	// found", measured on the exact line that runs (see startEntry).
+	if (provider.kind === "custom") return true;
+	if (provider.kind === "misconfigured") return false;
 	const result = spawnSync(["which", "cloudflared"]);
 	return result.exitCode === 0;
 }
@@ -250,7 +266,7 @@ function logTunnelLine(id: string, line: string, source: string): void {
  * released as soon as the public URL appeared, which discarded every later
  * reconnect error and could eventually back-pressure the child process.
  */
-function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: RegExp, source: string): Promise<string | null> {
+function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: RegExp, source: string, parseMetrics: boolean): Promise<string | null> {
 	const reader = stream.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
@@ -262,10 +278,15 @@ function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: Reg
 
 	function processLine(line: string): void {
 		logTunnelLine(entry.id, line, source);
-		const metricsReadyUrl = parseTunnelMetricsUrl(line);
-		if (metricsReadyUrl) entry.metricsReadyUrl = metricsReadyUrl;
+		// Only cloudflared's metrics endpoint is trusted: a custom CLI that
+		// happens to print a metrics-server line must not silently replace its
+		// public-URL health probe with a /ready poll that is not cloudflared's.
+		if (parseMetrics) {
+			const metricsReadyUrl = parseTunnelMetricsUrl(line);
+			if (metricsReadyUrl) entry.metricsReadyUrl = metricsReadyUrl;
+		}
 		if (!urlResolved) {
-			const url = line.match(urlRegex)?.[0] ?? null;
+			const url = extractTunnelUrl(line, urlRegex);
 			if (url) {
 				urlResolved = true;
 				resolveUrl(url);
@@ -445,6 +466,17 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 	const provider: ResolvedTunnelProvider = resolveRemoteTunnelProvider();
 	const isCustom = provider.kind === "custom" && !!provider.command;
 
+	// Fail closed: "custom" with a blank command starts NOTHING. Falling back
+	// to cloudflared here would hand a public quick tunnel to exactly the user
+	// who selected Custom because their network forbids cloudflared.
+	if (provider.kind === "misconfigured") {
+		log.warn("Custom tunnel provider selected but its command is empty — not starting a tunnel", { id: opts.id });
+		if (opts.kind === "main") mainTunnelFailureReason = "command-empty";
+		entry.state = "failed";
+		tunnels.delete(opts.id);
+		return entry;
+	}
+
 	try {
 		const argv = isCustom ? buildCustomTunnelArgv(provider.command!, opts.targetPort) : buildTunnelArgv(opts.targetPort);
 		// cloudflared logs to stderr; a custom CLI may print its URL on either
@@ -453,8 +485,12 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 		entry.process = proc;
 		if (isCustom) log.info("Starting custom tunnel command", { id: opts.id, targetPort: opts.targetPort });
 
-		// Reset state when the cloudflared process exits unexpectedly.
+		// Reset state when the tunnel process exits unexpectedly. The exit code
+		// is also the availability signal for a custom command: sh exits 127 for
+		// "command not found" (126 for not-executable) on the line that ran.
+		let lastExitCode: number | null = null;
 		proc.exited.then((exitCode) => {
+			lastExitCode = exitCode;
 			log.info("Tunnel process exited", { id: opts.id, exitCode });
 			const current = tunnels.get(opts.id);
 			if (current === entry) {
@@ -468,8 +504,8 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 
 		const urlRegex = isCustom ? provider.urlRegex! : CLOUDFLARE_URL_REGEX;
 		const source = isCustom ? tunnelCommandName(provider.command!) : "cloudflared";
-		const urlPromises = [monitorOutput(entry, proc.stderr!, urlRegex, source)];
-		if (isCustom && proc.stdout) urlPromises.push(monitorOutput(entry, proc.stdout as ReadableStream, urlRegex, source));
+		const urlPromises = [monitorOutput(entry, proc.stderr!, urlRegex, source, !isCustom)];
+		if (isCustom && proc.stdout) urlPromises.push(monitorOutput(entry, proc.stdout as ReadableStream, urlRegex, source, !isCustom));
 		const url = await waitForUrl(firstUrl(urlPromises), URL_WAIT_TIMEOUT_MS);
 		if (url) {
 			// Wait until the edge actually routes the hostname before publishing it,
@@ -485,6 +521,7 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;
 			entry.url = url;
 			entry.state = "connected";
+			if (opts.kind === "main") mainTunnelFailureReason = null;
 			// Hostname-stability learning belongs to the main tunnel alone: the memory
 			// holds one (command, url) pair, concurrent port tunnels would flip-flop it,
 			// and the stability bit only feeds the main tunnel's self-update handoff.
@@ -504,7 +541,13 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			return entry;
 		}
 
-		log.warn("Tunnel URL not found in process output within timeout", { id: opts.id, provider: provider.kind });
+		const notFound = isCustom && (lastExitCode === 127 || lastExitCode === 126);
+		if (notFound) {
+			log.warn("Custom tunnel command not found — sh could not run it", { id: opts.id, exitCode: lastExitCode });
+		} else {
+			log.warn("Tunnel URL not found in process output within timeout", { id: opts.id, provider: provider.kind });
+		}
+		if (opts.kind === "main") mainTunnelFailureReason = notFound ? "command-not-found" : "no-url";
 		entry.state = "failed";
 		stopEntry(opts.id);
 		return entry;
@@ -522,10 +565,21 @@ function stopEntry(id: string): void {
 	if (entry.healthCheckTimer) clearInterval(entry.healthCheckTimer);
 	entry.healthCheckTimer = null;
 	if (entry.process) {
+		const pid = entry.process.pid;
 		try {
 			entry.process.kill();
 		} catch {
 			// process may already be dead
+		}
+		// A custom command that is a pipeline keeps its wrapper shell (no exec),
+		// so the signal above hits sh and the tunnel it spawned would live on.
+		// Sweep direct children best-effort; a plain command has none.
+		if (process.platform !== "win32" && pid) {
+			try {
+				spawnSync(["pkill", "-P", String(pid)]);
+			} catch {
+				// pkill missing or nothing to kill — the common case is no children
+			}
 		}
 	}
 	if (entry.adoptedPid !== null) {
@@ -833,4 +887,5 @@ export function _resetState(): void {
 		if (entry.healthCheckTimer) clearInterval(entry.healthCheckTimer);
 	}
 	tunnels.clear();
+	mainTunnelFailureReason = null;
 }

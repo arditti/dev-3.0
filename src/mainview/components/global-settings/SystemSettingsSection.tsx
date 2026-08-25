@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { GlobalSettings, RemoteTunnelSettings } from "../../../shared/types";
 import type { UpdateChannel } from "../../../shared/update-channel";
 import type { TFunction } from "../../i18n";
@@ -82,48 +83,7 @@ export default function SystemSettingsSection({
 						<option value="custom">{t("settings.remoteTunnelCustom")}</option>
 					</select>
 					{globalSettings.remoteTunnel?.provider === "custom" ? (
-						<div className="mt-3 space-y-3">
-							<div>
-								<label htmlFor="remote-tunnel-command" className="block text-fg-2 text-xs mb-1">
-									{t("settings.remoteTunnelCommand")}
-								</label>
-								<input
-									id="remote-tunnel-command"
-									data-testid="remote-tunnel-command"
-									type="text"
-									defaultValue={globalSettings.remoteTunnel.command ?? ""}
-									placeholder="ngrok http {port} --log stdout"
-									onBlur={(event) =>
-										onRemoteTunnelChange({
-											...globalSettings.remoteTunnel!,
-											command: event.target.value,
-										})
-									}
-									className="w-full px-4 py-3 bg-raised border border-edge rounded-xl text-fg text-sm font-mono outline-none focus:border-accent/40 transition-colors"
-								/>
-								<p className="text-fg-muted text-xs mt-1">{t("settings.remoteTunnelCommandHint")}</p>
-							</div>
-							<div>
-								<label htmlFor="remote-tunnel-url-pattern" className="block text-fg-2 text-xs mb-1">
-									{t("settings.remoteTunnelUrlPattern")}
-								</label>
-								<input
-									id="remote-tunnel-url-pattern"
-									data-testid="remote-tunnel-url-pattern"
-									type="text"
-									defaultValue={globalSettings.remoteTunnel.urlPattern ?? ""}
-									placeholder="https://\S+\.example\.com"
-									onBlur={(event) =>
-										onRemoteTunnelChange({
-											...globalSettings.remoteTunnel!,
-											urlPattern: event.target.value.trim() || undefined,
-										})
-									}
-									className="w-full px-4 py-3 bg-raised border border-edge rounded-xl text-fg text-sm font-mono outline-none focus:border-accent/40 transition-colors"
-								/>
-								<p className="text-fg-muted text-xs mt-1">{t("settings.remoteTunnelUrlPatternHint")}</p>
-							</div>
-						</div>
+						<CustomTunnelFields t={t} tunnel={globalSettings.remoteTunnel} onChange={onRemoteTunnelChange} />
 					) : null}
 				</div>
 			</SettingsEntry>
@@ -203,5 +163,71 @@ export default function SystemSettingsSection({
 				<BrowserNotificationsSetting t={t} />
 			</SettingsEntry>
 		</SettingsSection>
+	);
+}
+
+/**
+ * Controlled command/pattern inputs for the custom tunnel provider. Both
+ * values persist together on blur from local state, so neither field can be
+ * wiped by spreading a stale settings object; a blank command gets an inline
+ * warning because it fails closed (no tunnel starts, no Cloudflare fallback).
+ */
+function CustomTunnelFields({
+	t,
+	tunnel,
+	onChange,
+}: {
+	t: TFunction;
+	tunnel: RemoteTunnelSettings;
+	onChange: (tunnel: RemoteTunnelSettings | undefined) => void;
+}) {
+	const [command, setCommand] = useState(tunnel.command ?? "");
+	const [urlPattern, setUrlPattern] = useState(tunnel.urlPattern ?? "");
+
+	function persist() {
+		onChange({ provider: "custom", command, urlPattern: urlPattern.trim() || undefined });
+	}
+
+	return (
+		<div className="mt-3 space-y-3">
+			<div>
+				<label htmlFor="remote-tunnel-command" className="block text-fg-2 text-xs mb-1">
+					{t("settings.remoteTunnelCommand")}
+				</label>
+				<input
+					id="remote-tunnel-command"
+					data-testid="remote-tunnel-command"
+					type="text"
+					value={command}
+					placeholder="ngrok http {port} --log stdout"
+					onChange={(event) => setCommand(event.target.value)}
+					onBlur={persist}
+					className="w-full px-4 py-3 bg-raised border border-edge rounded-xl text-fg text-sm font-mono outline-none focus:border-accent/40 transition-colors"
+				/>
+				{command.trim() ? (
+					<p className="text-fg-muted text-xs mt-1">{t("settings.remoteTunnelCommandHint")}</p>
+				) : (
+					<p data-testid="remote-tunnel-command-required" className="text-danger text-xs mt-1">
+						{t("settings.remoteTunnelCommandRequired")}
+					</p>
+				)}
+			</div>
+			<div>
+				<label htmlFor="remote-tunnel-url-pattern" className="block text-fg-2 text-xs mb-1">
+					{t("settings.remoteTunnelUrlPattern")}
+				</label>
+				<input
+					id="remote-tunnel-url-pattern"
+					data-testid="remote-tunnel-url-pattern"
+					type="text"
+					value={urlPattern}
+					placeholder="https://\S+\.example\.com"
+					onChange={(event) => setUrlPattern(event.target.value)}
+					onBlur={persist}
+					className="w-full px-4 py-3 bg-raised border border-edge rounded-xl text-fg text-sm font-mono outline-none focus:border-accent/40 transition-colors"
+				/>
+				<p className="text-fg-muted text-xs mt-1">{t("settings.remoteTunnelUrlPatternHint")}</p>
+			</div>
+		</div>
 	);
 }
