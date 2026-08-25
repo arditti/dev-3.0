@@ -256,6 +256,16 @@ const common = {
 	"folderPicker.selectedCountLabel_few": "{count} папки выбраны",
 	"folderPicker.selectedCountLabel_many": "{count} папок выбрано",
 	"folderPicker.selectedCountLabel_other": "{count} папок выбрано",
+	"folderPicker.titleFile": "Выберите файл",
+	"folderPicker.filterFilesPlaceholder": "Фильтр…",
+	"folderPicker.filterFilesAriaLabel": "Фильтр файлов и папок",
+	"folderPicker.showHidden": "Скрытые файлы",
+	"folderPicker.browse": "Обзор…",
+	"folderPicker.browseAria": "Выбрать бинарник {name} на диске",
+	"folderPicker.browseInProject": "Выбрать папку внутри проекта",
+	"folderPicker.titleInProject": "Выберите папку внутри проекта",
+	"folderPicker.projectRoot": "Корень проекта",
+	"folderPicker.outsideRoot": "Этот путь вне проекта — поле принимает только пути внутри него.",
 
 	// Stuck preparation popover (clone hangs on Fetching origin — macOS FDA)
 	"stuckPrep.popoverTitle": "Зависло на Fetching origin?",

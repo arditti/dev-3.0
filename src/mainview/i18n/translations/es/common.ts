@@ -254,6 +254,16 @@ const common = {
 	"folderPicker.noMatches": "Ninguna carpeta cargada coincide con «{query}»",
 	"folderPicker.selectedCountLabel_one": "{count} carpeta seleccionada",
 	"folderPicker.selectedCountLabel_other": "{count} carpetas seleccionadas",
+	"folderPicker.titleFile": "Selecciona un archivo",
+	"folderPicker.filterFilesPlaceholder": "Filtrar…",
+	"folderPicker.filterFilesAriaLabel": "Filtrar archivos y carpetas",
+	"folderPicker.showHidden": "Archivos ocultos",
+	"folderPicker.browse": "Examinar…",
+	"folderPicker.browseAria": "Elegir el binario de {name} en el disco",
+	"folderPicker.browseInProject": "Elegir una carpeta dentro del proyecto",
+	"folderPicker.titleInProject": "Selecciona una carpeta dentro del proyecto",
+	"folderPicker.projectRoot": "Raíz del proyecto",
+	"folderPicker.outsideRoot": "Esa ruta está fuera del proyecto — este campo solo acepta rutas dentro de él.",
 
 	// Stuck preparation popover (clone hangs on Fetching origin — macOS FDA)
 	"stuckPrep.popoverTitle": "¿Atascado en Fetching origin?",
