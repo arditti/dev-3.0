@@ -25,6 +25,8 @@ import CanaryBadge from "./CanaryBadge";
 import PreventSleepToggle from "./PreventSleepToggle";
 import RateLimitIndicator from "./RateLimitIndicator";
 import MemoryHeadroomIndicator from "./MemoryHeadroomIndicator";
+import AgentTrafficIndicator from "./agent-traffic/AgentTrafficIndicator";
+import { OPEN_AGENT_TRAFFIC_LOG_EVENT } from "../agent-traffic-events";
 import ConnectionQualityIndicator from "./ConnectionQualityIndicator";
 import BottomSheet from "./BottomSheet";
 import Tooltip from "./Tooltip";
@@ -801,6 +803,15 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 								    itself (icon state, session count, memory number) is the answer. */}
 								<PreventSleepToggle variant="row" />
 								<MemoryHeadroomIndicator navigate={navigate} variant="menu" />
+								<AgentTrafficIndicator
+									projectId={currentProjectId}
+									navigate={navigate}
+									onOpenLog={() => {
+										setShowOverflowMenu(false);
+										window.dispatchEvent(new CustomEvent(OPEN_AGENT_TRAFFIC_LOG_EVENT));
+									}}
+									variant="menu"
+								/>
 								{viewedOverRemote && <ConnectionQualityIndicator variant="menu" />}
 								<TmuxSessionManager navigate={navigate} variant="menu" />
 								<button
@@ -868,6 +879,17 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 						)}
 					</div>
 				)}
+
+				{/* Agent traffic — the ONLY control here whose bar slot is earned per
+				    occasion: the kebab row above is its home, and this pill appears
+				    immediately right of the three dots only while messages have landed
+				    since the user last looked, then disappears when they look. Never on a
+				    phone header (bible §5.9, §12.6). */}
+				<AgentTrafficIndicator
+					projectId={currentProjectId}
+					navigate={navigate}
+					onOpenLog={() => window.dispatchEvent(new CustomEvent(OPEN_AGENT_TRAFFIC_LOG_EVENT))}
+				/>
 
 				{/* Prevent-sleep lives in the kebab sheet only, at every width: it is on for
 				    everyone and practically never switched off, so a permanent header slot
@@ -1060,6 +1082,17 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 						)}
 						<TmuxSessionManager navigate={navigate} />
 					</div>
+					{/* Agent traffic is the phone's only way in, so it is a row here — and it
+					    takes the same shape as the rows below it, not the chip row above. */}
+					<AgentTrafficIndicator
+						projectId={currentProjectId}
+						navigate={navigate}
+						onOpenLog={() => {
+							setShowActionSheet(false);
+							window.dispatchEvent(new CustomEvent(OPEN_AGENT_TRAFFIC_LOG_EVENT));
+						}}
+						variant="sheet"
+					/>
 					{headerSheetRows.map((row) => (
 						<button
 							key={row.key}

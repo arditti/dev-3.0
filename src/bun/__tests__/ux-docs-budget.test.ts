@@ -44,8 +44,8 @@ const UX_DIR = fileURLToPath(new URL("../../../docs/ux", import.meta.url));
  * file is §10 rows whose why exists nowhere else.
  */
 const BUDGET_KB: Record<string, number> = {
-	"PRODUCT_UX_BIBLE.md": 125,
-	"ux-architecture.yaml": 111,
+	"PRODUCT_UX_BIBLE.md": 128,
+	"ux-architecture.yaml": 113,
 	"UX_DECISIONS.md": 80,
 };
 
@@ -78,7 +78,27 @@ const BUDGET_KB: Record<string, number> = {
  * rule about an existing one: with no manifest entry, the next agent adding a walk-through invents a
  * second mechanism — precisely the drift this tree exists to stop. The new log entry is a pointer.
  */
-const TOTAL_BUDGET_KB = 313;
+/**
+ * 313 → 319, the bible 125 → 128 and the yaml 111 → 113, for §5.9 + the `agent_traffic_log` surface
+ * and the `agent_traffic_readout` header slot.
+ *
+ * The bible's third KB is the one this note has to justify, because §5.9 was written twice: the
+ * first ruling (a glyph present while a pair spoke in the last hour) was rejected on sight of it
+ * running, and the replacement — kebab home, bar slot earned by unread, never on a phone bar — is
+ * strictly more rule per surface. Compaction ran on §5.9 itself three times before this bump and
+ * bought ~1.4 KB (the retention/evidence lines folded, the phone rationale stated once instead of
+ * twice, the unread mechanics merged into the home bullet); the remaining 110 bytes could only come
+ * out of the rulings themselves, which the note above forbids deleting.
+ *
+ * Compaction was attempted first and found nothing new: the entries this tree still carries in full
+ * are the ones whose why exists nowhere else, and every record-backed entry is already a pointer.
+ * What earns the ratchet is the same thing §5.4b earned it for — a new SURFACE, not another rule
+ * about an existing one. Two rulings here are the kind an agent re-litigates from scratch without a
+ * manifest entry: that a header readout may be CONDITIONAL rather than spending the one permanent
+ * ambient slot, and that a log with a 30-day history is still an overlay rather than a ninth
+ * destination. The new log entry is itself a pointer to `decisions/2026/08/25/`.
+ */
+const TOTAL_BUDGET_KB = 319;
 
 const entries = readdirSync(UX_DIR, { withFileTypes: true });
 const kb = (name: string) => statSync(`${UX_DIR}/${name}`).size / 1024;
