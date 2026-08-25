@@ -227,6 +227,8 @@ Non-obvious architectural decisions, hacks, and workarounds go in `decisions/YYY
 
 **Create one when you:** relied on undocumented behavior or reverse-engineered internals; chose a non-obvious approach over a simpler one for a specific reason; worked around a dependency bug/limitation; made a decision with trade-offs or known risks.
 
+**Supersede, don't let records rot.** If your change makes an existing record's claims false, fix that record in the same commit: add a short supersede note at its top ("Superseded on YYYY-MM-DD by `decisions/YYYY/MM/DD/<new-slug>.md`: <one line on what changed>") and write the new record covering the new rationale. A record that confidently states something the code no longer does is worse than no record — the next agent will trust it.
+
 **Required sections:** 1. Context 2. Investigation (if applicable) 3. Decision (what + where in the code) 4. Risks 5. Alternatives considered. **Keep it short** — 2-4 sentences per section, fits on one screen; link relevant code paths (file + function names). Commit the record together with the code change.
 
 ## Agent skills
@@ -384,6 +386,8 @@ All user-facing renderer strings are localized via `src/mainview/i18n/`; locales
 - Locale persists in `localStorage("dev3-locale")`, same pattern as the theme.
 
 **Adding a string:** add the key to the matching `en/` domain file (e.g., `kanban.ts` for `kanban.*` keys), add translations to the same domain file in `ru/` and `es/`, then use `t("your.key")`.
+
+**Search tokens have a help registry.** The in-app search help (`translations/*/help.ts`) spells out the full token vocabulary verbatim in more than one string (`priority:P0 label:"…" agent:… status:… space:"…" is:attention is:home has:port`). Adding or renaming a search token means updating every one of those strings in all three locales in the same commit — an unlisted token is invisible to anyone who opens Help.
 
 **Interpolation:** `{variable}` placeholders — `t("dashboard.failedAdd", { error: String(err) })`.
 
