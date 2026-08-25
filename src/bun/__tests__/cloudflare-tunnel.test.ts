@@ -1129,7 +1129,9 @@ describe("custom command availability is derived from the run, not a PATH probe"
 		(mockSpawn as Mock).mockReturnValue({
 			pid: 4141,
 			kill: vi.fn(),
-			exited: Promise.resolve(127),
+			// Settles AFTER the output streams close, like a real process — an
+			// already-resolved promise here would hide the read-before-exit race.
+			exited: new Promise<number>((resolve) => setTimeout(() => resolve(127), 20)),
 			stdout: stream([]),
 			stderr: stream(["sh: tunnel.sh: command not found"]),
 		});
@@ -1138,6 +1140,39 @@ describe("custom command availability is derived from the run, not a PATH probe"
 
 		expect(url).toBeNull();
 		expect(getMainTunnelFailureReason()).toBe("command-not-found");
+	});
+
+	it("sweeps a pipeline's children captured BEFORE the wrapper shell dies", async () => {
+		const encoder = new TextEncoder();
+		const stream = (out: string[]) => new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const line of out) controller.enqueue(encoder.encode(line + "\n"));
+				controller.close();
+			},
+		});
+		const killFn = vi.fn();
+		(mockSpawn as Mock).mockReturnValue({
+			pid: 5150,
+			kill: killFn,
+			exited: new Promise<void>(() => {}),
+			stdout: stream(["Public: https://pipe.example.com"]),
+			stderr: stream([]),
+		});
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+		await startTunnel(8080);
+
+		// pgrep answers with a surviving pipeline child; it must be captured
+		// before sh is killed (afterwards it is reparented to init and unfindable).
+		(mockSpawnSync as Mock).mockReturnValue({ exitCode: 0, stdout: Buffer.from("6161\n") });
+		const processKill = vi.spyOn(process, "kill").mockImplementation(() => true);
+		try {
+			stopTunnel();
+			expect(mockSpawnSync).toHaveBeenCalledWith(["pgrep", "-P", "5150"]);
+			expect(killFn).toHaveBeenCalled();
+			expect(processKill).toHaveBeenCalledWith(6161, "SIGTERM");
+		} finally {
+			processKill.mockRestore();
+		}
 	});
 });
 

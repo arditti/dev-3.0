@@ -541,6 +541,11 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			return entry;
 		}
 
+		// The output streams close BEFORE `proc.exited` settles, so the exit code
+		// is usually still null right here — give it a beat, or the not-found
+		// classification below can never fire (the process is already dead when
+		// the URL wait comes up empty, this is not a 30s stall).
+		await Promise.race([proc.exited, delay(200)]);
 		const notFound = isCustom && (lastExitCode === 127 || lastExitCode === 126);
 		if (notFound) {
 			log.warn("Custom tunnel command not found — sh could not run it", { id: opts.id, exitCode: lastExitCode });
@@ -566,19 +571,29 @@ function stopEntry(id: string): void {
 	entry.healthCheckTimer = null;
 	if (entry.process) {
 		const pid = entry.process.pid;
+		// A custom command that is a pipeline keeps its wrapper shell (no exec),
+		// so the kill below hits sh and the tunnel it spawned would live on.
+		// Capture the children FIRST — killing sh reparents them to init, after
+		// which `pkill -P <pid>` matches nothing. A plain command has none.
+		let childPids: number[] = [];
+		if (process.platform !== "win32" && pid) {
+			try {
+				const out = spawnSync(["pgrep", "-P", String(pid)]).stdout?.toString() ?? "";
+				childPids = out.split("\n").map((s) => Number.parseInt(s, 10)).filter((n) => Number.isFinite(n) && n > 0);
+			} catch {
+				// pgrep missing — the exec'd common case has no children anyway
+			}
+		}
 		try {
 			entry.process.kill();
 		} catch {
 			// process may already be dead
 		}
-		// A custom command that is a pipeline keeps its wrapper shell (no exec),
-		// so the signal above hits sh and the tunnel it spawned would live on.
-		// Sweep direct children best-effort; a plain command has none.
-		if (process.platform !== "win32" && pid) {
+		for (const child of childPids) {
 			try {
-				spawnSync(["pkill", "-P", String(pid)]);
+				process.kill(child, "SIGTERM");
 			} catch {
-				// pkill missing or nothing to kill — the common case is no children
+				// already gone
 			}
 		}
 	}

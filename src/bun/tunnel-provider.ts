@@ -75,7 +75,7 @@ export function isCustomTunnelProviderActive(): boolean {
 	return value;
 }
 
-/** Reset the custom-provider cache — for tests and settings saves. */
+/** Reset the custom-provider cache — for tests; production relies on the TTL. */
 export function _resetCustomProviderCache(): void {
 	customActiveCache = null;
 }
@@ -115,16 +115,19 @@ export function compileUrlPattern(pattern: string | undefined): RegExp {
  * runs under the platform shell — the same trust model as project scripts.
  *
  * On POSIX the line is `exec`-prefixed when it contains no shell control
- * operators, so `kill()` signals the tunnel itself instead of a wrapper `sh`
- * that would orphan it — and the pid recorded for the self-update handoff is
- * the real tunnel, not the wrapper. Leading VAR=value assignments stay in
- * front of `exec`, where POSIX sh applies them to the exec'd command. A
- * genuine pipeline keeps its shell; stopEntry sweeps its children instead.
+ * operators AND no quotes, so `kill()` signals the tunnel itself instead of a
+ * wrapper `sh` that would orphan it — and the pid recorded for the
+ * self-update handoff is the real tunnel, not the wrapper. Leading VAR=value
+ * assignments stay in front of `exec`, where POSIX sh applies them to the
+ * exec'd command. Quoted lines are left alone: word-splitting a quoted value
+ * with a regex would splice `exec` inside the quotes, and a lone simple
+ * command is exec'd by sh itself anyway. A genuine pipeline keeps its shell;
+ * stopEntry sweeps its children instead.
  */
 export function buildCustomTunnelArgv(command: string, targetPort: number): string[] {
 	const line = command.replaceAll("{port}", String(targetPort));
 	if (process.platform === "win32") return ["cmd", "/c", line];
-	if (/[|;&<>()]/.test(line)) return ["sh", "-c", line];
+	if (/[|;&<>()]/.test(line) || /["']/.test(line)) return ["sh", "-c", line];
 	const m = line.match(/^((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)(.*)$/);
 	const execLine = m && m[2] ? `${m[1]}exec ${m[2]}` : line;
 	return ["sh", "-c", execLine];

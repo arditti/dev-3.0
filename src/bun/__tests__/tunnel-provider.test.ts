@@ -169,4 +169,12 @@ describe("buildCustomTunnelArgv", () => {
 		const argv = buildCustomTunnelArgv("tunnel {port} | tee /tmp/log", 3000);
 		expect(argv[2]).toBe("tunnel 3000 | tee /tmp/log");
 	});
+
+	it("leaves a quoted line untouched — regex word-splitting would splice exec into the quotes", () => {
+		if (process.platform === "win32") return;
+		// FOO="a b" used to become FOO="a exec b" — the value silently corrupted.
+		expect(buildCustomTunnelArgv('FOO="a b" tunnel {port}', 3000)[2]).toBe('FOO="a b" tunnel 3000');
+		// A quoted path already works without exec: sh execs a lone simple command itself.
+		expect(buildCustomTunnelArgv('"/opt/my tools/tunnel.sh" {port}', 3000)[2]).toBe('"/opt/my tools/tunnel.sh" 3000');
+	});
 });
