@@ -118,10 +118,21 @@ inside a REAL worktree (cwd-based task detection outranks `$DEV3_HOME` by design
   mobile from the *physical* `screen.width` (`< 1024` → mobile; `src/mainview/hooks/useMobile.tsx`,
   deliberately not `innerWidth`), and a mobile device held in landscape gets
   `MobilePortraitGate`: a "rotate your device" overlay plus `inert` on the whole app — screenshots
-  still work, clicks do nothing. Current `agent-browser` (0.6.0) emulates `screen.*` together with
-  the viewport, so a `set viewport 1440 900` before `open` reports `screen.width = 1440` and the
-  gate stays off; with no viewport set at all it defaults to 1280×720, also fine. You only hit the
-  gate by asking for a phone-sized landscape viewport — that is the app working as designed.
+  still work, clicks do nothing. `agent-browser` 0.6.0 emulated `screen.*` together with the
+  viewport, so `set viewport 1440 900` before `open` was enough. **0.34.0 does not** — `screen`
+  stays at the headless display's 800×600 no matter the viewport (`--window-size` in `--args`
+  does not move it either), so every desktop QA run lands in the gate. Override it with an init
+  script instead, registered before the first navigation:
+
+  ```bash
+  printf 'for (const k of ["width","availWidth"]) Object.defineProperty(screen, k, { get: () => 1600, configurable: true });\nfor (const k of ["height","availHeight"]) Object.defineProperty(screen, k, { get: () => 1000, configurable: true });\n' > /tmp/screen-desktop.js
+  agent-browser close                      # a running session keeps its old init scripts
+  agent-browser set viewport 1600 1000
+  agent-browser open "http://localhost:$PORT/?token=$CODE&streamer=on" --init-script /tmp/screen-desktop.js
+  ```
+
+  With that, `screen.width` reports 1600 and the gate stays off. You otherwise only hit the gate
+  by asking for a phone-sized landscape viewport — that is the app working as designed.
   Measured across the common sizes: `2560×1440`, `1920×1080`, `1600×900`, `1440×900`, `1366×768`,
   `1280×720`, `1024×768`, `768×1024` and phone portrait `390×844` all render and click fine
   (`screen.width` always equals the requested width); only landscape `844×390` shows the gate, goes
