@@ -99,6 +99,13 @@ describe("SpaceGroupedProjects", () => {
 		expect(JSON.parse(localStorage.getItem("dev3-collapsed-spaces")!)).toEqual(["sp_b"]);
 	});
 
+	it("still lets the user collapse the selected space by hand", () => {
+		renderGroups(new Set(), "sp_a");
+		fireEvent.click(screen.getByTestId("space-header-sp_a"));
+		expect(screen.getByTestId("space-header-sp_a")).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByTestId("row-p2")).toBeNull();
+	});
+
 	// §9a.6: what says "these rows belong to this space" is proximity, so the gap
 	// between groups has to be at least twice the gap inside one. Asserted as
 	// classes because happy-dom has no layout to measure.

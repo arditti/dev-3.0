@@ -1,6 +1,6 @@
 import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { isSpaceSensitive, type Project, type Space } from "../../shared/types";
-import type { DashboardGroup } from "../utils/spaceGroups";
+import { HOME_GROUP_ID, type DashboardGroup } from "../utils/spaceGroups";
 import { MASK_CLASS } from "../sensitive-projects";
 import { api } from "../rpc";
 import { toast } from "../toast";
@@ -117,15 +117,19 @@ function SpaceGroupedProjects({
 	const [dragged, setDragged] = useState<{ spaceId: string; projectId: string } | null>(null);
 	const [dropTarget, setDropTarget] = useState<{ spaceId: string; projectId: string; side: "before" | "after" } | null>(null);
 
+	// Deliberately keyed on `selectedSpaceId` alone: a manual re-collapse while
+	// this space is still selected must stick, not get undone by this effect
+	// reacting to its own `collapsed` write.
 	useEffect(() => {
-		if (!selectedSpaceId || !collapsed.has(selectedSpaceId)) return;
+		if (!selectedSpaceId || selectedSpaceId === HOME_GROUP_ID) return;
 		setCollapsed((prev) => {
+			if (!prev.has(selectedSpaceId)) return prev;
 			const next = new Set(prev);
 			next.delete(selectedSpaceId);
 			writeCollapsed(next);
 			return next;
 		});
-	}, [selectedSpaceId, collapsed]);
+	}, [selectedSpaceId]);
 
 	function toggleCollapsed(spaceId: string) {
 		setCollapsed((prev) => {
