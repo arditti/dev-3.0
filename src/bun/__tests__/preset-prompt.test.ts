@@ -40,8 +40,13 @@ describe("COORDINATOR_PROMPT", () => {
 		expect(COORDINATOR_PROMPT).toContain("does not see or read your conversations");
 	});
 
-	it("requires a task to be named by number AND id", () => {
-		expect(COORDINATOR_PROMPT).toContain("Seq NNNN (<id>)");
+	// The seq alone is the name, because the board block now supplies it on every
+	// turn. Only a task whose seq a live variant sibling still shares needs the id
+	// — that is the one case where `--task seq:N` does not resolve.
+	it("requires a task to be named by its number, and a shared seq by its id too", () => {
+		expect(COORDINATOR_PROMPT).toContain("NAME EVERY TASK BY ITS NUMBER");
+		expect(COORDINATOR_PROMPT).toContain("Seq NNNN");
+		expect(COORDINATOR_PROMPT).toContain("seq:NNNN:index (id)");
 	});
 
 	it("keeps the four rules that were learned from a specific failure", () => {
@@ -51,9 +56,32 @@ describe("COORDINATOR_PROMPT", () => {
 		expect(COORDINATOR_PROMPT).toContain("ANNOUNCE A REVERSAL AS A REVERSAL");
 	});
 
-	it("tells the coordinator its board picture is a snapshot, not a feed", () => {
-		expect(COORDINATOR_PROMPT).toContain("SNAPSHOT");
-		expect(COORDINATOR_PROMPT).toMatch(/before every status/);
+	// The board used to be a snapshot the coordinator had to refresh by hand; it
+	// now rides in on the messages dev3 delivers. The rule that replaced it must
+	// point at the block AND name every gap, or it trades one stale answer for
+	// a confidently stale one.
+	it("points the coordinator at the delivered board instead of a manual re-read", () => {
+		expect(COORDINATOR_PROMPT).toContain("<dev3-board>");
+		// Spending a turn on what the block already said is the waste this exists to stop.
+		expect(COORDINATOR_PROMPT).toMatch(/do not spend a turn on `dev3 task list`/);
+	});
+
+	// The gap that matters most: the user types straight into the pane, which no
+	// delivery seam sees, so his turn carries no block at all.
+	it("warns that the user's own message brings no board", () => {
+		expect(COORDINATOR_PROMPT).toMatch(/user typing to you directly brings NO block/);
+		expect(COORDINATOR_PROMPT).toMatch(/re-read the board before you answer him/);
+	});
+
+	it("keeps the long-turn and no-harness fallbacks", () => {
+		expect(COORDINATOR_PROMPT).toMatch(/turn has run long/);
+		expect(COORDINATOR_PROMPT).toMatch(/no block at all/);
+	});
+
+	// A quiet time is not a screen: peek stays the only way to see what a child
+	// is actually doing, and conflating the two would retire it by accident.
+	it("keeps peek as the way to see what a child is doing", () => {
+		expect(COORDINATOR_PROMPT).toMatch(/`dev3 peek` is still the only way/);
 	});
 
 	it("is English-only, so a locale file can never half-translate a behavioural rule", () => {
