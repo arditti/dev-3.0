@@ -353,6 +353,7 @@ import * as data from "../data";
 import * as git from "../git";
 import * as github from "../github";
 import * as pty from "../pty-server";
+import { getUserShell } from "../shell-env";
 import { tmux } from "../tmux";
 import * as systemClipboard from "../system-clipboard";
 import * as agents from "../agents";
@@ -1971,6 +1972,31 @@ describe("handlers.saveGlobalSettings", () => {
 
 		expect(isNotificationSuppressed()).toBe(true);
 		_resetWatchedNotificationState();
+	});
+
+	// Changing the shell re-sources the tmux config, which goes through
+	// applyTmuxTheme — and that call also PINS the active themed config. Reading
+	// the theme off an absent `resolvedTheme` would darken a light-theme user's
+	// terminals on a change that has nothing to do with the theme.
+	it.skipIf(process.platform === "win32")(
+		"keeps the live theme when the shell changes and the snapshot carries no resolvedTheme",
+		async () => {
+			vi.mocked(loadSettings).mockResolvedValue({ updateChannel: "stable" } as GlobalSettings);
+			await handlers.setTmuxTheme({ theme: "light" });
+			vi.mocked(pty.applyTmuxTheme).mockClear();
+
+			await handlers.saveGlobalSettings({ updateChannel: "stable", terminalShell: "sh" } as GlobalSettings);
+
+			expect(pty.applyTmuxTheme).toHaveBeenCalledWith("light");
+		},
+	);
+
+	it.skipIf(process.platform === "win32")("leaves tmux alone when the shell did not change", async () => {
+		vi.mocked(loadSettings).mockResolvedValue({ updateChannel: "stable", terminalShell: "sh" } as GlobalSettings);
+
+		await handlers.saveGlobalSettings({ updateChannel: "stable", terminalShell: "sh" } as GlobalSettings);
+
+		expect(pty.applyTmuxTheme).not.toHaveBeenCalled();
 	});
 });
 
@@ -8939,7 +8965,9 @@ describe("handlers.getProjectPtyUrl", () => {
 			`project-${project.id}`,
 			project.id,
 			"/tmp/test-project",
-			process.env.SHELL || "/bin/zsh",
+			// The resolved shell, not a pinned path: this suite mocks node:fs, so
+			// the resolver finds no candidate installed and last-resorts to /bin/sh.
+			getUserShell(),
 			{ API_URLS: "https://api.example.com,http://api.example.com" },
 			"dev3",
 			"project",

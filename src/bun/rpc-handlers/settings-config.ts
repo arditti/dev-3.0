@@ -2,7 +2,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { PATHS } from "../electrobun-platform";
-import type { AgentCheckResult, CodingAgent, ConfigSourceEntry, Dev3RepoConfig, GitHubCliStatus, GlobalSettings, HarnessReadinessReport, Project, ProjectSettingsUpdate, RequirementCheckResult, RosettaWarningInfo } from "../../shared/types";
+import type { AgentCheckResult, CodingAgent, ConfigSourceEntry, Dev3RepoConfig, GitHubCliStatus, GlobalSettings, HarnessReadinessReport, Project, ProjectSettingsUpdate, RequirementCheckResult, RosettaWarningInfo, ShellAvailability } from "../../shared/types";
+import { SHELL_FALLBACK_ORDER, type ShellFlavor, shellCandidatePaths } from "../../shared/posix-shell";
+import { getUserShell, resolveUserShell, setShellPreference } from "../shell-env";
 import * as data from "../data";
 import * as agents from "../agents";
 import * as github from "../github";
@@ -11,13 +13,14 @@ import * as rosetta from "../rosetta";
 import * as repoConfig from "../repo-config";
 import * as pty from "../pty-server";
 import { tmux } from "../tmux";
+import { writeTmuxConfigs } from "../tmux/config";
 import { loadSettings, saveSettings } from "../settings";
 import { toggleFavorite } from "../../shared/favorites";
 import { DEV3_HOME } from "../paths";
 import { writeDev3SelfShim } from "../cli-self-install";
 import { isFreshStartMode } from "../fresh-start";
 import { spawn } from "../spawn";
-import { setCurrentUiTheme } from "../theme-state";
+import { getCurrentUiTheme, setCurrentUiTheme } from "../theme-state";
 import { getAllFeatureFlags, setFeatureFlags as cacheFeatureFlags } from "../feature-flags";
 import { resolveAnalyticsDistinctId as resolveDistinctId } from "../analytics-identity";
 import { extractConfigFromParams, getPushMessage, getSystemRequirements, log, resolveBinaryPath, setFocusMode } from "./shared";
@@ -166,8 +169,53 @@ async function getGitHubCliStatus(): Promise<GitHubCliStatus> {
 	return status;
 }
 
+/**
+ * Which shells this machine has and which one dev3 runs, so the Settings screen
+ * can say "zsh is not installed here — using bash" instead of leaving the user
+ * with a chosen shell that silently never starts.
+ */
+function getShellAvailability(): ShellAvailability {
+	const installed: Partial<Record<ShellFlavor, string>> = {};
+	if (process.platform !== "win32") {
+		for (const flavor of SHELL_FALLBACK_ORDER) {
+			const found = shellCandidatePaths(flavor).find((path) => isExecutableFile(path));
+			if (found) installed[flavor] = found;
+		}
+	}
+	const availability: ShellAvailability = {
+		resolved: process.platform === "win32" ? null : resolveUserShell(),
+		installed,
+	};
+	log.info("← getShellAvailability", { resolved: availability.resolved?.path, installed });
+	return availability;
+}
+
+/**
+ * Push the new shell everywhere a live process still reads the old one.
+ *
+ * `$SHELL` is what the native backend launches (`defaultNativeShellLaunchSpec`)
+ * and `default-shell` in the tmux config is what a pane the user splits off
+ * inherits. Both are frozen at boot, so without this the picker only takes
+ * effect after a restart while Settings already reports the new shell.
+ *
+ * The theme is re-applied, not chosen: sourcing the config into a live server
+ * goes through `applyTmuxTheme`, which also pins the active themed config path.
+ */
+async function applyShellChange(theme: "dark" | "light"): Promise<void> {
+	try {
+		process.env.SHELL = getUserShell();
+		writeTmuxConfigs();
+		await pty.applyTmuxTheme(theme);
+	} catch (err) {
+		log.warn("Failed to push the shell change into tmux (non-fatal)", { error: String(err) });
+	}
+}
+
 async function saveGlobalSettings(params: GlobalSettings): Promise<void> {
 	log.info("→ saveGlobalSettings", { params });
+	// Terminals launched after this point must use the newly chosen shell; the
+	// resolver caches for an hour, so it has to be told.
+	setShellPreference(params.terminalShell);
 	// A JSON-RPC patch may omit optional `focusMode`; preserve the live gate in
 	// that case instead of accidentally releasing queued agent notifications while
 	// the user changes an unrelated setting.
@@ -181,6 +229,12 @@ async function saveGlobalSettings(params: GlobalSettings): Promise<void> {
 	const stored = await loadSettings();
 	const next: GlobalSettings = { ...params, analyticsDistinctId: stored.analyticsDistinctId ?? params.analyticsDistinctId };
 	await saveSettings(next);
+	// `resolvedTheme` may be absent (nothing has called setTmuxTheme yet); the
+	// live in-memory theme is the fallback, never a hardcoded "dark" — that would
+	// flip a light-theme user's terminals on an unrelated shell change.
+	if (process.platform !== "win32" && stored.terminalShell !== next.terminalShell) {
+		await applyShellChange(next.resolvedTheme ?? getCurrentUiTheme());
+	}
 	getPushMessage()?.("globalSettingsUpdated", next);
 	log.info("← saveGlobalSettings done");
 }
@@ -593,6 +647,7 @@ export const settingsConfigHandlers = {
 	getRepoConfigSources,
 	getGlobalSettings,
 	getGitHubCliStatus,
+	getShellAvailability,
 	saveGlobalSettings,
 	toggleFavoriteAgent,
 	installDev3Cli,
