@@ -415,6 +415,14 @@ export const SETTINGS_ENTRIES = [
 		storage: "browser",
 	},
 	{
+		id: "push-notifications",
+		category: "system",
+		titleKey: "settings.pushNotifications",
+		descriptionKey: "settings.pushNotificationsDesc",
+		anchor: "push-notifications",
+		storage: "browser",
+	},
+	{
 		id: "model-catalog",
 		category: "models",
 		titleKey: "catalog.section",
@@ -467,6 +475,13 @@ export const SETTINGS_ENTRIES = [
 		storage: "surface",
 	},
 ] as const satisfies readonly SettingsEntry[];
+
+/** Stable scroll targets that callers may deep-link to inside Settings. */
+export type SettingsEntryAnchor = (typeof SETTINGS_ENTRIES)[number] extends infer Entry
+	? Entry extends { readonly anchor: infer Anchor extends string }
+		? Anchor
+		: never
+	: never;
 
 /** GlobalSettings fields intentionally kept outside the visible settings registry. */
 export const SETTINGS_GLOBAL_FIELD_EXCLUSIONS = [

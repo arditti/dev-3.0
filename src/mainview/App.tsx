@@ -88,6 +88,7 @@ import { reconnectRpc } from "./rpc";
 import { DIAGNOSTICS_OPEN_EVENT } from "./diagnostics";
 import { getAdjacentAliveVariant } from "./utils/variantGroups";
 import { isTaskTerminalRoute } from "./utils/terminalFullscreen";
+import { maybeInvitePushEnrollment } from "./utils/pushInvite";
 
 /** Command shown when cloudflared is missing (Cloudflare Tunnel remote access). */
 const CLOUDFLARED_INSTALL_CMD = "brew install cloudflared";
@@ -175,6 +176,13 @@ function App() {
 			void api.request.setTerminalFocus?.({ active: false })?.catch?.(() => { /* best-effort */ });
 		};
 	}, []);
+
+	// Offer push once, late enough that it lands on a rendered board rather than
+	// competing with first paint.
+	useEffect(() => {
+		const timer = setTimeout(() => void maybeInvitePushEnrollment(t), 4000);
+		return () => clearTimeout(timer);
+	}, [t]);
 	useViewport(state.route);
 	// A phone scales differently per screen: dense inside a task, roomy on the
 	// screens the user only browses. No-op on a desktop-width viewport.
@@ -756,7 +764,12 @@ function App() {
 				navigate({ screen: "settings", section: detail });
 				return;
 			}
-			navigate({ screen: "settings", section: detail.section, preset: detail.preset });
+			navigate({
+				screen: "settings",
+				section: detail.section,
+				anchor: detail.anchor,
+				preset: detail.preset,
+			});
 		}
 		window.addEventListener(OPEN_SETTINGS_SECTION_EVENT, onOpenSettingsSection);
 		return () => window.removeEventListener(OPEN_SETTINGS_SECTION_EVENT, onOpenSettingsSection);
@@ -3277,7 +3290,7 @@ function App() {
 					/>
 				);
 			case "settings":
-				return <GlobalSettings section={route.section} preset={route.preset} />;
+				return <GlobalSettings section={route.section} anchor={route.anchor} preset={route.preset} />;
 			case "changelog":
 				return (
 					<Changelog
