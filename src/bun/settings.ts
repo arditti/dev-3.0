@@ -57,6 +57,21 @@ function sanitizeShortcutOverrides(raw: unknown): GlobalSettings["keyboardShortc
 	return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * `provider: "custom"` survives even with a blank command: the user's choice
+ * to leave Cloudflare must fail closed (no tunnel starts, the UI says the
+ * command is empty), never silently collapse back to the built-in provider —
+ * see the `misconfigured` kind in tunnel-provider.ts.
+ */
+function sanitizeRemoteTunnel(raw: unknown): GlobalSettings["remoteTunnel"] {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const r = raw as Record<string, unknown>;
+	if (r.provider !== "custom") return undefined;
+	const command = typeof r.command === "string" ? r.command : "";
+	const urlPattern = typeof r.urlPattern === "string" && r.urlPattern.trim() ? r.urlPattern : undefined;
+	return { provider: "custom", command, urlPattern };
+}
+
 const DEFAULT_SETTINGS: GlobalSettings = {
 	defaultAgentId: "builtin-claude",
 	defaultConfigId: "claude-auto-opus5-medium",
@@ -158,6 +173,8 @@ function normalizeSettings(data: Record<string, unknown>): GlobalSettings {
 		agentsLayoutRevision: typeof d.agentsLayoutRevision === "number" ? d.agentsLayoutRevision : undefined,
 		// Default-off experimental toggle — only an explicit true is a stored opt-in.
 		pxpipeProxyEnabled: d.pxpipeProxyEnabled === true ? true : undefined,
+		// Bring-your-own-tunnel config; kept only when it names a runnable custom command.
+		remoteTunnel: sanitizeRemoteTunnel(d.remoteTunnel),
 		// Default-off beta toggle — only an explicit true is a stored opt-in.
 		experimentalTerminalBidi: d.experimentalTerminalBidi === true ? true : undefined,
 		// Default-off beta toggle — only an explicit true is a stored opt-in.

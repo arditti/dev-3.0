@@ -1072,6 +1072,23 @@ export interface NativeTerminalAvailability {
 	diagnostics: string[];
 }
 
+/**
+ * Which tunnel exposes the remote-access server publicly.
+ *
+ * `provider: "custom"` runs the user's own CLI (ngrok, or any ngrok-like
+ * service) instead of the built-in Cloudflare quick tunnel. The command is a
+ * shell line with a `{port}` placeholder; the public URL is scraped from the
+ * command's output — by default the first `https://…` URL it prints,
+ * overridable with `urlPattern` for CLIs whose output contains other URLs.
+ */
+export interface RemoteTunnelSettings {
+	provider: "cloudflare" | "custom";
+	/** Shell command template, e.g. `ngrok http {port} --log stdout`. Required for `custom`. */
+	command?: string;
+	/** Optional regex matching the public URL in the command's output. */
+	urlPattern?: string;
+}
+
 export interface GlobalSettings {
 	defaultAgentId: string;
 	defaultConfigId: string;
@@ -1209,6 +1226,11 @@ export interface GlobalSettings {
 	 * Settings "Token-saving proxy" section. See PxpipeProxyStatus.
 	 */
 	pxpipeProxyEnabled?: boolean;
+	/**
+	 * Bring-your-own-tunnel for remote access. Absent ⇒ the built-in Cloudflare
+	 * quick tunnel. See RemoteTunnelSettings.
+	 */
+	remoteTunnel?: RemoteTunnelSettings;
 	/**
 	 * Custom text the PR review preset in the create-task popup injects into the
 	 * description. Absent/blank ⇒ the localized built-in prompt. A project can
@@ -3620,6 +3642,14 @@ export interface RemoteHandoff {
 	 * monitor already polls.
 	 */
 	tunnel: { pid: number; url: string; metricsReadyUrl: string | null } | null;
+	/**
+	 * The URL the successor is expected to come back on, set when a custom
+	 * provider's hostname is known to be stable and its tunnel was therefore
+	 * STOPPED rather than leaked. The successor spawns its own tunnel and compares:
+	 * an equal URL means the browser session survived, a different one means the
+	 * stability observation was wrong and the QR has to be re-scanned.
+	 */
+	stableTunnelUrl?: string | null;
 }
 
 /** From-version, to-version and when, for `dev3 remote status` after the fact. */
@@ -5084,11 +5114,7 @@ export type AppRPCSchema = {
 			};
 			getRemoteAccessQR: {
 				params: { tunnel?: boolean; host?: string };
-				response: { qrDataUrl: string; accessUrl: string; tunnelState: string; cloudflaredInstalled: boolean; interfaces: RemoteNetInterface[]; selectedHost: string };
-			};
-			checkCloudflared: {
-				params: void;
-				response: { installed: boolean };
+				response: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason: string | null; interfaces: RemoteNetInterface[]; selectedHost: string };
 			};
 			startTunnel: {
 				params: void;
@@ -5480,7 +5506,7 @@ export type AppRPCSchema = {
 			zoomReset: {};
 			osc52Clipboard: { taskId: string; text: string; len: number };
 			qrTokenConsumed: {};
-			showRemoteAccessQR: { qrDataUrl: string; accessUrl: string; tunnelState: string; cloudflaredInstalled: boolean; autoStartTunnel?: boolean };
+			showRemoteAccessQR: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason?: string | null; autoStartTunnel?: boolean };
 			/**
 			 * Universal menu-action dispatch. The bun side fires this whenever the
 			 * native menu emits an `application-menu-clicked` event whose action is

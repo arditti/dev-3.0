@@ -154,6 +154,13 @@ describe("saveSettings", () => {
 		expect((await loadSettings()).keyboardShortcuts).toBeUndefined();
 	});
 
+	it("keeps a custom tunnel provider with a blank command — fail closed, no silent Cloudflare fallback", async () => {
+		writeFileSync(settingsPath, JSON.stringify(makeSettings({
+			remoteTunnel: { provider: "custom", command: "" },
+		}), null, 2), "utf-8");
+		expect((await loadSettings()).remoteTunnel).toEqual({ provider: "custom", command: "", urlPattern: undefined });
+	});
+
 	it("preserves every GlobalSettings field across a save→load round-trip (drift guard + downgrade safety)", async () => {
 		// `Required<>` forces this object to enumerate EVERY field of the shared
 		// GlobalSettings type. Adding a field to the type without handling it in
@@ -166,6 +173,7 @@ describe("saveSettings", () => {
 		});
 		const full: Required<GlobalSettings> = {
 			coordinatorPrompt: "Coordinate, do not code.",
+			remoteTunnel: { provider: "custom", command: "ngrok http {port} --log stdout", urlPattern: "https://\\S+" },
 			agentLaunchAutoApproveMinutes: 2,
 			defaultAgentId: "builtin-codex",
 			defaultConfigId: "codex-default",

@@ -671,7 +671,17 @@ async function prepareHandoff(strategy: RestartStrategy): Promise<RemoteHandoff>
 		log.info("Supervised restart: the tunnel dies with the unit, so the public URL will change");
 		return { port, fromPid: process.pid, tunnel: null };
 	}
-	const { releaseMainTunnelForHandoff, stopTunnel } = await import("./cloudflare-tunnel");
+	const { releaseMainTunnelForHandoff, stopMainTunnelForStableHandoff, stopTunnel } = await import("./cloudflare-tunnel");
+	// A provider observed to reuse its hostname needs no leaked process: the
+	// successor respawns onto the same URL, so nothing outlives an abandoned
+	// restart and the host-bound session cookie still matches.
+	const stableUrl = stopMainTunnelForStableHandoff();
+	if (stableUrl) {
+		log.info("Custom tunnel has a stable hostname — the successor will respawn it instead of adopting it", {
+			url: stableUrl,
+		});
+		return { port, fromPid: process.pid, tunnel: null, stableTunnelUrl: stableUrl };
+	}
 	const tunnel = releaseMainTunnelForHandoff();
 	if (!tunnel) {
 		// NOTHING TO HAND OVER IS NOT NOTHING TO DO. The release only succeeds on a
@@ -708,6 +718,25 @@ async function clearHandoff(handoff: RemoteHandoff): Promise<void> {
 		} catch (err) {
 			log.warn("Could not clear the unused handoff record", { error: String(err) });
 		}
+	}
+	// A stable-hostname tunnel was stopped, not released, so there is no process to
+	// take back — it has to be started again, or this still-serving box keeps
+	// running with no public URL at all.
+	if (handoff.stableTunnelUrl) {
+		try {
+			const { startTunnel } = await import("./cloudflare-tunnel");
+			const { getServerPort } = await import("./remote-access-server");
+			const url = await startTunnel(getServerPort());
+			log.info("Restarted the tunnel after the restart was abandoned", {
+				url,
+				sameUrl: url === handoff.stableTunnelUrl,
+			});
+		} catch (err) {
+			log.warn("Could not restart the tunnel after abandoning the restart — the box is local-only", {
+				error: String(err),
+			});
+		}
+		return;
 	}
 	const tunnel = handoff.tunnel;
 	if (!tunnel) return;

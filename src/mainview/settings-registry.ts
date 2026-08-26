@@ -362,6 +362,15 @@ export const SETTINGS_ENTRIES = [
 		storage: "global",
 	},
 	{
+		id: "remote-tunnel",
+		category: "system",
+		titleKey: "settings.remoteTunnel",
+		descriptionKey: "settings.remoteTunnelDesc",
+		anchor: "remote-tunnel",
+		globalField: "remoteTunnel",
+		storage: "global",
+	},
+	{
 		id: "remote-silent-update",
 		category: "system",
 		titleKey: "settings.remoteSilentUpdate",
@@ -504,6 +513,7 @@ export const GLOBAL_SETTINGS_FIELDS = [
 	"agentLaunchAutoApproveMinutes",
 	"agentsLayoutRevision",
 	"pxpipeProxyEnabled",
+	"remoteTunnel",
 	"favorites",
 	"keyboardShortcuts",
 	"reviewModePrompt",

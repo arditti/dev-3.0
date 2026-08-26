@@ -17,6 +17,7 @@ import type {
 	ExternalApp,
 	GlobalSettings as GlobalSettingsType,
 	NativeTerminalAvailability,
+	RemoteTunnelSettings,
 	ShortcutOverrides,
 	TerminalPathOpenMode,
 } from "../../shared/types";
@@ -456,6 +457,16 @@ function GlobalSettings({
 		[persistSettingChange],
 	);
 
+	const handleRemoteTunnelChange = useCallback(
+		(tunnel: RemoteTunnelSettings | undefined) => {
+			persistSettingChange(
+				{ remoteTunnel: tunnel },
+				{ tracking: { setting: "remote_tunnel_provider", value: tunnel?.provider ?? "cloudflare" } },
+			);
+		},
+		[persistSettingChange],
+	);
+
 	const handleRemoteSilentUpdateToggle = useCallback(
 		(enabled: boolean) => {
 			persistSettingChange({ remoteSilentUpdate: enabled });
@@ -808,6 +819,7 @@ function GlobalSettings({
 							caffeinateAvailable={caffeinateAvailable}
 							canaryAvailable={canaryAvailable}
 							onUpdateChannelChange={handleUpdateChannelChange}
+							onRemoteTunnelChange={handleRemoteTunnelChange}
 							onRemoteSilentUpdateToggle={handleRemoteSilentUpdateToggle}
 							onPreventSleepToggle={handlePreventSleepToggle}
 							onConfirmBeforeQuitToggle={handleConfirmBeforeQuitToggle}

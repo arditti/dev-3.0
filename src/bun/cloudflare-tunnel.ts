@@ -3,14 +3,23 @@ import os from "node:os";
 import { spawn, spawnSync } from "./spawn";
 import { createLogger } from "./logger";
 import { isProcessAlive } from "./remote-state";
+import {
+	buildCustomTunnelArgv,
+	extractTunnelUrl,
+	resolveRemoteTunnelProvider,
+	tunnelCommandName,
+	type ResolvedTunnelProvider,
+} from "./tunnel-provider";
+import { customTunnelHostIsStable, recordCustomTunnelUrl } from "./tunnel-host-memory";
 
-const log = createLogger("cf-tunnel");
+const log = createLogger("tunnel");
 
 export type TunnelState = "idle" | "starting" | "connected" | "failed";
 export type TunnelKind = "main" | "task-port" | "task-shared";
 
 /**
- * One running cloudflared process + the metadata we need to address it.
+ * One running tunnel process (cloudflared or a custom command) + the metadata
+ * we need to address it.
  *
  *  - `id` is a stable key used in the manager map:
  *      • `"main"` for the headless web-UI tunnel (single instance per process)
@@ -45,6 +54,18 @@ export interface TunnelEntry {
 	startedAt: number;
 	subToken: string;
 	metricsReadyUrl: string | null;
+	/**
+	 * Readiness probe for a custom provider, which exposes no local metrics port:
+	 * its own public URL. Set once the URL is scraped, so the health monitor can
+	 * watch the edge instead of trusting a live process with a dead tunnel.
+	 */
+	publicProbeUrl: string | null;
+	/**
+	 * This custom provider has been observed handing out the same hostname across
+	 * restarts (see tunnel-host-memory.ts), so a self-update can stop the tunnel
+	 * instead of leaking the process to keep the URL alive.
+	 */
+	stableHostname: boolean;
 	consecutiveHealthFailures: number;
 	healthCheckInFlight: boolean;
 	healthCheckTimer: ReturnType<typeof setInterval> | null;
@@ -71,10 +92,42 @@ const HEALTH_FAILURE_LIMIT = 3;
 // We gate "connected" on cloudflared's own /ready endpoint (200 only with a
 // live edge connection). Tunable so tests don't wait the real timeout.
 export const TUNNEL_EDGE_READY = { timeoutMs: 25_000, pollMs: 500 };
+/**
+ * A custom provider is probed over the public internet rather than a local
+ * metrics port, so it polls less often and gives up sooner — the URL is
+ * published best-effort either way, and the tunnel is usually live on the first
+ * probe.
+ */
+export const CUSTOM_TUNNEL_EDGE_READY = { timeoutMs: 10_000, pollMs: 750 };
 
 const tunnels = new Map<string, TunnelEntry>();
 
-export function isCloudflaredAvailable(): boolean {
+/**
+ * Why the LAST main-tunnel start failed, for the Remote Access modal — the
+ * entry itself is deleted on failure, so the reason has to outlive it.
+ * `command-not-found` and `command-empty` both point the user at the tunnel
+ * settings rather than a generic "failed".
+ */
+export type TunnelFailureReason = "command-not-found" | "command-empty" | "no-url";
+let mainTunnelFailureReason: TunnelFailureReason | null = null;
+
+export function getMainTunnelFailureReason(): TunnelFailureReason | null {
+	return mainTunnelFailureReason;
+}
+
+/**
+ * Availability of whatever will actually run for the MAIN remote-access
+ * tunnel: `cloudflared` for the built-in provider, or the first word of the
+ * user's custom command (Settings → System → Tunnel provider).
+ */
+export function isTunnelBinaryAvailable(): boolean {
+	const provider = resolveRemoteTunnelProvider();
+	// A custom command is never pre-judged: shell-quoted paths and leading
+	// VAR=value assignments defeat any string probe. Availability is derived
+	// from the outcome instead — a `sh -c` that exits 127 IS "command not
+	// found", measured on the exact line that runs (see startEntry).
+	if (provider.kind === "custom") return true;
+	if (provider.kind === "misconfigured") return false;
 	const result = spawnSync(["which", "cloudflared"]);
 	return result.exitCode === 0;
 }
@@ -172,8 +225,10 @@ export function buildTunnelArgv(targetPort: number): string[] {
  *   or: ... https://something.trycloudflare.com ...
  * Returns the full URL or null.
  */
+const CLOUDFLARE_URL_REGEX = /https:\/\/[a-zA-Z0-9_-]+\.trycloudflare\.com/;
+
 export function parseTunnelUrl(line: string): string | null {
-	const match = line.match(/https:\/\/[a-zA-Z0-9_-]+\.trycloudflare\.com/);
+	const match = line.match(CLOUDFLARE_URL_REGEX);
 	return match ? match[0] : null;
 }
 
@@ -192,16 +247,17 @@ export function parseTunnelMetricsUrl(line: string): string | null {
 	return `${base}/ready`;
 }
 
-function logCloudflaredLine(id: string, line: string): void {
+/** Attribute a piped output line to the tool that printed it, not always cloudflared. */
+function logTunnelLine(id: string, line: string, source: string): void {
 	const trimmed = line.trim();
 	if (!trimmed) return;
 	const extra = { id, line: trimmed };
 	if (/\b(ERR|ERROR|FTL|FATAL)\b/i.test(trimmed)) {
-		log.error("cloudflared", extra);
+		log.error(source, extra);
 	} else if (/\b(WRN|WARN|WARNING)\b/i.test(trimmed)) {
-		log.warn("cloudflared", extra);
+		log.warn(source, extra);
 	} else {
-		log.info("cloudflared", extra);
+		log.info(source, extra);
 	}
 }
 
@@ -210,8 +266,8 @@ function logCloudflaredLine(id: string, line: string): void {
  * released as soon as the public URL appeared, which discarded every later
  * reconnect error and could eventually back-pressure the child process.
  */
-function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<string | null> {
-	const reader = stderr.getReader();
+function monitorOutput(entry: TunnelEntry, stream: ReadableStream, urlRegex: RegExp, source: string, parseMetrics: boolean): Promise<string | null> {
+	const reader = stream.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
 	let urlResolved = false;
@@ -221,11 +277,16 @@ function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<stri
 	});
 
 	function processLine(line: string): void {
-		logCloudflaredLine(entry.id, line);
-		const metricsReadyUrl = parseTunnelMetricsUrl(line);
-		if (metricsReadyUrl) entry.metricsReadyUrl = metricsReadyUrl;
+		logTunnelLine(entry.id, line, source);
+		// Only cloudflared's metrics endpoint is trusted: a custom CLI that
+		// happens to print a metrics-server line must not silently replace its
+		// public-URL health probe with a /ready poll that is not cloudflared's.
+		if (parseMetrics) {
+			const metricsReadyUrl = parseTunnelMetricsUrl(line);
+			if (metricsReadyUrl) entry.metricsReadyUrl = metricsReadyUrl;
+		}
 		if (!urlResolved) {
-			const url = parseTunnelUrl(line);
+			const url = extractTunnelUrl(line, urlRegex);
 			if (url) {
 				urlResolved = true;
 				resolveUrl(url);
@@ -246,7 +307,7 @@ function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<stri
 			buffer += decoder.decode();
 			if (buffer) processLine(buffer);
 		} catch (err) {
-			log.warn("Failed to read cloudflared stderr", { id: entry.id, error: String(err) });
+			log.warn("Failed to read tunnel process output", { id: entry.id, error: String(err) });
 		} finally {
 			if (!urlResolved) resolveUrl(null);
 			try { reader.releaseLock(); } catch { /* already released */ }
@@ -258,6 +319,19 @@ function monitorStderr(entry: TunnelEntry, stderr: ReadableStream): Promise<stri
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** First non-null URL across the monitored streams; null once all end without one. */
+function firstUrl(promises: Promise<string | null>[]): Promise<string | null> {
+	return new Promise((resolve) => {
+		let pending = promises.length;
+		for (const p of promises) {
+			void p.then((url) => {
+				if (url) resolve(url);
+				else if (--pending === 0) resolve(null);
+			});
+		}
+	});
 }
 
 /**
@@ -278,6 +352,32 @@ async function waitForEdgeReady(entry: TunnelEntry, timeoutMs: number, pollMs: n
 			} catch {
 				// Edge connection not up yet (connection refused / timeout) — keep polling.
 			}
+		}
+		await delay(pollMs);
+	}
+	return false;
+}
+
+/**
+ * Readiness for a custom provider, which has no local metrics endpoint: probe
+ * the scraped public URL until the edge answers at all. ANY HTTP status counts
+ * as routable — a tunnel that gates access returns 401/403/404 from its own
+ * edge, which still proves the hostname resolves and forwards. Only a transport
+ * failure (DNS, refused connection, TLS, timeout) means it is not up yet.
+ */
+async function waitForPublicUrlReady(entry: TunnelEntry, url: string, timeoutMs: number, pollMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (entry.process === null) return false; // process exited during the wait
+		try {
+			await fetch(url, {
+				method: "HEAD",
+				redirect: "manual",
+				signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+			});
+			return true;
+		} catch {
+			// Not routable yet — keep polling until the deadline.
 		}
 		await delay(pollMs);
 	}
@@ -313,6 +413,26 @@ function matchesFilter(entry: TunnelEntry, filter?: TunnelFilter): boolean {
 	return true;
 }
 
+/**
+ * A fixed-hostname custom provider can serve only one tunnel at a time — a
+ * second concurrent invocation lands on the same public URL and the edge routes
+ * it to whichever process won. dev3 cannot fix that, but it can say it plainly
+ * instead of letting two surfaces advertise one URL that serves only one of them.
+ */
+function warnOnDuplicateUrl(entry: TunnelEntry): void {
+	if (!entry.url) return;
+	for (const other of tunnels.values()) {
+		if (other !== entry && other.url === entry.url) {
+			log.warn("Two live tunnels share one public URL — a fixed-hostname command cannot serve concurrent tunnels; make the hostname depend on {port}", {
+				id: entry.id,
+				conflictsWith: other.id,
+				url: entry.url,
+			});
+			return;
+		}
+	}
+}
+
 async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 	const existing = tunnels.get(opts.id);
 	if (existing && (existing.state === "starting" || existing.state === "connected")) {
@@ -333,18 +453,44 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 		startedAt: Date.now(),
 		subToken: randomBytes(24).toString("base64url"),
 		metricsReadyUrl: null,
+		publicProbeUrl: null,
+		stableHostname: false,
 		consecutiveHealthFailures: 0,
 		healthCheckInFlight: false,
 		healthCheckTimer: null,
 	};
 	tunnels.set(opts.id, entry);
 
-	try {
-		const proc = spawn(buildTunnelArgv(opts.targetPort), { stdout: "ignore", stderr: "pipe" });
-		entry.process = proc;
+	// One provider for every tunnel kind: the main remote-access tunnel and
+	// per-task port tunnels all run through the configured provider.
+	const provider: ResolvedTunnelProvider = resolveRemoteTunnelProvider();
+	const isCustom = provider.kind === "custom" && !!provider.command;
 
-		// Reset state when the cloudflared process exits unexpectedly.
+	// Fail closed: "custom" with a blank command starts NOTHING. Falling back
+	// to cloudflared here would hand a public quick tunnel to exactly the user
+	// who selected Custom because their network forbids cloudflared.
+	if (provider.kind === "misconfigured") {
+		log.warn("Custom tunnel provider selected but its command is empty — not starting a tunnel", { id: opts.id });
+		if (opts.kind === "main") mainTunnelFailureReason = "command-empty";
+		entry.state = "failed";
+		tunnels.delete(opts.id);
+		return entry;
+	}
+
+	try {
+		const argv = isCustom ? buildCustomTunnelArgv(provider.command!, opts.targetPort) : buildTunnelArgv(opts.targetPort);
+		// cloudflared logs to stderr; a custom CLI may print its URL on either
+		// stream, so pipe and scan both.
+		const proc = spawn(argv, { stdout: isCustom ? "pipe" : "ignore", stderr: "pipe" });
+		entry.process = proc;
+		if (isCustom) log.info("Starting custom tunnel command", { id: opts.id, targetPort: opts.targetPort });
+
+		// Reset state when the tunnel process exits unexpectedly. The exit code
+		// is also the availability signal for a custom command: sh exits 127 for
+		// "command not found" (126 for not-executable) on the line that ran.
+		let lastExitCode: number | null = null;
 		proc.exited.then((exitCode) => {
+			lastExitCode = exitCode;
 			log.info("Tunnel process exited", { id: opts.id, exitCode });
 			const current = tunnels.get(opts.id);
 			if (current === entry) {
@@ -356,25 +502,57 @@ async function startEntry(opts: StartTunnelOptions): Promise<TunnelEntry> {
 			}
 		});
 
-		const url = await waitForUrl(monitorStderr(entry, proc.stderr!), URL_WAIT_TIMEOUT_MS);
+		const urlRegex = isCustom ? provider.urlRegex! : CLOUDFLARE_URL_REGEX;
+		const source = isCustom ? tunnelCommandName(provider.command!) : "cloudflared";
+		const urlPromises = [monitorOutput(entry, proc.stderr!, urlRegex, source, !isCustom)];
+		if (isCustom && proc.stdout) urlPromises.push(monitorOutput(entry, proc.stdout as ReadableStream, urlRegex, source, !isCustom));
+		const url = await waitForUrl(firstUrl(urlPromises), URL_WAIT_TIMEOUT_MS);
 		if (url) {
 			// Wait until the edge actually routes the hostname before publishing it,
 			// so a browser scanning the QR / opening the link never hits NXDOMAIN.
-			const edgeReady = await waitForEdgeReady(entry, TUNNEL_EDGE_READY.timeoutMs, TUNNEL_EDGE_READY.pollMs);
+			// A custom provider has no local readiness endpoint — its URL is
+			// published as soon as it is printed.
+			if (isCustom) entry.publicProbeUrl = url;
+			const edgeReady = isCustom
+				? await waitForPublicUrlReady(entry, url, CUSTOM_TUNNEL_EDGE_READY.timeoutMs, CUSTOM_TUNNEL_EDGE_READY.pollMs)
+				: await waitForEdgeReady(entry, TUNNEL_EDGE_READY.timeoutMs, TUNNEL_EDGE_READY.pollMs);
 			// Bail if the tunnel was stopped or its process died during the wait —
 			// never resurrect a dead entry into "connected".
 			if (tunnels.get(opts.id) !== entry || entry.process === null) return entry;
 			entry.url = url;
 			entry.state = "connected";
-			log.info("Tunnel connected", { id: opts.id, url, edgeReady });
+			if (opts.kind === "main") mainTunnelFailureReason = null;
+			// Hostname-stability learning belongs to the main tunnel alone: the memory
+			// holds one (command, url) pair, concurrent port tunnels would flip-flop it,
+			// and the stability bit only feeds the main tunnel's self-update handoff.
+			if (isCustom && opts.kind === "main") entry.stableHostname = recordCustomTunnelUrl(provider.command!, url);
+			if (isCustom) warnOnDuplicateUrl(entry);
+			log.info("Tunnel connected", {
+				id: opts.id,
+				url,
+				probe: isCustom ? "public-url" : "metrics-ready",
+				edgeCheck: edgeReady ? "ready" : "unconfirmed",
+				...(isCustom && opts.kind === "main" ? { hostname: entry.stableHostname ? "stable" : "unproven" } : {}),
+			});
 			if (!edgeReady) {
-				log.warn("Tunnel /ready not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });
+				log.warn("Tunnel edge not confirmed within timeout; publishing URL best-effort", { id: opts.id, url });
 			}
 			startHealthMonitor(entry);
 			return entry;
 		}
 
-		log.warn("Tunnel URL not found in stderr within timeout", { id: opts.id });
+		// The output streams close BEFORE `proc.exited` settles, so the exit code
+		// is usually still null right here — give it a beat, or the not-found
+		// classification below can never fire (the process is already dead when
+		// the URL wait comes up empty, this is not a 30s stall).
+		await Promise.race([proc.exited, delay(200)]);
+		const notFound = isCustom && (lastExitCode === 127 || lastExitCode === 126);
+		if (notFound) {
+			log.warn("Custom tunnel command not found — sh could not run it", { id: opts.id, exitCode: lastExitCode });
+		} else {
+			log.warn("Tunnel URL not found in process output within timeout", { id: opts.id, provider: provider.kind });
+		}
+		if (opts.kind === "main") mainTunnelFailureReason = notFound ? "command-not-found" : "no-url";
 		entry.state = "failed";
 		stopEntry(opts.id);
 		return entry;
@@ -392,10 +570,31 @@ function stopEntry(id: string): void {
 	if (entry.healthCheckTimer) clearInterval(entry.healthCheckTimer);
 	entry.healthCheckTimer = null;
 	if (entry.process) {
+		const pid = entry.process.pid;
+		// A custom command that is a pipeline keeps its wrapper shell (no exec),
+		// so the kill below hits sh and the tunnel it spawned would live on.
+		// Capture the children FIRST — killing sh reparents them to init, after
+		// which `pkill -P <pid>` matches nothing. A plain command has none.
+		let childPids: number[] = [];
+		if (process.platform !== "win32" && pid) {
+			try {
+				const out = spawnSync(["pgrep", "-P", String(pid)]).stdout?.toString() ?? "";
+				childPids = out.split("\n").map((s) => Number.parseInt(s, 10)).filter((n) => Number.isFinite(n) && n > 0);
+			} catch {
+				// pgrep missing — the exec'd common case has no children anyway
+			}
+		}
 		try {
 			entry.process.kill();
 		} catch {
 			// process may already be dead
+		}
+		for (const child of childPids) {
+			try {
+				process.kill(child, "SIGTERM");
+			} catch {
+				// already gone
+			}
 		}
 	}
 	if (entry.adoptedPid !== null) {
@@ -432,6 +631,26 @@ export function releaseMainTunnelForHandoff(): { pid: number; url: string; metri
 }
 
 /**
+ * Stop the main tunnel INSTEAD of leaking it across a self-update, for a provider
+ * whose hostname is known to be stable. Returns the URL the successor should come
+ * back on, or null when this tunnel has to be handed over the leaky way.
+ *
+ * The leak exists only because a quick tunnel's hostname is random per process.
+ * When the same command reliably yields the same hostname, respawning is strictly
+ * better: no orphan survives an abandoned restart, the successor owns a process it
+ * spawned itself (with output to scrape and an exit promise), and the session
+ * cookie still matches because the host did not change.
+ */
+export function stopMainTunnelForStableHandoff(): string | null {
+	const entry = tunnels.get(MAIN_ID);
+	if (!entry || entry.state !== "connected" || !entry.url || !entry.stableHostname) return null;
+	const url = entry.url;
+	stopEntry(MAIN_ID);
+	log.info("Stopped a stable-hostname tunnel rather than leaking it across the restart", { url });
+	return url;
+}
+
+/**
  * Register a cloudflared this process did not spawn as the main tunnel.
  *
  * The URL is taken on trust from the handoff record (its writer had it from
@@ -446,6 +665,11 @@ export function adoptMainTunnel(opts: {
 	targetPort: number;
 }): void {
 	stopEntry(MAIN_ID);
+	// An adopted process has no metrics endpoint under a custom provider, and no
+	// exit promise either — without a probe it would be trusted forever. Its own
+	// public URL is the only health signal available, and it is a better one.
+	const provider = resolveRemoteTunnelProvider();
+	const custom = provider.kind === "custom" && !!provider.command;
 	const entry: TunnelEntry = {
 		id: MAIN_ID,
 		kind: "main",
@@ -459,6 +683,8 @@ export function adoptMainTunnel(opts: {
 		startedAt: Date.now(),
 		subToken: randomBytes(24).toString("base64url"),
 		metricsReadyUrl: opts.metricsReadyUrl,
+		publicProbeUrl: custom && !opts.metricsReadyUrl ? opts.url : null,
+		stableHostname: custom ? customTunnelHostIsStable(provider.command!) : false,
 		consecutiveHealthFailures: 0,
 		healthCheckInFlight: false,
 		healthCheckTimer: null,
@@ -488,9 +714,64 @@ async function restartEntry(entry: TunnelEntry): Promise<void> {
 	}
 }
 
+/**
+ * Ongoing health for a custom provider: keep probing its public URL, so a live
+ * command whose tunnel has silently dropped is caught instead of being trusted
+ * on process liveness alone. Any HTTP answer is healthy — see
+ * `waitForPublicUrlReady` for why a 401/403 still proves the edge routes.
+ */
+async function checkPublicUrlHealth(entry: TunnelEntry, probeUrl: string): Promise<void> {
+	entry.healthCheckInFlight = true;
+	try {
+		let reachable = false;
+		let detail = "";
+		try {
+			const response = await fetch(probeUrl, {
+				method: "HEAD",
+				redirect: "manual",
+				signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+			});
+			reachable = true;
+			detail = `status ${response.status}`;
+		} catch (err) {
+			detail = String(err);
+		}
+
+		if (tunnels.get(entry.id) !== entry) return;
+		if (reachable) {
+			if (entry.consecutiveHealthFailures > 0) {
+				log.info("Tunnel edge recovered", { id: entry.id, previousFailures: entry.consecutiveHealthFailures });
+			}
+			entry.consecutiveHealthFailures = 0;
+			return;
+		}
+
+		entry.consecutiveHealthFailures += 1;
+		log.warn("Tunnel public URL unreachable", {
+			id: entry.id,
+			probe: "public-url",
+			detail,
+			consecutiveFailures: entry.consecutiveHealthFailures,
+		});
+		if (entry.consecutiveHealthFailures >= HEALTH_FAILURE_LIMIT) {
+			log.warn("Tunnel unhealthy; restarting", { id: entry.id, url: entry.url });
+			await restartEntry(entry);
+		}
+	} finally {
+		entry.healthCheckInFlight = false;
+	}
+}
+
 async function checkHealth(id: string): Promise<void> {
 	const entry = tunnels.get(id);
 	if (!entry || entry.state !== "connected" || entry.healthCheckInFlight) return;
+
+	// A custom provider has no local metrics port, but it does have a public URL,
+	// which is a better signal than "the process is still alive".
+	if (!entry.metricsReadyUrl && entry.publicProbeUrl) {
+		await checkPublicUrlHealth(entry, entry.publicProbeUrl);
+		return;
+	}
 
 	// AN ADOPTED TUNNEL WITH NO `/ready` URL IS WATCHED BY ITS PID, or not at all.
 	// An entry we spawned has a `process` whose `exited` hook resets it; an inherited
@@ -621,4 +902,5 @@ export function _resetState(): void {
 		if (entry.healthCheckTimer) clearInterval(entry.healthCheckTimer);
 	}
 	tunnels.clear();
+	mainTunnelFailureReason = null;
 }
