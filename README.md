@@ -338,7 +338,8 @@ rate-limit tracking and skill directories differ per agent — the full grid is 
 | [Agent support matrix](agent-support-matrix.md) | What each agent supports, feature by feature |
 | [CLI exit codes](docs/cli-exit-codes.md) | The `dev3` exit-code contract, for scripting |
 | [Diagnostic logs](docs/diagnostic-logs.md) | What is logged locally, for how long, and what is redacted |
-| [AGENTS.md](AGENTS.md) | Architecture and contributor guide |
+| [Contributing](CONTRIBUTING.md) | Setup, the pre-PR checklist, and what review looks like here |
+| [AGENTS.md](AGENTS.md) | Architecture and house rules — the deep reference behind the contributing guide |
 
 ## Telemetry
 
@@ -409,8 +410,9 @@ Built on [Electrobun](https://electrobun.dev) (native webview, no Chromium) and
 [Bun](https://bun.sh), with React 19 + Tailwind in front, [ghostty-web](https://github.com/nichochar/ghostty-web)
 for GPU-accelerated terminals, and tmux underneath.
 
-Contributions welcome — read [AGENTS.md](AGENTS.md) first; it is the architecture doc and the
-house rules in one file.
+Contributions welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md): setup, the rules PRs most
+often bounce on, and what review looks like here. [AGENTS.md](AGENTS.md) is the deep reference
+behind it — the architecture doc and the house rules in one file.
 
 ## Star history
 

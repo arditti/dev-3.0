@@ -227,6 +227,8 @@ Non-obvious architectural decisions, hacks, and workarounds go in `decisions/YYY
 
 **Create one when you:** relied on undocumented behavior or reverse-engineered internals; chose a non-obvious approach over a simpler one for a specific reason; worked around a dependency bug/limitation; made a decision with trade-offs or known risks.
 
+**Supersede, don't let records rot.** If your change makes an existing record's claims false, fix that record in the same commit: add a short supersede note at its top ("Superseded on YYYY-MM-DD by `decisions/YYYY/MM/DD/<new-slug>.md`: <one line on what changed>") and write the new record covering the new rationale. A record that confidently states something the code no longer does is worse than no record — the next agent will trust it.
+
 **Required sections:** 1. Context 2. Investigation (if applicable) 3. Decision (what + where in the code) 4. Risks 5. Alternatives considered. **Keep it short** — 2-4 sentences per section, fits on one screen; link relevant code paths (file + function names). Commit the record together with the code change.
 
 ## Agent skills
@@ -264,6 +266,8 @@ bun run build        # Build (staging channel)
 bun run build:prod   # Build (production channel)
 bun run lint         # TypeScript type-check — must pass before pushing
 ```
+
+**Pin every new dependency to an exact version** (no `^`, no `~`) in `package.json`. Builds here resolve packages through a mirror that can lag the public registry, so a range that silently floats onto a freshly published patch makes the branch uninstallable on the maintainer's machine with no signal that the version is the cause. Existing ranges stay as they are — this applies to what you add.
 
 **HMR / Vite watch is NOT used in this project.** Never run `bun run watch`, `bun run hmr`, or any `vite --watch` flow — the only supported dev loop is `bun run dev`. **Never run `bun run bump`** — versioning is owned by the user, not AI agents.
 
@@ -385,6 +389,8 @@ All user-facing renderer strings are localized via `src/mainview/i18n/`; locales
 
 **Adding a string:** add the key to the matching `en/` domain file (e.g., `kanban.ts` for `kanban.*` keys), add translations to the same domain file in `ru/` and `es/`, then use `t("your.key")`.
 
+**Search tokens have a help registry.** The in-app search help (`translations/*/help.ts`) spells out the full token vocabulary verbatim in more than one string (`priority:P0 label:"…" agent:… status:… space:"…" is:attention is:home has:port`), and `translations/*/tips.ts` carries a shorter list of the same tokens. Adding or renaming a search token means updating every one of those strings in all three locales in the same commit — an unlisted token is invisible to anyone who opens Help.
+
 **Interpolation:** `{variable}` placeholders — `t("dashboard.failedAdd", { error: String(err) })`.
 
 **Pluralization:** suffix convention `_one`, `_few`, `_many`, `_other`; call `t.plural("dashboard.projectCount", count)`. English needs only `_one`/`_other`; Russian needs all four (`"{count} проект"` / `"{count} проекта"` / `"{count} проектов"` / `"{count} проектов"`).
@@ -398,8 +404,8 @@ All user-facing renderer strings are localized via `src/mainview/i18n/`; locales
 **Framework: Vitest** with `happy-dom` and React Testing Library. Three configs run as three independent processes: `vitest.config.ts` (renderer), `vitest.config.bun.ts` (backend), `vitest.config.cli.ts` (CLI).
 
 ```bash
-bun run test          # renderer + backend + cli in parallel, minus 3 slow e2e files (~6s)
-bun run test:full     # everything incl. slow e2e (~42s) — CI/PR only, not local
+bun run test          # renderer + backend + cli in parallel, minus 6 slow e2e suites (~6s)
+bun run test:full     # everything incl. slow e2e (~42s) — what CI runs, required before a PR
 bun run test:bun      # backend only
 bun run test:cli      # CLI only
 bun run test:watch    # watch mode
@@ -412,7 +418,7 @@ bun run test:watch    # watch mode
 Two gates, escalating. Committing itself has no gate — commit freely, verify before the work leaves the machine.
 
 1. **Before `git push`** — `bun run lint` plus the tests covering what you touched. A push that breaks type-checking is unacceptable even if the tests pass.
-2. **Before `gh pr create`, before enabling auto-merge, and again after any rebase** — the **full** `bun run test`, green end-to-end. Only the file you edited is NOT sufficient: sibling test files assert against the same components (e.g. `TaskCard.tsx` is covered by both `TaskCard.test.tsx` AND `TaskCardSeq.test.tsx`), and a rebase pulls in code your run never saw. Fix and re-run until green BEFORE opening the PR — don't open it and watch CI go red.
+2. **Before `gh pr create`, before enabling auto-merge, and again after any rebase** — **`bun run test:full`**, green end-to-end. Not the plain `bun run test`: it excludes 6 slow e2e suites that CI does run, so a green fast run is not a green CI. Only the file you edited is NOT sufficient either: sibling test files assert against the same components (e.g. `TaskCard.tsx` is covered by both `TaskCard.test.tsx` AND `TaskCardSeq.test.tsx`), and a rebase pulls in code your run never saw. Fix and re-run until green BEFORE opening the PR — don't open it and watch CI go red.
 
 ### Manual UI QA in a browser (MANDATORY)
 
