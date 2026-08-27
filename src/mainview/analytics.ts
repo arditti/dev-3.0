@@ -2,13 +2,18 @@
 // Uses fetch() instead of gtag.js because WKWebView blocks external
 // script loading from the views:// custom protocol.
 
-import type { CodingAgent } from "../shared/types";
+import type { CodingAgent, TelemetryProfile } from "../shared/types";
+import { BUILD_COMMIT } from "../shared/build-info.generated";
+import { countryForTimezone, currentTimezone } from "../shared/timezone-country";
 import type { Route } from "./state";
 import { api } from "./rpc";
 import { telemetryEnabled } from "./telemetry";
 import { randomUUID } from "./uuid";
 
 const GA_MEASUREMENT_ID = "G-L1NSQH6FGY";
+// Not a credential despite the name: a Measurement Protocol secret for a web
+// stream is write-only and has to ship in the client, exactly as gtag.js ships
+// the measurement id. Secret scanners flag it; there is nothing to protect.
 const GA_API_SECRET = "WlYPp7bSTVS5cMRMS4dJwQ";
 const GA_ENDPOINT = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
 
@@ -35,15 +40,45 @@ let engagementTrackingSetup = false;
 // Cap a single engagement report so a suspended laptop / clock jump can't spike
 // the metric with a multi-hour "engaged" interval.
 const MAX_ENGAGEMENT_MS = 30 * 60 * 1000;
-// Public IP used for `ip_override`. GA4 Measurement Protocol does NOT geolocate
-// web-stream hits from the request's source IP — without ip_override the
-// Country/City dimensions stay "(not set)". Resolved best-effort (see
-// resolvePublicIp); empty string until/unless a lookup succeeds.
-let ipOverride = "";
 
-const IP_CACHE_KEY = "dev3-ga-ip";
-const IP_CACHE_TS_KEY = "dev3-ga-ip-ts";
-const IP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // refresh at most once a day
+// Left behind by the removed public-IP lookup; cleared so no install keeps a
+// stored IP on disk. See decisions/2026/08/27/drop-ip-override-geolocation.md.
+const STALE_IP_CACHE_KEYS = ["dev3-ga-ip", "dev3-ga-ip-ts"];
+
+/**
+ * The channel baked into the bundle (`dev`, `canary`, or a stable build's own
+ * value), never absent. Without it every build reported the bare version, so a
+ * `bun run dev` session and a canary build were indistinguishable from a stable
+ * install on the same version number.
+ */
+function normalizeBuildChannel(buildChannel: string | undefined): string {
+	return buildChannel || "stable";
+}
+
+/**
+ * The version string GA reports: `1.48.1` for a stable install, `canary-1.48.1`
+ * for a canary build, and a bare `dev` for anything built from source.
+ *
+ * It carries the channel because `app_version` is one of GA4's OWN dimensions and
+ * shows up in every report unaided, while a user property does nothing until
+ * someone registers it as a custom dimension.
+ *
+ * A DEV BUILD REPORTS NO VERSION AT ALL, ON PURPOSE. Every agent building from its
+ * own worktree would otherwise mint a distinct value, and GA4 collapses a
+ * dimension's long tail into "(other)" — the tail would be the developers'
+ * builds, drowning the released versions that the dimension exists to measure.
+ * "It came from source" is the entire question a dev build has to answer.
+ *
+ * This string is for analytics only — the bundle's `version.json` must keep the
+ * bare version, because `dev3 doctor` compares it against the CLI version by
+ * string equality.
+ */
+export function analyticsVersion(appVersion: string, buildChannel: string | undefined): string {
+	const channel = normalizeBuildChannel(buildChannel);
+	if (channel === "dev") return "dev";
+	if (channel === "stable") return appVersion;
+	return `${channel}-${appVersion}`;
+}
 
 // Agents registered by the app (App.tsx) so events like `task_moved` can carry
 // a human-readable agent name without threading the agents list everywhere.
@@ -60,31 +95,9 @@ export function agentNameFromId(agentId: string | null | undefined): string {
 	return knownAgents.find((a) => a.id === agentId)?.name ?? "unknown";
 }
 
-/**
- * Resolve the user's public IP (best-effort) for `ip_override`, so GA4 can
- * geolocate events. Uses a cached value immediately if present, then refreshes
- * from api.ipify.org at most once a day. One request per app launch at most —
- * silent on any failure (analytics still works, just without geo this session).
- */
-function resolvePublicIp(): void {
-	const cached = localStorage.getItem(IP_CACHE_KEY) || "";
-	if (cached) ipOverride = cached;
-
-	const cachedTs = Number(localStorage.getItem(IP_CACHE_TS_KEY) || "0");
-	if (cached && Date.now() - cachedTs < IP_CACHE_TTL_MS) return; // still fresh
-
-	fetch("https://api.ipify.org?format=json")
-		.then((res) => res.json())
-		.then((data: { ip?: unknown }) => {
-			if (data && typeof data.ip === "string" && data.ip) {
-				ipOverride = data.ip;
-				localStorage.setItem(IP_CACHE_KEY, data.ip);
-				localStorage.setItem(IP_CACHE_TS_KEY, String(Date.now()));
-			}
-		})
-		.catch(() => {
-			// Best-effort — keep any cached IP, otherwise no geo this session.
-		});
+/** Erase the IP the removed geolocation lookup used to cache on this machine. */
+function clearStaleIpCache(): void {
+	for (const key of STALE_IP_CACHE_KEYS) localStorage.removeItem(key);
 }
 
 function getOrCreateClientId(): string {
@@ -128,6 +141,42 @@ function getScreenResolution(): string {
 
 function getLanguage(): string {
 	return navigator.language || "unknown";
+}
+
+/**
+ * The standard GA4 `device` object.
+ *
+ * OS, language and screen resolution live HERE rather than in `user_properties`:
+ * they are fields the Measurement Protocol already understands, so they populate
+ * GA4's own built-in dimensions instead of eating three of the twenty-five custom
+ * user-property slots and then showing nothing until someone registers them.
+ *
+ * The OS VERSION comes from the host, never from the User-Agent: WebKit reports
+ * `Mac OS X 10_15_7` on every Mac Apple has ever shipped, so a UA-derived version
+ * would report one wrong number for the entire macOS population.
+ */
+function deviceInfo(): Record<string, string> {
+	return {
+		category: "desktop",
+		language: getLanguage(),
+		screen_resolution: getScreenResolution(),
+		operating_system: getOS(),
+		...(osVersion ? { operating_system_version: osVersion } : {}),
+	};
+}
+
+// ── Country (no IP, no network) ──
+// Derived from the machine's own timezone against a baked-in table, so it costs
+// one map lookup and no request. An unmapped zone leaves it empty and the field
+// is omitted — a wrong country would be worse than none.
+let country = "";
+
+/** Host-reported OS version; empty until the profile lands, and then omitted. */
+let osVersion = "";
+
+/** Resolve the country from the machine's timezone. Idempotent; never throws. */
+export function resolveCountry(): void {
+	country = countryForTimezone(currentTimezone());
 }
 
 function isFirstVisit(): boolean {
@@ -202,13 +251,19 @@ function sendToGA(events: Array<{ name: string; params?: Record<string, unknown>
 	const body = {
 		client_id: clientId,
 		user_agent: navigator.userAgent,
-		// Lets GA4 derive Country/City — MP web hits are NOT geolocated otherwise.
-		...(ipOverride ? { ip_override: ipOverride } : {}),
+		// Top-level, so it costs none of the 25 user-property slots. Omitted rather
+		// than sent empty when the timezone maps to no country.
+		...(country ? { user_location: { country_id: country } } : {}),
+		device: deviceInfo(),
 		user_properties: userProperties,
 		events: events.map((e, index) => ({
 			name: e.name,
 			params: {
 				session_id: sessionId,
+				// An event parameter, not a user property: the commit describes the
+				// build that emitted THIS hit, and as a dimension it is one distinct
+				// value per merge — cardinality no user-scoped report survives.
+				build_commit: BUILD_COMMIT,
 				...(index === 0 ? { engagement_time_msec: engagementMs } : {}),
 				...e.params,
 			},
@@ -223,15 +278,32 @@ function sendToGA(events: Array<{ name: string; params?: Record<string, unknown>
 	});
 }
 
-/** Initialize GA4 with user properties and start heartbeat. */
-export function initAnalytics(appVersion: string): void {
+/**
+ * Initialize GA4 with user properties and start heartbeat.
+ *
+ * `buildChannel` is the channel baked into the bundle (`dev` / `canary` /
+ * stable), not the channel the user subscribes to — the caller reads it from
+ * `getAppVersion`.
+ *
+ * `profile` is the host's coarse install facts (see `bun/telemetry-profile.ts`);
+ * omit it and those properties are simply not reported.
+ */
+export function initAnalytics(
+	appVersion: string,
+	buildChannel?: string,
+	profile?: TelemetryProfile,
+): void {
+	// Runs before the telemetry gate on purpose: an opted-out install must also
+	// shed the IP an earlier version cached, and erasing it sends nothing.
+	clearStaleIpCache();
+
 	// Wired before the telemetry gate: the listeners are local diagnostics first —
 	// logToBackend writes the app's own log file and never leaves the machine. The
 	// GA event they also raise is dropped by sendToGA when telemetry is off.
 	setupErrorTracking();
 
-	// Gated separately from sendToGA: the ipify lookup and the heartbeat interval
-	// below never pass through the transport.
+	// Gated separately from sendToGA: the heartbeat interval below never passes
+	// through the transport.
 	if (!telemetryEnabled()) return;
 
 	clientId = getOrCreateClientId();
@@ -245,15 +317,23 @@ export function initAnalytics(appVersion: string): void {
 		typeof document === "undefined" || document.visibilityState !== "hidden" ? Date.now() : 0;
 	setupEngagementTracking();
 
-	// Load cached IP synchronously (so session_start can carry it) and kick off
-	// a best-effort refresh for the geo dimensions.
-	resolvePublicIp();
+	resolveCountry();
+	osVersion = profile?.osVersion ?? "";
 
 	userProperties = {
-		operating_system: { value: getOS() },
-		app_version: { value: appVersion },
-		screen_resolution: { value: getScreenResolution() },
-		language: { value: getLanguage() },
+		app_version: { value: analyticsVersion(appVersion, buildChannel) },
+		build_channel: { value: normalizeBuildChannel(buildChannel) },
+		...(profile
+			? {
+					cpu_arch: { value: profile.cpuArch },
+					install_type: { value: profile.installType },
+					terminal_backend: { value: profile.terminalBackend },
+					default_agent: { value: profile.defaultAgent },
+					project_count_bucket: { value: profile.projectCountBucket },
+					task_count_bucket: { value: profile.taskCountBucket },
+					install_age_bucket: { value: profile.installAgeBucket },
+				}
+			: {}),
 	};
 
 	const initEvents: Array<{ name: string; params?: Record<string, unknown> }> = [];
@@ -301,8 +381,6 @@ export function destroyAnalytics(): void {
 		clearInterval(heartbeatInterval);
 		heartbeatInterval = null;
 	}
-	// Drop the in-memory geo IP; the next init re-reads it from the localStorage cache.
-	ipOverride = "";
 	// Tear down engagement tracking so a fresh init re-wires it cleanly.
 	if (engagementTrackingSetup && typeof document !== "undefined") {
 		document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -324,23 +402,17 @@ export interface AnalyticsLocation {
 	 * the SAME GA4 property (measurement_id "G-…"), so without the prefix their
 	 * Page-path rows would be indistinguishable.
 	 *
-	 * The project identifier is the app's internal id, never the project *name*:
-	 * a repo/folder name can be confidential (client under NDA, unreleased
-	 * codename) and must not leave the machine. The task identifier is the
-	 * human-readable per-project seq label (e.g. "981-1", see
-	 * {@link taskSeqLabel}) when resolvable, falling back to the raw task id.
+	 * NO IDENTIFIERS GO IN HERE — not the project id, not the task id, not the
+	 * task's seq label. GA4 derives its Page-path dimension from this string, so
+	 * an id in the path mints one row per project and per task and shreds the
+	 * screen-level numbers the dimension exists to give. The path names the
+	 * SCREEN; which project or task it was is not a question analytics asks.
 	 */
 	path: string;
 }
 
-/**
- * Map a route to a GA4 location. Pure — safe to unit-test in isolation.
- *
- * `taskLabel` is the human-readable seq id (e.g. "981-1") for the route's task,
- * resolved by the caller from the loaded task list; when omitted (task not
- * loaded) the raw task id is used so the hit is never dropped.
- */
-export function analyticsLocationForRoute(route: Route, taskLabel?: string): AnalyticsLocation {
+/** Map a route to a GA4 location. Pure — safe to unit-test in isolation. */
+export function analyticsLocationForRoute(route: Route): AnalyticsLocation {
 	switch (route.screen) {
 		case "dashboard":
 			return { screen: "dashboard", title: "Dashboard", path: "/app/dashboard" };
@@ -348,14 +420,14 @@ export function analyticsLocationForRoute(route: Route, taskLabel?: string): Ana
 			// Split view with a task selected is really the task surface; the bare
 			// board (with or without an empty split list) is "kanban".
 			return route.activeTaskId
-				? { screen: "task", title: "Task", path: `/app/project/${route.projectId}/task/${taskLabel ?? route.activeTaskId}` }
-				: { screen: "kanban", title: "Kanban", path: `/app/project/${route.projectId}/kanban` };
+				? { screen: "task", title: "Task", path: "/app/project/task" }
+				: { screen: "kanban", title: "Kanban", path: "/app/project/kanban" };
 		case "project-terminal":
-			return { screen: "project-terminal", title: "Project Terminal", path: `/app/project/${route.projectId}/terminal` };
+			return { screen: "project-terminal", title: "Project Terminal", path: "/app/project/terminal" };
 		case "task":
-			return { screen: "task", title: "Task", path: `/app/project/${route.projectId}/task/${taskLabel ?? route.taskId}` };
+			return { screen: "task", title: "Task", path: "/app/project/task" };
 		case "project-settings":
-			return { screen: "project-settings", title: "Project Settings", path: `/app/project/${route.projectId}/settings` };
+			return { screen: "project-settings", title: "Project Settings", path: "/app/project/settings" };
 		case "settings":
 			return { screen: "settings", title: "Settings", path: "/app/settings" };
 		case "changelog":
@@ -388,13 +460,9 @@ function pageLocation(path: string): string {
 	return `${APP_LOCATION_ORIGIN}${path}`;
 }
 
-/**
- * Track a virtual page view for SPA navigation, derived from the route.
- * `taskLabel` (e.g. "981-1") is resolved by the caller from the loaded task
- * list; it lands in the path in place of the raw task id.
- */
-export function trackPageView(route: Route, taskLabel?: string): void {
-	const loc = analyticsLocationForRoute(route, taskLabel);
+/** Track a virtual page view for SPA navigation, derived from the route. */
+export function trackPageView(route: Route): void {
+	const loc = analyticsLocationForRoute(route);
 	currentScreen = loc.screen;
 	sendToGA([{
 		name: "page_view",
@@ -408,16 +476,15 @@ export function trackPageView(route: Route, taskLabel?: string): void {
 /**
  * Track opening the inline diff viewer as its own virtual page view. The diff is
  * not a routable screen (it opens in-place over a task), so callers fire this
- * explicitly on open. `taskLabel` is the human-readable seq id (e.g. "981-1");
- * project id is the internal id, never the project name.
+ * explicitly on open.
  */
-export function trackDiffView(projectId: string, taskLabel: string): void {
+export function trackDiffView(): void {
 	currentScreen = "diff";
 	sendToGA([{
 		name: "page_view",
 		params: {
 			page_title: "Diff",
-			page_location: pageLocation(`/app/project/${projectId}/diff/${taskLabel}`),
+			page_location: pageLocation("/app/project/diff"),
 		},
 	}]);
 }
