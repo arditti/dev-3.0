@@ -740,7 +740,7 @@ const ALL_TIPS: Tip[] = [
 		icon: "\u{F0BB0}", // nf-md-bell_off
 		score: 4,
 		contexts: ["board", "terminal"],
-		settingsSection: "tasks",
+		settingsSection: "notifications",
 	},
 	{
 		id: "pr-ci-review-badges",
@@ -773,7 +773,7 @@ const ALL_TIPS: Tip[] = [
 		icon: "\uF0F3", // nf-fa-bell
 		score: 4,
 		contexts: ["settings", "board"],
-		settingsSection: "system",
+		settingsSection: "notifications",
 	},
 	{
 		id: "remote-detach-lifecycle",
