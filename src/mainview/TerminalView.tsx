@@ -48,6 +48,7 @@ import { createAnsiThemeFilter } from "./utils/ansi-theme-adapt";
 import { submitPastedText } from "./terminal-submit";
 import { createFilePathLinkProvider, type FilePathLinkProvider } from "./terminal-file-links";
 import { createOsc8Tracker, createOsc8LinkProvider } from "./terminal-osc8-links";
+import { installOsc8HoverTooltip, type Osc8HoverHandle } from "./terminal-osc8-hover";
 import { installFilePathUnderlines, type FilePathUnderlinesHandle } from "./terminal-link-underlines";
 import { activateTerminalPath } from "./terminal-path-open";
 import { isRemote } from "./utils/platform";
@@ -607,6 +608,7 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 		let refitTimer: ReturnType<typeof setTimeout> | null = null;
 		let mouseCleanup: (() => void) | undefined;
 		let linkUnderlines: FilePathUnderlinesHandle | null = null;
+		let osc8Hover: Osc8HoverHandle | null = null;
 		let filePathLinks: FilePathLinkProvider | null = null;
 		// URI capture for OSC 8 hyperlinks — the wasm terminal never exposes a
 		// link's URI back to JS, so it is remembered from the raw PTY stream.
@@ -796,15 +798,28 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 			// OSC 8 hyperlinks (agents wrap markdown links in them). ghostty-web
 			// underlines them on hover by itself but cannot recover the URI from
 			// wasm, so this provider resolves it via the stream tracker.
-			term.registerLinkProvider(
-				createOsc8LinkProvider({
-					getLine: (y) => term.buffer.active.getLine(y) ?? undefined,
-					uriFor: osc8Tracker.uriFor,
-					onActivate: (uri) => {
-						window.open(uri, "_blank", "noopener,noreferrer");
-					},
-				}),
-			);
+			const osc8Provider = createOsc8LinkProvider({
+				getLine: (y) => term.buffer.active.getLine(y) ?? undefined,
+				isRowWrapped: (y) => {
+					// ghostty-web reports every scrollback row as unwrapped; return
+					// "unknown" there so the provider still stitches scrolled links.
+					const scrollback = Math.max(0, term.buffer.active.length - term.rows);
+					if (y < scrollback) return undefined;
+					return term.buffer.active.getLine(y)?.isWrapped;
+				},
+				uriFor: osc8Tracker.uriFor,
+				onActivate: (uri) => {
+					window.open(uri, "_blank", "noopener,noreferrer");
+				},
+			});
+			term.registerLinkProvider(osc8Provider);
+			// Label and destination are independent in OSC 8 — show the resolved
+			// target on hover so a mismatch is visible before the click.
+			osc8Hover = installOsc8HoverTooltip({
+				term,
+				container: containerRef.current,
+				linkAt: osc8Provider.linkAt,
+			});
 			linkUnderlines = installFilePathUnderlines({
 				term,
 				container: containerRef.current,
@@ -1989,6 +2004,8 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 			mouseCleanup?.();
 			linkUnderlines?.dispose();
 			linkUnderlines = null;
+			osc8Hover?.dispose();
+			osc8Hover = null;
 			filePathLinks?.dispose();
 			filePathLinks = null;
 			osc8Tracker.dispose();

@@ -419,16 +419,25 @@ export function isActive(status: TaskStatus): boolean {
 	return ACTIVE_STATUSES.includes(status);
 }
 
+/**
+ * Defaults every agent launch starts from — spread FIRST in each env assembly
+ * so both Project Settings / .dev3 env and per-agent-config env override them.
+ *
+ * FORCE_HYPERLINK: agents gate OSC 8 hyperlink emission on supports-hyperlinks
+ * heuristics that recognize neither tmux nor the native backend; ghostty-web
+ * renders OSC 8 clickable, so opt them in. supports-hyperlinks honors the
+ * variable above every TTY check, so piped/captured output of the launched
+ * process tree carries OSC 8 too (see the decision record).
+ */
+export const AGENT_ENV_DEFAULTS: Record<string, string> = { FORCE_HYPERLINK: "1" };
+
 export function buildAgentEnv(extraEnv: Record<string, string>, taskId: string): Record<string, string> {
 	const dev3Bin = `${DEV3_HOME}/bin`;
 	const currentPath = process.env.PATH || "";
 	// `delimiter`, not ":" — Windows separates PATH entries with ";", and one wrong
 	// separator makes the whole variable unparsable for the agent we just launched.
 	const pathWithDev3 = currentPath.includes(dev3Bin) ? currentPath : `${dev3Bin}${delimiter}${currentPath}`;
-	// Agents gate OSC 8 hyperlink emission on supports-hyperlinks heuristics
-	// that recognize neither tmux nor the native backend; ghostty-web renders
-	// OSC 8 clickable, so opt them in (project env may still override).
-	return { FORCE_HYPERLINK: "1", ...extraEnv, DEV3_TASK_ID: taskId, PATH: pathWithDev3 };
+	return { ...extraEnv, DEV3_TASK_ID: taskId, PATH: pathWithDev3 };
 }
 
 /**

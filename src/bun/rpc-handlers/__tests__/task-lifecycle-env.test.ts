@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildAgentEnv, buildTaskLifecycleEnv } from "../shared-pure";
+import { AGENT_ENV_DEFAULTS, buildAgentEnv, buildTaskLifecycleEnv } from "../shared-pure";
 import { nativeHostProcessName } from "../../native-terminal-registry/process-naming";
 import type { Project, Task } from "../../../shared/types";
 
@@ -57,11 +57,29 @@ describe("task lifecycle env — DEV3_TASK_SEQ", () => {
 });
 
 describe("agent env — FORCE_HYPERLINK", () => {
-	it("opts agents into OSC 8 hyperlink emission", () => {
-		expect(buildAgentEnv({}, "t1").FORCE_HYPERLINK).toBe("1");
+	/** The same spread order every tmux-pty.ts launch site uses. */
+	function assembled(projectEnv: Record<string, string>, extraEnv: Record<string, string> = {}) {
+		return {
+			...AGENT_ENV_DEFAULTS,
+			...projectEnv,
+			...buildTaskLifecycleEnv(project, task(), "/worktree"),
+			...buildAgentEnv(extraEnv, "t1"),
+		};
+	}
+
+	it("opts agents into OSC 8 hyperlink emission by default", () => {
+		expect(assembled({}).FORCE_HYPERLINK).toBe("1");
 	});
 
 	it("lets project env override the opt-in", () => {
-		expect(buildAgentEnv({ FORCE_HYPERLINK: "0" }, "t1").FORCE_HYPERLINK).toBe("0");
+		expect(assembled({ FORCE_HYPERLINK: "0" }).FORCE_HYPERLINK).toBe("0");
+	});
+
+	it("lets per-agent-config env override both", () => {
+		expect(assembled({ FORCE_HYPERLINK: "0" }, { FORCE_HYPERLINK: "1" }).FORCE_HYPERLINK).toBe("1");
+	});
+
+	it("keeps the opt-in out of buildAgentEnv, whose output outranks project env", () => {
+		expect(buildAgentEnv({}, "t1")).not.toHaveProperty("FORCE_HYPERLINK");
 	});
 });

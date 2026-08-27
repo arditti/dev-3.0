@@ -71,7 +71,7 @@ import {
 	type AuxPaneHandle,
 	type AuxPanePlacement,
 } from "../task-aux-panes";
-import { getPushMessage, isActive, buildAgentEnv, buildAgentRetryWrapper, buildCmdScript, buildSetupRerunScript, buildSetupStartupWrapper, buildScriptRunnerCommand, buildTaskLifecycleEnv, generatedScriptLaunch, generatedScriptName, log, resolveBinaryPath, writeLaunchScript } from "./shared-pure";
+import { getPushMessage, isActive, AGENT_ENV_DEFAULTS, buildAgentEnv, buildAgentRetryWrapper, buildCmdScript, buildSetupRerunScript, buildSetupStartupWrapper, buildScriptRunnerCommand, buildTaskLifecycleEnv, generatedScriptLaunch, generatedScriptName, log, resolveBinaryPath, writeLaunchScript } from "./shared-pure";
 import { assertPosixLaunchDialect, launchDialect } from "../../shared/platform-launch";
 import { buildDevServerScript } from "../dev-server-script";
 import { resolveOperationalProjectConfig } from "./settings-config";
@@ -755,10 +755,11 @@ export async function launchTaskPty(
 	// below: a git-ignored hook (e.g. installed by the b44 CLI into
 	// .dev3/config.local.json) only exists at the project root, so the script
 	// command must be resolvable as "$DEV3_PROJECT_PATH/.dev3/<hook>.sh".
-	// Project env (Project Settings / .dev3 config) first — overridable by
-	// lifecycle DEV3_* vars and per-agent-config env.
+	// dev3's own defaults first, then project env (Project Settings / .dev3
+	// config) — overridable by lifecycle DEV3_* vars and per-agent-config env.
 	const projectEnv = await repoConfig.resolveProjectEnv(project, worktreePath, { foreignCode: task.foreignCode });
 	const env = {
+		...AGENT_ENV_DEFAULTS,
 		...projectEnv,
 		...buildTaskLifecycleEnv(project, task, worktreePath, opts?.branchName),
 		...buildAgentEnv(extraEnv, task.id),
@@ -1023,6 +1024,7 @@ export async function launchColumnAgent(
 	});
 
 	const env = {
+		...AGENT_ENV_DEFAULTS,
 		...(await repoConfig.resolveProjectEnv(project, worktreePath, { foreignCode: task.foreignCode })),
 		...buildAgentEnv(extraEnv, task.id),
 		...ensureArtifactTemplateEnv(project, task, worktreePath),
@@ -2677,6 +2679,7 @@ async function spawnAgentInTask(params: { taskId: string; projectId: string; age
 	});
 
 	const env: Record<string, string> = {
+		...AGENT_ENV_DEFAULTS,
 		...(await repoConfig.resolveProjectEnv(project, task.worktreePath, { foreignCode: task.foreignCode })),
 		...buildAgentEnv(extraEnv, task.id),
 		...ensureArtifactTemplateEnv(project, task, task.worktreePath),
@@ -2871,6 +2874,7 @@ async function spawnSingleBugHunterPane(opts: {
 	});
 
 	const env: Record<string, string> = {
+		...AGENT_ENV_DEFAULTS,
 		...(await repoConfig.resolveProjectEnv(opts.project, opts.worktreePath, { foreignCode: opts.task.foreignCode })),
 		...buildAgentEnv(extraEnv, opts.task.id),
 		...ensureArtifactTemplateEnv(opts.project, opts.task, opts.worktreePath),
