@@ -10,6 +10,7 @@ import {
 	syncTerminalBidiFromGlobalSettings,
 } from "../terminal-bidi/flag";
 import { isBidiRenderInstalled, uninstallBidiRender } from "../terminal-bidi/proxy";
+import { applyTerminalFontFamily, applyTerminalFontSize } from "../terminal-font";
 
 // ── Hoisted mocks (must be before vi.mock factories) ─────────────────────────
 
@@ -600,6 +601,48 @@ describe("TerminalView – keymap shortcuts", () => {
 		});
 
 		expect(mockedTaskPaneAction).toHaveBeenCalledWith({ taskId: "t1", action: { kind: "splitH" } });
+		target.remove();
+	});
+
+	it("Shift+Cmd+Enter toggles pane zoom", async () => {
+		await renderAndSetup();
+		const target = focusInsideTerminal();
+
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", metaKey: true, shiftKey: true, bubbles: true }));
+		});
+
+		expect(mockedTaskPaneAction).toHaveBeenCalledWith({ taskId: "t1", action: { kind: "zoom", mode: "toggle" } });
+		target.remove();
+	});
+
+	it("Shift+Cmd+. and Shift+Cmd+, swap the pane forward and back", async () => {
+		await renderAndSetup();
+		const target = focusInsideTerminal();
+
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { code: "Period", metaKey: true, shiftKey: true, bubbles: true }));
+		});
+		expect(mockedTaskPaneAction).toHaveBeenCalledWith({ taskId: "t1", action: { kind: "swapStep", step: "next" } });
+
+		mockedTaskPaneAction.mockClear();
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { code: "Comma", metaKey: true, shiftKey: true, bubbles: true }));
+		});
+		expect(mockedTaskPaneAction).toHaveBeenCalledWith({ taskId: "t1", action: { kind: "swapStep", step: "prev" } });
+		target.remove();
+	});
+
+	it("plain Enter and plain Cmd+, are left alone — they are the shell's and Settings'", async () => {
+		await renderAndSetup();
+		const target = focusInsideTerminal();
+
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", bubbles: true }));
+			window.dispatchEvent(new KeyboardEvent("keydown", { code: "Comma", metaKey: true, bubbles: true }));
+		});
+
+		expect(mockedTaskPaneAction).not.toHaveBeenCalled();
 		target.remove();
 	});
 
@@ -2111,5 +2154,46 @@ describe("TerminalView – renderer crash recovery", () => {
 		} finally {
 			Date.now = realNow;
 		}
+	});
+});
+
+describe("TerminalView – the terminal is never rendered wider than the reference font", () => {
+	it("hands ghostty the narrowed size, not the nominal one", async () => {
+		// The rule only counts where it reaches the renderer. Asserting the helper
+		// would pass even if the constructor kept reading the raw preference.
+		applyTerminalFontFamily("0xProto Nerd Font Mono");
+		applyTerminalFontSize(20);
+		await renderAndSetup();
+
+		const options = vi.mocked(Terminal).mock.calls[0][0] as { fontSize: number; fontFamily: string };
+		expect(options.fontSize).toBeCloseTo(20 * 0.9677, 5);
+		expect(options.fontFamily.startsWith("'0xProto Nerd Font Mono'")).toBe(true);
+	});
+
+	// The pairs an integer round would hand straight back. ghostty's cell is
+	// `ceil(measureText("M").width)`, so a size rounded back up renders one pixel per
+	// column wider than the reference — the exact harm the scale exists to prevent.
+	// Any of these expressed as `Math.round` fails: 19.5 -> 20, 14.949 -> 15, 13.548 -> 14.
+	it.each([
+		["FiraCode Nerd Font Mono", 20, 0.975],
+		["Hack Nerd Font Mono", 15, 0.9966],
+		["0xProto Nerd Font Mono", 14, 0.9677],
+	])("keeps the trim on %s at %ipx instead of rounding it away", async (family, size, scale) => {
+		applyTerminalFontFamily(family);
+		applyTerminalFontSize(size);
+		await renderAndSetup();
+
+		const options = vi.mocked(Terminal).mock.calls[0][0] as { fontSize: number };
+		expect(options.fontSize).toBeCloseTo(size * scale, 5);
+		expect(options.fontSize).toBeLessThan(size);
+	});
+
+	it("leaves a font that already fits at its nominal size", async () => {
+		applyTerminalFontFamily("Iosevka Nerd Font Mono");
+		applyTerminalFontSize(20);
+		await renderAndSetup();
+
+		const options = vi.mocked(Terminal).mock.calls[0][0] as { fontSize: number };
+		expect(options.fontSize).toBe(20);
 	});
 });

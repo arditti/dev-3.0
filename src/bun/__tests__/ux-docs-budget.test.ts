@@ -113,6 +113,11 @@ const BUDGET_KB: Record<string, number> = {
  * reaches for the disable path and ships a permanently dead row. The why in full lives in
  * `decisions/2026/08/26/gate-agent-traffic-behind-an-experimental-setting.md`.
  */
+/**
+ * The terminal-font picker's placement rule spends the headroom left above rather than
+ * ratcheting again: its log entry was drafted full, then folded to a two-line pointer once
+ * its record existed, ~0.2 KB.
+ */
 const TOTAL_BUDGET_KB = 320;
 
 const entries = readdirSync(UX_DIR, { withFileTypes: true });
