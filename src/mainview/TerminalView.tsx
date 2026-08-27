@@ -47,6 +47,7 @@ import { imageFilesFromClipboard } from "./utils/clipboardImageFiles";
 import { createAnsiThemeFilter } from "./utils/ansi-theme-adapt";
 import { submitPastedText } from "./terminal-submit";
 import { createFilePathLinkProvider, type FilePathLinkProvider } from "./terminal-file-links";
+import { createOsc8Tracker, createOsc8LinkProvider } from "./terminal-osc8-links";
 import { installFilePathUnderlines, type FilePathUnderlinesHandle } from "./terminal-link-underlines";
 import { activateTerminalPath } from "./terminal-path-open";
 import { isRemote } from "./utils/platform";
@@ -607,6 +608,9 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 		let mouseCleanup: (() => void) | undefined;
 		let linkUnderlines: FilePathUnderlinesHandle | null = null;
 		let filePathLinks: FilePathLinkProvider | null = null;
+		// URI capture for OSC 8 hyperlinks — the wasm terminal never exposes a
+		// link's URI back to JS, so it is remembered from the raw PTY stream.
+		const osc8Tracker = createOsc8Tracker();
 		let nativeSelectionClipboardCleanup: (() => void) | undefined;
 		const termSubs: Array<{ dispose(): void }> = [];
 		const diagnosticsId = `terminal-copy-${taskId}-${Math.random().toString(36).slice(2, 8)}`;
@@ -789,6 +793,18 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 				onResolutionsChanged: () => linkUnderlines?.requestRedraw(),
 			});
 			term.registerLinkProvider(filePathLinks);
+			// OSC 8 hyperlinks (agents wrap markdown links in them). ghostty-web
+			// underlines them on hover by itself but cannot recover the URI from
+			// wasm, so this provider resolves it via the stream tracker.
+			term.registerLinkProvider(
+				createOsc8LinkProvider({
+					getLine: (y) => term.buffer.active.getLine(y) ?? undefined,
+					uriFor: osc8Tracker.uriFor,
+					onActivate: (uri) => {
+						window.open(uri, "_blank", "noopener,noreferrer");
+					},
+				}),
+			);
 			linkUnderlines = installFilePathUnderlines({
 				term,
 				container: containerRef.current,
@@ -1619,6 +1635,9 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 		 */
 		function writeToTerminal(data: string, fromSocket: boolean) {
 			if (disposed || !batchTerm) return;
+			// OSC 8 URIs are unrecoverable from the terminal after the write, so
+			// capture them from the raw stream (replays included) before filtering.
+			osc8Tracker.feed(data);
 			// The filter carries an incomplete CSI across calls, so chunking is safe.
 			const batch = themeFilter(data, resolvedThemeRef.current);
 			if (!batch) return;
@@ -1972,6 +1991,7 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 			linkUnderlines = null;
 			filePathLinks?.dispose();
 			filePathLinks = null;
+			osc8Tracker.dispose();
 			nativeSelectionClipboardCleanup?.();
 			// Dispose terminal event subscriptions (onData, onResize) before
 			// closing the WebSocket or disposing the terminal to prevent
