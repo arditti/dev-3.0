@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildTaskLifecycleEnv } from "../shared-pure";
+import { buildAgentEnv, buildTaskLifecycleEnv } from "../shared-pure";
 import { nativeHostProcessName } from "../../native-terminal-registry/process-naming";
 import type { Project, Task } from "../../../shared/types";
 
@@ -53,5 +53,15 @@ describe("task lifecycle env — DEV3_TASK_SEQ", () => {
 		const env = buildTaskLifecycleEnv(project, task(), "/Users/arsenyp/.dev3.0/worktrees/slug/83bffcfd/worktree");
 		const name = nativeHostProcessName(SESSION, env);
 		for (const leak of ["secret", "worktrees", "arsenyp", "feat/", "11111111"]) expect(name).not.toContain(leak);
+	});
+});
+
+describe("agent env — FORCE_HYPERLINK", () => {
+	it("opts agents into OSC 8 hyperlink emission", () => {
+		expect(buildAgentEnv({}, "t1").FORCE_HYPERLINK).toBe("1");
+	});
+
+	it("lets project env override the opt-in", () => {
+		expect(buildAgentEnv({ FORCE_HYPERLINK: "0" }, "t1").FORCE_HYPERLINK).toBe("0");
 	});
 });

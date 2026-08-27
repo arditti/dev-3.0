@@ -425,7 +425,10 @@ export function buildAgentEnv(extraEnv: Record<string, string>, taskId: string):
 	// `delimiter`, not ":" — Windows separates PATH entries with ";", and one wrong
 	// separator makes the whole variable unparsable for the agent we just launched.
 	const pathWithDev3 = currentPath.includes(dev3Bin) ? currentPath : `${dev3Bin}${delimiter}${currentPath}`;
-	return { ...extraEnv, DEV3_TASK_ID: taskId, PATH: pathWithDev3 };
+	// Agents gate OSC 8 hyperlink emission on supports-hyperlinks heuristics
+	// that recognize neither tmux nor the native backend; ghostty-web renders
+	// OSC 8 clickable, so opt them in (project env may still override).
+	return { FORCE_HYPERLINK: "1", ...extraEnv, DEV3_TASK_ID: taskId, PATH: pathWithDev3 };
 }
 
 /**
