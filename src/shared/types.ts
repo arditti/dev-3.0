@@ -1,5 +1,6 @@
 import type { RPCSchema } from "electrobun/bun";
 import type { ConversationMatch } from "./conversation-search-core";
+import type { ImportConversationsResult, ImportableConversationView } from "./conversation-import-model";
 import type { AgentRateLimitsReport } from "./rate-limits";
 import type { AgentAccount, AgentAccountKind, AgentAccountsState, ClaudeSlotModels } from "./agent-accounts";
 import type { TerminalBackendIdentity } from "./terminal-backend-identity";
@@ -1720,6 +1721,13 @@ export interface Project {
 	 * the global setting, then the built-in. See resolvePresetPrompt.
 	 */
 	coordinatorPrompt?: string;
+	/**
+	 * When dev3 offered to import this project's outside-dev3 agent conversations
+	 * on its own. Set once, whatever the answer was — the unprompted offer is
+	 * spent, and every later import is one the user asked for. Absent means a
+	 * project added before this existed, which is exactly who the offer is for.
+	 */
+	conversationImportOfferedAt?: string;
 }
 
 /**
@@ -2352,6 +2360,14 @@ export interface Task {
 	 * older app versions see an ordinary task.
 	 */
 	taskType?: TaskType | null;
+	/**
+	 * The Claude Code session this task was imported from, for a task created by
+	 * the conversation import. Nothing about the task behaves differently
+	 * afterwards — this is the key that keeps a second import from offering the
+	 * same conversation again, and it is never rewritten once set (an import is a
+	 * snapshot, and the description belongs to the user from then on).
+	 */
+	importedSessionId?: string | null;
 	/**
 	 * For tasks in a virtual ("Operations") project only: the user-chosen fixed
 	 * working folder picked at creation (e.g. `~/Downloads`). When absent, the
@@ -4483,6 +4499,29 @@ export type AppRPCSchema = {
 			searchConversations: {
 				params: { projectId: string; query: string; currentTaskId?: string | null; limit?: number; allStatuses?: boolean };
 				response: ConversationMatch[];
+			};
+			/**
+			 * Claude Code conversations that ran in this project's directory and
+			 * belong to no dev3 task. Read-only: nothing is created and a decline is
+			 * not recorded, so the same list comes back next time.
+			 */
+			scanImportableConversations: {
+				params: { projectId: string };
+				response: { conversations: ImportableConversationView[] };
+			};
+			/** Turn the selected conversations into ordinary tasks. Idempotent per session id. */
+			importConversations: {
+				params: { projectId: string; sessionIds: string[] };
+				response: ImportConversationsResult;
+			};
+			/**
+			 * Records that dev3 has now asked this project's owner about importing,
+			 * once. Spends the single unprompted offer — every later import is asked
+			 * for from Project Settings, the Project menu or the palette.
+			 */
+			markConversationImportOffered: {
+				params: { projectId: string };
+				response: { project: Project };
 			};
 			createTask: {
 				/**

@@ -496,6 +496,16 @@ async function loadBoardTasks(project: Project): Promise<Task[] | null> {
 	}
 }
 
+/**
+ * Loaded on demand, not at module load. The handler module reaches the renderer
+ * bridge through `rpc-handlers/shared`, which pulls Electrobun in — and the suites
+ * that import this file mock only the handler BARREL, so a static import here
+ * kills them at collect time with an error from inside Electrobun.
+ */
+async function conversationImport() {
+	return (await import("./rpc-handlers/conversation-import-handlers")).conversationImportHandlers;
+}
+
 type Handler = (params: Record<string, unknown>) => Promise<unknown>;
 
 // An approval temporarily moves a task to user-questions. Remember which
@@ -1133,6 +1143,22 @@ const handlers: Record<string, Handler> = {
 
 		const vent = addVent(name, content);
 		return { fileName: vent.fileName };
+	},
+
+	"conversations.scanImport": async (params) => {
+		const projectId = params.projectId as string;
+		if (!projectId) throw new Error("projectId is required");
+		return (await conversationImport()).scanImportableConversations({ projectId });
+	},
+
+	"conversations.import": async (params) => {
+		const projectId = params.projectId as string;
+		if (!projectId) throw new Error("projectId is required");
+		const sessionIds = params.sessionIds;
+		if (!Array.isArray(sessionIds) || sessionIds.some((id) => typeof id !== "string")) {
+			throw new Error("sessionIds must be an array of session ids");
+		}
+		return (await conversationImport()).importConversations({ projectId, sessionIds: sessionIds as string[] });
 	},
 
 	"label.list": async (params) => {

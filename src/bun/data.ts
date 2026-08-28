@@ -31,7 +31,7 @@ const TASK_BACKUP_RETENTION_HOURS = 72;
 const TASK_BACKUP_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}Z\.json$/;
 // `name` is display-only: `path` is deliberately absent, so a rename never moves
 // a data dir, worktree dir or slug (AGENTS.md on-disk invariants).
-type ProjectUpdates = Partial<Pick<Project, "name" | "setupScript" | "setupScriptLaunchMode" | "devScript" | "cleanupScript" | "defaultBaseBranch" | "githubAuthHost" | "githubAuthLogin" | "clonePaths" | "labels" | "customColumns" | "columnOrder" | "autoReviewEnabled" | "peerReviewEnabled" | "sparseCheckoutEnabled" | "sparseCheckoutPaths" | "builtinColumnAgents" | "customStatusLabels" | "sensitive" | "reviewModePrompt" | "coordinatorPrompt" | "env">>;
+type ProjectUpdates = Partial<Pick<Project, "name" | "setupScript" | "setupScriptLaunchMode" | "devScript" | "cleanupScript" | "defaultBaseBranch" | "githubAuthHost" | "githubAuthLogin" | "clonePaths" | "labels" | "customColumns" | "columnOrder" | "autoReviewEnabled" | "peerReviewEnabled" | "sparseCheckoutEnabled" | "sparseCheckoutPaths" | "builtinColumnAgents" | "customStatusLabels" | "sensitive" | "reviewModePrompt" | "coordinatorPrompt" | "env" | "conversationImportOfferedAt">>;
 
 export class DataFileReadError extends Error {
 	override name = "DataFileReadError";
@@ -872,6 +872,10 @@ export async function addTask(
 		automationId?: string | null;
 		priority?: TaskPriority;
 		relations?: Task["relations"];
+		/** Overrides the derived base branch — the imported conversation's own branch. */
+		baseBranch?: string;
+		/** See Task.importedSessionId. */
+		importedSessionId?: string;
 	},
 ): Promise<Task> {
 	const file = tasksFile(project);
@@ -902,7 +906,7 @@ export async function addTask(
 			description,
 			status,
 			priority: extras?.priority ?? DEFAULT_PRIORITY,
-			baseBranch: deriveTaskBaseBranch(project, extras?.existingBranch),
+			baseBranch: extras?.baseBranch || deriveTaskBaseBranch(project, extras?.existingBranch),
 			worktreePath: null,
 			branchName: null,
 			groupId: extras?.groupId ?? null,
@@ -928,6 +932,7 @@ export async function addTask(
 			...(extras?.draft ? { draft: true } : {}),
 			...(extras?.foreignCode ? { foreignCode: true } : {}),
 			...(extras?.taskType ? { taskType: extras.taskType } : {}),
+			...(extras?.importedSessionId ? { importedSessionId: extras.importedSessionId } : {}),
 			...(extras?.customTitle ? { customTitle: extras.customTitle } : {}),
 			...(extras?.titleEditedByUser ? { titleEditedByUser: true } : {}),
 			...(extras?.opsWorkDir ? { opsWorkDir: extras.opsWorkDir } : {}),
