@@ -48,6 +48,13 @@ describe("buildThemeConfig", () => {
 		expect(config).toContain("tmux-256color:Sync");
 	});
 
+	it("forwards OSC 8 hyperlinks and forces their emission by CLIs", () => {
+		const config = buildThemeConfig("mocha");
+		expect(config).toContain("xterm-256color:hyperlinks");
+		expect(config).toContain("tmux-256color:hyperlinks");
+		expect(config).toContain("set-environment -g FORCE_HYPERLINK 1");
+	});
+
 	it("includes extended-keys and focus-events settings", () => {
 		const config = buildThemeConfig("mocha");
 		expect(config).toContain("extended-keys on");

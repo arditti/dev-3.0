@@ -111,6 +111,15 @@ set -g focus-events on
 set -gqa terminal-features ",xterm-256color:Sync"
 set -gqa terminal-features ",tmux-256color:Sync"
 
+# OSC 8 hyperlinks — ghostty-web renders them clickable, but tmux forwards
+# OSC 8 only to clients whose terminal declares the feature. Requires tmux 3.4+.
+set -gqa terminal-features ",xterm-256color:hyperlinks"
+set -gqa terminal-features ",tmux-256color:hyperlinks"
+
+# CLIs (Claude Code & friends) gate OSC 8 emission on supports-hyperlinks
+# heuristics that never recognize tmux; FORCE_HYPERLINK opts them in.
+set-environment -g FORCE_HYPERLINK 1
+
 # Auto-rename windows by running command
 setw -g automatic-rename on
 
