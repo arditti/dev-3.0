@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useAppState, routeTaskId, projectIdForRoute, routeAfterTaskClosed, getTaskOpenMode, OPEN_SETTINGS_SECTION_EVENT, type OpenSettingsSectionDetail, type Route } from "./state";
+import { useAppState, routeTaskId, projectIdForRoute, routeSpaceId, routeAfterTaskClosed, getTaskOpenMode, OPEN_SETTINGS_SECTION_EVENT, type OpenSettingsSectionDetail, type Route } from "./state";
+import { lastProjectForSpace, rememberProjectForSpace } from "./utils/spaceBoardMemory";
 import { api, isElectrobun, getRpcConnectionState } from "./rpc";
 import { setWebNotificationsSuppressed, showWebNotificationOrToast, type WebNotificationDetail } from "./utils/webNotification";
 import { useT, useLocale } from "./i18n";
@@ -41,6 +42,7 @@ import ProductivityStatsView from "./components/ProductivityStatsView";
 import ViewportLab from "./components/ViewportLab";
 import NativePaneLayoutLab from "./labs/native-pane/NativePaneLayoutLab";
 import { setToastSuppressed, taskToastContext, ToastHost, toast, type ToastEntry, type ToastOrigin } from "./toast";
+import { useSpaces } from "./useSpaces";
 import AgentTrafficLog from "./components/agent-traffic/AgentTrafficLog";
 import { noteTrafficArrival } from "./agent-traffic";
 import { OPEN_AGENT_TRAFFIC_LOG_EVENT } from "./agent-traffic-events";
@@ -354,6 +356,7 @@ function App() {
 	const [addProjectSpaceIds, setAddProjectSpaceIds] = useState<string[]>([]);
 	const [openAddProjectOnDashboard, setOpenAddProjectOnDashboard] = useState(false);
 	const [showProjectSwitch, setShowProjectSwitch] = useState(false);
+	const { spaces: appSpaces } = useSpaces();
 	// Cmd/Ctrl+O picker when no app is chosen yet (or the chosen one is gone).
 	const [openInPicker, setOpenInPicker] = useState<{ path: string; taskId?: string } | null>(null);
 	const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -829,13 +832,17 @@ function App() {
 				openTaskFromNotification(nav.taskId, nav.projectId);
 			} else if (nav.kind === "project") {
 				navigateToProject(nav.projectId);
+			} else if (nav.kind === "space") {
+				// The backend already picked a member project that exists here, so this
+				// never has to re-resolve; a dead space never reaches the renderer.
+				navigate({ screen: "project", projectId: nav.projectId, spaceId: nav.spaceId });
 			} else {
 				navigateToProject(nav.projectId);
 				setCreateTaskInitialText(nav.text);
 				setCreateTaskProjectId(nav.projectId);
 			}
 		},
-		[navigateToProject, openTaskFromNotification],
+		[navigate, navigateToProject, openTaskFromNotification],
 	);
 
 	const cycleVariant = useCallback((direction: -1 | 1): boolean => {
@@ -992,9 +999,31 @@ function App() {
 		const projectId = getProjectIdForRoute(state.route);
 		if (!projectId) return false;
 		if (document.querySelector('[data-create-task-modal="true"]')) return false;
-		setCreateTaskProjectId((current) => current ?? projectId);
+		// On a space board the anchor project is an accident of how the user got
+		// here, so the field starts on the project they last created in on THIS
+		// board — and falls back to the anchor when that project has left.
+		const spaceId = routeSpaceId(state.route);
+		const remembered = spaceId ? lastProjectForSpace(spaceId) : null;
+		const start = remembered && state.projects.some((p) => p.id === remembered) ? remembered : projectId;
+		setCreateTaskProjectId((current) => current ?? start);
 		return true;
-	}, [getProjectIdForRoute, state.route]);
+	}, [getProjectIdForRoute, state.projects, state.route]);
+
+	/**
+	 * Open a space's unified board. A space is a SUBJECT, so the route still names
+	 * a project — the first member this machine actually has, which is what keeps
+	 * every existing `projectIdForRoute` reader working.
+	 */
+	const navigateToSpace = useCallback((spaceId: string) => {
+		const space = appSpaces.find((candidate) => candidate.id === spaceId);
+		const anchorId = space?.projectIds.find((id) => state.projects.some((p) => p.id === id));
+		if (!anchorId) {
+			toast.info(t("spaces.boardGone"));
+			navigate({ screen: "dashboard" });
+			return;
+		}
+		navigate({ screen: "project", projectId: anchorId, spaceId });
+	}, [appSpaces, navigate, state.projects, t]);
 
 	const openAddProject = useCallback(() => {
 		if (state.route.screen === "dashboard") {
@@ -1159,6 +1188,13 @@ function App() {
 				e.stopPropagation();
 				if (showQuitDialog) return;
 				openAddProject();
+			} else if (matchesShortcut(e, "zoom-out-to-space")) {
+				// The header owns the rule (one space → go, several → ask) so the button
+				// and the key can never disagree.
+				e.preventDefault();
+				e.stopPropagation();
+				if (showQuitDialog || createTaskProjectId || showAddProjectModal) return;
+				window.dispatchEvent(new CustomEvent("dev3:zoomOutToSpace"));
 			} else if (matchesShortcut(e, "go-to-project")) {
 				// Project quick-switch palette (Slack/Linear/VSCode "go to anything").
 				// Not Cmd+T: that's the universal new-tab key and the live terminal
@@ -2596,6 +2632,13 @@ function App() {
 	const createTaskProject = createTaskProjectId
 		? state.projects.find((project) => project.id === createTaskProjectId) ?? null
 		: null;
+	// On a space board the field offers the space's members and nothing else: work
+	// started from this board cannot land outside the space by a mis-click.
+	const createTaskSpaceId = routeSpaceId(state.route);
+	const createTaskSpace = createTaskSpaceId ? appSpaces.find((sp) => sp.id === createTaskSpaceId) ?? null : null;
+	const createTaskProjects = createTaskSpace
+		? state.projects.filter((p) => createTaskSpace.projectIds.includes(p.id))
+		: state.projects;
 	// While the public tunnel is still coming up, the QR and the URL still point at
 	// the LAN address. Scanned from another network that link just fails, so publish
 	// nothing until the tunnel hostname lands.
@@ -2682,6 +2725,10 @@ function App() {
 						setShowProjectSwitch(false);
 						navigateToProject(projectId);
 					}}
+					onSelectSpace={(spaceId) => {
+						setShowProjectSwitch(false);
+						navigateToSpace(spaceId);
+					}}
 					onClose={() => setShowProjectSwitch(false)}
 				/>
 			)}
@@ -2717,7 +2764,10 @@ function App() {
 			{createTaskProject && (
 				<CreateTaskModal
 					project={createTaskProject}
-					projects={state.projects}
+					projects={createTaskProjects}
+					onProjectChange={(projectId) => {
+						if (createTaskSpaceId) rememberProjectForSpace(createTaskSpaceId, projectId);
+					}}
 					dispatch={dispatch}
 					initialText={createTaskInitialText}
 					onClose={() => {
@@ -3261,6 +3311,7 @@ function App() {
 				return (
 					<ProjectView
 						projectId={route.projectId}
+						spaceId={route.spaceId}
 						projects={state.projects}
 						tasks={state.currentProjectTasks}
 						dispatch={dispatch}

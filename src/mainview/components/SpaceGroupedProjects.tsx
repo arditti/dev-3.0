@@ -6,6 +6,7 @@ import { api } from "../rpc";
 import { toast } from "../toast";
 import { useT } from "../i18n";
 import SpaceHeaderMenu from "./SpaceHeaderMenu";
+import SpaceIcon from "./SpaceIcon";
 
 const LS_COLLAPSED_SPACES = "dev3-collapsed-spaces";
 
@@ -75,6 +76,9 @@ interface SpaceGroupedProjectsProps {
 	renderBottomBlockProject: (project: Project, blockProjects: Project[]) => ReactNode;
 	/** Opens the membership editor for this space (the menu's `Edit projects…`). */
 	onEditProjects?: (space: Space) => void;
+	/** Opens the space's unified board. A visible control of its own, never a
+	 *  menu item: the board was reachable only from inside a member project. */
+	onOpenSpaceBoard?: (space: Space) => void;
 	onRenameSpace?: (space: Space, name: string) => void;
 	onDeleteSpace?: (space: Space) => void;
 	/** Step this space one position in the app-wide space order. */
@@ -105,6 +109,7 @@ function SpaceGroupedProjects({
 	renderProject,
 	renderBottomBlockProject,
 	onEditProjects,
+	onOpenSpaceBoard,
 	onRenameSpace,
 	onDeleteSpace,
 	onMoveSpace,
@@ -259,6 +264,7 @@ function SpaceGroupedProjects({
 								>
 									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
 								</svg>
+								<SpaceIcon className="w-4 h-4 flex-shrink-0 text-fg-muted group-hover:text-fg-3" />
 								<span className={`text-fg-2 text-sm font-semibold truncate ${masked ? MASK_CLASS : ""}`}>
 									{space.name}
 								</span>
@@ -278,7 +284,23 @@ function SpaceGroupedProjects({
 									</span>
 								)}
 							</button>
-							{/* One control for the whole space, sitting against its name and
+							{/* Named and visible, not folded into the menu next to it: opening the
+						    space's board is the group's primary action, and a menu would make
+						    the board reachable only to someone who already knows it exists. */}
+						{onOpenSpaceBoard && group.projects.length > 0 && (
+							<button
+								type="button"
+								onClick={() => onOpenSpaceBoard(space)}
+								className="flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge bg-raised px-2 py-1 text-xs font-medium text-fg-2 transition-colors hover:border-edge-active hover:bg-raised-hover hover:text-accent motion-safe:active:scale-[0.96]"
+								data-testid={`space-open-board-${space.id}`}
+							>
+								<svg aria-hidden="true" focusable="false" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+									<path strokeLinecap="round" strokeLinejoin="round" d="M7 17L17 7m0 0H9m8 0v8" />
+								</svg>
+								{t("spaces.openBoard")}
+							</button>
+						)}
+						{/* One control for the whole space, sitting against its name and
 							    not pushed to the far right of a 1024px column (§9a.6 — group
 							    with proximity). Membership lives inside it: a bare `+` could
 							    only add, so removing a project was reachable nowhere near

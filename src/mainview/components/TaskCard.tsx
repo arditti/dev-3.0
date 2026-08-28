@@ -2,7 +2,7 @@ import { Fragment, useState, useRef, useEffect, useLayoutEffect, type Dispatch }
 import { toast } from "../toast";
 import { createPortal } from "react-dom";
 import type { CodingAgent, DevServerSummary, PortInfo, Project, ResourceUsage, Task, TaskPRBadgeInfo, TaskStatus } from "../../shared/types";
-import { ACTIVE_STATUSES, getAllowedTransitions, getPreparingStageProgress, getTaskTitle, isCoordinatorTask, isTaskDisconnected } from "../../shared/types";
+import { ACTIVE_STATUSES, getAllowedTransitions, getPreparingStageProgress, getTaskTitle, isCoordinatorTask, isTaskDisconnected, projectDisplayName } from "../../shared/types";
 import { getTaskOpenMode, type AppAction, type Route } from "../state";
 import { api } from "../rpc";
 import { confirm } from "../confirm";
@@ -74,9 +74,15 @@ interface TaskCardProps {
 	onOpenUnresolvedComments?: (task: Task) => void;
 	/** Reopens the New Task popup on a draft card instead of the detail modal. */
 	onEditDraft?: (task: Task) => void;
+	/**
+	 * Name the card's project on the card. Identity, not an action: plain text, no
+	 * focus, no menu row, and it spends none of the card's action slots. Set only
+	 * where more than one project shares a board (the unified space board).
+	 */
+	showProjectMark?: boolean;
 }
 
-function TaskCard({ task, project, dispatch, navigate, agents, onLaunchVariants, onAddAttempts, onDragStart: onDragStartProp, resourceUsage, bellCount = 0, bellReasons, ports, devServer, isActiveInSplit = false, isMoving: isMovingProp = false, onSetMoving, siblingMap, prInfo, onOpenUnresolvedComments, onEditDraft }: TaskCardProps) {
+function TaskCard({ task, project, dispatch, navigate, agents, onLaunchVariants, onAddAttempts, onDragStart: onDragStartProp, resourceUsage, bellCount = 0, bellReasons, ports, devServer, isActiveInSplit = false, isMoving: isMovingProp = false, onSetMoving, siblingMap, prInfo, onOpenUnresolvedComments, onEditDraft, showProjectMark = false }: TaskCardProps) {
 	const t = useT();
 	const statusColors = useStatusColors();
 	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
@@ -1055,6 +1061,19 @@ function TaskCard({ task, project, dispatch, navigate, agents, onLaunchVariants,
 				<div className="flex min-w-0 flex-1 flex-col px-3 pt-2.5">
 					{/* CONTENT */}
 					<div>
+						{/* On a space board the card has to say which project it belongs to.
+						    It sits above the title, not in the identity row: that row is the
+						    most crowded on the card, and an eyebrow is read before the title,
+						    so a column groups itself by project while scanning. */}
+						{showProjectMark && (
+							<div
+								data-testid="task-card-project-mark"
+								className="truncate text-dense font-semibold uppercase tracking-[0.07em] text-fg-3"
+								title={projectDisplayName(project, t("ops.boardName"))}
+							>
+								{projectDisplayName(project, t("ops.boardName"))}
+							</div>
+						)}
 						<div
 							className={`break-words text-sm font-medium leading-relaxed text-fg line-clamp-3 ${isTodo ? "cursor-pointer hover:text-fg-2" : ""}`}
 							onClick={handleTitleClick}

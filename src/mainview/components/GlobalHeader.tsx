@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import type { CodingAgent, Project, Task, UpdateChangelog } from "../../shared/types";
-import { getTaskTitle, taskSeqLabel, ACTIVE_STATUSES, isBuiltinOpsProject, isSpaceSensitive, orderProjectsForDisplay, projectDisplayName } from "../../shared/types";
+import type { CodingAgent, Project, Space, Task, UpdateChangelog } from "../../shared/types";
+import { getTaskTitle, taskSeqLabel, ACTIVE_STATUSES, isBuiltinOpsProject, isSpaceSensitive, orderSpaces, spacesOfProject, orderProjectsForDisplay, projectDisplayName } from "../../shared/types";
 import type { Route } from "../state";
 import { useT } from "../i18n";
 import { HELP_ATTRACTOR_DISMISS_EVENT } from "../help";
@@ -9,6 +9,7 @@ import { parseDisplayVersion } from "../../shared/update-channel";
 import { MASK_CLASS, useProjectPrivacy } from "../sensitive-projects";
 import { useSpaces } from "../useSpaces";
 import { groupProjectsForSwitcher } from "../utils/spaceGroups";
+import { lastProjectForSpace } from "../utils/spaceBoardMemory";
 import { useCompact } from "../utils/useCompact";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { api, isElectrobun } from "../rpc";
@@ -18,6 +19,7 @@ import { toast, usePinnedToastSlot } from "../toast";
 import TmuxSessionManager from "./TmuxSessionManager";
 import InlineRename from "./InlineRename";
 import NativeBackendMark from "./NativeBackendMark";
+import SpaceIcon from "./SpaceIcon";
 import TaskTitleHoverCard from "./TaskTitleHoverCard";
 import TaskBreadcrumbBadge from "./TaskBreadcrumbBadge";
 import GitPullButton from "./GitPullButton";
@@ -100,6 +102,8 @@ interface BreadcrumbSegment {
 	badge?: string;
 	onClick?: () => void;
 	isProjectDropdown?: boolean;
+	/** Streamer mode blurs this crumb (a space name can be a client's name). */
+	masked?: boolean;
 	task?: Task;
 }
 
@@ -132,6 +136,8 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 	const [countdown, setCountdown] = useState(0);
 	const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+	// Which space to zoom out to, when the current project sits in more than one.
+	const [showSpacePicker, setShowSpacePicker] = useState(false);
 	const [projectTaskCounts, setProjectTaskCounts] = useState<Record<string, number>>({});
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const projectDropdownRef = useRef<HTMLDivElement>(null);
@@ -247,6 +253,9 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 			if (showProjectDropdown && projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
 				setShowProjectDropdown(false);
 			}
+			if (showSpacePicker && projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
+				setShowSpacePicker(false);
+			}
 			// A menu row's flyout (memory breakdown, tmux sessions) is portaled to
 			// <body>, so it is "outside" the menu by DOM — without this exemption the
 			// first click inside it closed the menu and unmounted the flyout with it.
@@ -361,6 +370,36 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 		[tasks],
 	);
 
+	const currentProjectId = "projectId" in route ? route.projectId : null;
+	const sensitiveProjectIds = new Set(projects.filter((p) => p.sensitive).map((p) => p.id));
+	// ---- Zoom out: from a project's board to its space's unified board ----
+	// Only offered where it means something: on a project board (never on a space
+	// board, never on a task screen) whose project belongs to at least one space.
+	const routeSpace = route.screen === "project" ? route.spaceId ?? null : null;
+	const onProjectBoard = route.screen === "project" && !route.activeTaskId && !route.taskView && !routeSpace;
+	const zoomOutSpaces = currentProjectId && onProjectBoard
+		? orderSpaces(spacesOfProject(spacesFile.spaces, currentProjectId), spacesFile.order)
+		: [];
+	const currentSpace = routeSpace ? spacesFile.spaces.find((sp) => sp.id === routeSpace && !sp.deleted) ?? null : null;
+
+	const zoomOutTo = useCallback((spaceId: string) => {
+		setShowSpacePicker(false);
+		if (!currentProjectId) return;
+		navigate({ screen: "project", projectId: currentProjectId, spaceId });
+	}, [currentProjectId, navigate]);
+
+	// The keyboard path (⇧⌘U) is the button's own behaviour, dispatched here so
+	// there is exactly one rule for "one space → go, several → ask".
+	useEffect(() => {
+		function onZoomOut() {
+			if (zoomOutSpaces.length === 0) return;
+			if (zoomOutSpaces.length === 1) zoomOutTo(zoomOutSpaces[0].id);
+			else setShowSpacePicker(true);
+		}
+		window.addEventListener("dev3:zoomOutToSpace", onZoomOut);
+		return () => window.removeEventListener("dev3:zoomOutToSpace", onZoomOut);
+	}, [zoomOutSpaces, zoomOutTo]);
+
 	const segments: BreadcrumbSegment[] = [];
 
 	// App name — always present
@@ -380,10 +419,15 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 			// Clickable when not already on the kanban board (no activeTaskId, not in task/activity view)
 			const isOnKanban = route.screen === "project" && !route.activeTaskId && !route.taskView;
 			const projectNameOnClick = !isOnKanban ? handleProjectNameClick : undefined;
+			// A space board is about the space, so the crumb names it — a rename lands
+			// here and nowhere else, which is why a rename never moves the user. With a
+			// task open the crumb goes back to the project: that is the repo you act in.
+			const onSpaceBoard = currentSpace && route.screen === "project" && !route.activeTaskId && !route.taskView;
 			segments.push({
-				label: projectDisplayName(project, t("ops.boardName")),
+				label: onSpaceBoard ? currentSpace.name : projectDisplayName(project, t("ops.boardName")),
 				isProjectDropdown: true,
-				onClick: projectNameOnClick,
+				onClick: onSpaceBoard ? undefined : projectNameOnClick,
+				masked: onSpaceBoard ? isSpaceSensitive(currentSpace, sensitiveProjectIds) : false,
 			});
 		}
 	}
@@ -421,7 +465,6 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 		segments.push({ label: t("nativePaneLab.title") });
 	}
 
-	const currentProjectId = "projectId" in route ? route.projectId : null;
 	// Virtual ("Operations") boards have no git repo — the project-level git
 	// affordances (Pull) are meaningless and must be hidden.
 	const isVirtualProject = currentProjectId
@@ -429,6 +472,17 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 		: false;
 	// Built-in Operations board pinned first; ⌘0 jumps to it, ⌘1-9 to the rest.
 	const availableProjects = orderProjectsForDisplay(projects.filter((p) => !p.deleted));
+
+	// The switcher's group headings are the other way in: the space they name is
+	// itself a board, so the heading opens it instead of only labelling rows. The
+	// route anchors on a member — the one last used there, else the first listed.
+	const openSpaceBoardFromSwitcher = useCallback((space: Space) => {
+		const members = space.projectIds.filter((id) => availableProjects.some((p) => p.id === id));
+		if (members.length === 0) return;
+		const remembered = lastProjectForSpace(space.id);
+		setShowProjectDropdown(false);
+		navigate({ screen: "project", projectId: remembered && members.includes(remembered) ? remembered : members[0], spaceId: space.id });
+	}, [availableProjects, navigate]);
 	const switcherHasPinnedBuiltin = availableProjects.length > 0 && isBuiltinOpsProject(availableProjects[0]);
 	// ⌘N stays keyed to BOARD order, so the badge keeps matching the shortcut once
 	// spaces regroup the rows (same split as the ⌘K palette's shortcutIndexById).
@@ -445,7 +499,7 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 	// current project's own space is hoisted first. null = no space holds a
 	// visible project, and the flat list below stays byte-identical to today's.
 	const switcherGroups = groupProjectsForSwitcher(availableProjects, spacesFile, currentProjectId);
-	const sensitiveProjectIds = new Set(projects.filter((p) => p.sensitive).map((p) => p.id));
+
 
 	// One switcher row. `keyPrefix` disambiguates a project that belongs to
 	// several spaces and therefore renders under each of them.
@@ -613,12 +667,12 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 									{seg.onClick ? (
 										<button
 											onClick={seg.onClick}
-											className="header-anim px-2 py-[3px] min-w-0 text-accent hover:text-accent-emphasis hover:bg-elevated transition-colors truncate"
+											className={`header-anim px-2 py-[3px] min-w-0 text-accent hover:text-accent-emphasis hover:bg-elevated transition-colors truncate ${seg.masked ? MASK_CLASS : ""}`}
 										>
 											{seg.label}
 										</button>
 									) : (
-										<span className="px-2 py-[3px] min-w-0 text-fg font-semibold truncate">{seg.label}</span>
+										<span className={`px-2 py-[3px] min-w-0 text-fg font-semibold truncate ${seg.masked ? MASK_CLASS : ""}`}>{seg.label}</span>
 									)}
 									<span className="w-px self-stretch bg-edge flex-shrink-0" aria-hidden="true" />
 									<Tooltip content={t("header.switchProject")} detail={t("ttip.header.switchProject")}>
@@ -637,7 +691,43 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 											</span>
 										</button>
 									</Tooltip>
+									{zoomOutSpaces.length > 0 && (
+										<>
+											<span className="w-px self-stretch bg-edge flex-shrink-0" aria-hidden="true" />
+											<Tooltip content={t("spaces.zoomOut")}>
+												<button
+													onClick={() => (zoomOutSpaces.length === 1 ? zoomOutTo(zoomOutSpaces[0].id) : setShowSpacePicker((v) => !v))}
+													aria-haspopup={zoomOutSpaces.length > 1 ? "menu" : undefined}
+													aria-expanded={zoomOutSpaces.length > 1 ? showSpacePicker : undefined}
+													aria-label={t("spaces.zoomOut")}
+													data-testid="space-zoom-out"
+													className="header-anim px-1.5 py-[3px] flex items-center justify-center text-fg-3 hover:text-fg hover:bg-elevated transition-colors"
+												>
+													<SpaceIcon className="w-3.5 h-3.5 block" />
+												</button>
+											</Tooltip>
+										</>
+									)}
 								</div>
+								{/* A project may sit in several spaces — the button never guesses
+								    which one was meant, it asks. */}
+								{showSpacePicker && zoomOutSpaces.length > 1 && (
+									<div role="menu" className="absolute left-0 top-full mt-1.5 w-72 bg-overlay border border-edge rounded-xl shadow-2xl z-50 py-1">
+										<div className="px-3 py-1 text-nano font-semibold uppercase tracking-wider text-fg-3">
+											{t("spaces.zoomOutPick")}
+										</div>
+										{zoomOutSpaces.map((sp) => (
+											<button
+												key={sp.id}
+												onClick={() => zoomOutTo(sp.id)}
+												className="w-full flex items-center gap-2 px-3 py-2 text-left text-fg-2 hover:bg-elevated hover:text-fg transition-colors"
+											>
+												<SpaceIcon className="w-3.5 h-3.5 flex-shrink-0 text-fg-muted" />
+												<span className={`truncate ${isSpaceSensitive(sp, sensitiveProjectIds) ? MASK_CLASS : ""}`}>{sp.name}</span>
+											</button>
+										))}
+									</div>
+								)}
 								{/* `w-96`, not `w-72`: a row carries the space indent, an active-task
 								    count and a shortcut badge beside the project name. */}
 								{showProjectDropdown && (
@@ -654,14 +744,38 @@ function GlobalHeader({ route, projects, tasks, agents, navigate, goBack, goForw
 													return (
 														<div key={group.space?.id ?? "home"} className="pt-2 first:pt-0">
 															{/* Label, then a hairline running to the edge — the same
-															    grammar the Keyboard settings use for their sections. */}
-															<div className="px-3 pb-1 flex items-center gap-2">
-																<span className={`text-nano font-semibold uppercase tracking-wider truncate ${group.space ? "text-accent/90" : "text-fg-3"} ${masked ? MASK_CLASS : ""}`}>
-																	{group.space ? group.space.name : t("spaces.homeGroup")}
-																</span>
-																<span className="text-nano text-fg-muted tabular-nums flex-shrink-0">{group.projects.length}</span>
-																<span aria-hidden="true" className={`h-px flex-1 ${group.space ? "bg-accent/25" : "bg-edge/60"}`} />
-															</div>
+															    grammar the Keyboard settings use for their sections. A
+															    space heading is a menu item of its own: it names a board,
+															    so clicking it opens that board. Home names no space and
+															    stays an inert label. */}
+															{group.space ? (
+																<button
+																	type="button"
+																	role="menuitem"
+																	onClick={() => openSpaceBoardFromSwitcher(group.space as Space)}
+																	title={t("spaces.openBoard")}
+																	className="group/space w-full px-3 pb-1 pt-0.5 flex items-center gap-2 text-left rounded-md hover:bg-raised-hover"
+																	data-testid={`switcher-space-${group.space.id}`}
+																>
+																	<SpaceIcon className="w-3.5 h-3.5 flex-shrink-0 text-accent/90" />
+																	<span className={`text-nano font-semibold uppercase tracking-wider truncate text-accent/90 group-hover/space:text-accent ${masked ? MASK_CLASS : ""}`}>
+																		{group.space.name}
+																	</span>
+																	<span className="text-nano text-fg-muted tabular-nums flex-shrink-0">{group.projects.length}</span>
+																	<span aria-hidden="true" className="h-px flex-1 bg-accent/25" />
+																	<span className="text-nano text-fg-muted opacity-0 transition-opacity group-hover/space:opacity-100 flex-shrink-0">
+																		{t("spaces.openBoard")}
+																	</span>
+																</button>
+															) : (
+																<div className="px-3 pb-1 flex items-center gap-2">
+																	<span className="text-nano font-semibold uppercase tracking-wider truncate text-fg-3">
+																		{t("spaces.homeGroup")}
+																	</span>
+																	<span className="text-nano text-fg-muted tabular-nums flex-shrink-0">{group.projects.length}</span>
+																	<span aria-hidden="true" className="h-px flex-1 bg-edge/60" />
+																</div>
+															)}
 															{/* The trunk: rows sit indented off a vertical rule, so a
 															    project reads as filed under its space. */}
 															<div className={`ml-3 border-l ${group.space ? "border-accent/30" : "border-edge/60"}`}>
