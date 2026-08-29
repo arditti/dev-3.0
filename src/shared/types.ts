@@ -1140,6 +1140,14 @@ export interface GlobalSettings {
 	 * their person instead of splitting into a second one.
 	 */
 	analyticsDistinctId?: string;
+	/**
+	 * Permanent, multi-use sign-in code for remote access. Typed into the
+	 * browser's sign-in screen, never carried in a URL. Stored in plain text
+	 * alongside the other settings — no system keychain (see the decision record
+	 * `static-access-code-as-a-real-credential`). `DEV3_REMOTE_STATIC_CODE` wins
+	 * over it for headless and Docker.
+	 */
+	staticAccessCode?: string;
 	cloneBaseDirectory?: string;
 	customBinaryPaths?: Record<string, string>; // requirementId â custom binary path
 	agentBinaryPaths?: Record<string, string>; // agentId â resolved binary path
@@ -3898,14 +3906,19 @@ export interface RemoteNetInterface {
  * a scannable URL it could never mint itself.
  */
 export interface RemoteAccessInfo {
-	/** Full access URL with a fresh `?token=` (QR or static code). */
+	/** Full access URL with a fresh one-time `?token=` — never the access code. */
 	url: string;
 	/** Public Cloudflare tunnel URL, or null if no tunnel is connected. */
 	tunnelUrl: string | null;
 	/** TCP port the server is bound to. */
 	port: number;
-	/** Static access code if in `--static-code` mode, else null. */
+	/** The permanent access code, if one is set, else null. */
 	staticCode: string | null;
+	/**
+	 * Bookmarkable sign-in link: the access URL with the code in its FRAGMENT, so
+	 * clicking the bookmark signs in with nothing typed. Null when no code is set.
+	 */
+	signInLink: string | null;
 }
 
 // ---- Tmux sessions ----
@@ -5365,7 +5378,7 @@ export type AppRPCSchema = {
 			};
 			getRemoteAccessQR: {
 				params: { tunnel?: boolean; host?: string };
-				response: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason: string | null; interfaces: RemoteNetInterface[]; selectedHost: string };
+				response: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason: string | null; interfaces: RemoteNetInterface[]; selectedHost: string; staticCodeActive: boolean; signInLink: string | null };
 			};
 			startTunnel: {
 				params: void;
@@ -5769,7 +5782,7 @@ export type AppRPCSchema = {
 			zoomReset: {};
 			osc52Clipboard: { taskId: string; text: string; len: number };
 			qrTokenConsumed: {};
-			showRemoteAccessQR: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason?: string | null; autoStartTunnel?: boolean };
+			showRemoteAccessQR: { qrDataUrl: string; accessUrl: string; tunnelState: string; tunnelBinaryInstalled: boolean; tunnelProvider: "cloudflare" | "custom" | "misconfigured"; tunnelFailureReason?: string | null; autoStartTunnel?: boolean; staticCodeActive?: boolean; signInLink?: string | null };
 			/**
 			 * Universal menu-action dispatch. The bun side fires this whenever the
 			 * native menu emits an `application-menu-clicked` event whose action is

@@ -54,6 +54,7 @@ import FolderPickerHost from "./components/FolderPickerModal";
 import KeyboardShortcutsModal, { type ShortcutsTab } from "./components/KeyboardShortcutsModal";
 import UpdatePopoverSimulatorModal from "./components/UpdatePopoverSimulatorModal";
 import RemoteAccessDialog from "./components/RemoteAccessDialog";
+import RemoteSignIn from "./components/RemoteSignIn";
 import RemoteAccessExposedPorts from "./components/RemoteAccessExposedPorts";
 import { ConfirmHost, confirm, whenConfirmHostMounted } from "./confirm";
 import AgentLaunchRequestModal from "./components/AgentLaunchRequestModal";
@@ -113,6 +114,10 @@ type RemoteAccessQRData = {
 	tunnelFailureReason?: string | null;
 	interfaces?: RemoteNetInterface[];
 	selectedHost?: string;
+	/** A permanent access code is configured on the host — the code itself never travels here. */
+	staticCodeActive?: boolean;
+	/** Bookmarkable link carrying the code in its fragment; copied, never displayed. */
+	signInLink?: string | null;
 };
 
 function isRemoteTunnelActive(tunnelState?: string): boolean {
@@ -460,6 +465,7 @@ function App() {
 	// so waiting for the rpc:authFailed event alone would miss it and leave the
 	// user on an eternal "Loading…" spinner.
 	const [authFailed, setAuthFailed] = useState(() => getRpcConnectionState() === "auth-failed");
+	const [signInLinkCopied, setSignInLinkCopied] = useState(false);
 
 	useEffect(() => {
 		function onAuthFailed() { setAuthFailed(true); }
@@ -2578,15 +2584,7 @@ function App() {
 	);
 
 	if (authFailed) {
-		return (
-			<div className="h-full w-full flex items-center justify-center bg-base">
-				<div className="bg-raised border border-edge rounded-lg p-6 max-w-sm w-full space-y-3 text-center">
-					<div className="text-3xl">{"\uD83D\uDD12"}</div>
-					<h2 className="text-fg text-lg font-semibold">{t("remote.authFailed")}</h2>
-					<p className="text-fg-3 text-sm">{t("remote.authFailedDesc")}</p>
-				</div>
-			</div>
-		);
+		return <RemoteSignIn onSignedIn={() => setAuthFailed(false)} />;
 	}
 
 	// Requirements check failed \u2014 a real, actionable screen; keep it ahead of the
@@ -2993,6 +2991,41 @@ function App() {
 						{!tunnelUrlPending && (
 							<div className={`bg-base rounded-lg p-3 ${qrConsumed ? "opacity-40" : ""}`}>
 								<code className={`text-xs break-all streamer-private ${qrConsumed ? "text-fg-3" : "text-fg select-all"}`}>{remoteQR.accessUrl}</code>
+							</div>
+						)}
+
+						{/* A permanent access code is a second, always-open door — say so here,
+						    because otherwise it is discoverable only from a CLI command. */}
+						{remoteQR.staticCodeActive && (
+							<div data-testid="remote-static-code-active" className="bg-base rounded-lg p-3 text-left space-y-1">
+								<p className="text-fg text-xs font-semibold">{t("remote.staticCodeActive")}</p>
+								<p className="text-fg-3 text-xs leading-snug">{t("remote.staticCodeActiveDesc")}</p>
+								{isRemoteTunnelActive(remoteQR.tunnelState) && (
+									<p data-testid="remote-static-code-tunnel-warning" className="text-warning-strong text-xs leading-snug">
+										{t("remote.staticCodeTunnelWarning")}
+									</p>
+								)}
+								{remoteQR.signInLink && (
+									<>
+										<p className="text-fg-muted text-xs leading-snug pt-1">{t("remote.signInLinkHint")}</p>
+										{/* Copied, never rendered: the link holds the code, and this modal
+										    is the one people screenshot to share the QR. */}
+										<button
+											type="button"
+											data-testid="remote-copy-sign-in-link"
+											onClick={async () => {
+												try {
+													await navigator.clipboard.writeText(remoteQR.signInLink!);
+													setSignInLinkCopied(true);
+													setTimeout(() => setSignInLinkCopied(false), 2000);
+												} catch { /* clipboard blocked — nothing copied, nothing claimed */ }
+											}}
+											className="w-full min-h-8 px-3 py-1.5 rounded-lg border border-edge text-fg-2 text-xs hover:text-fg hover:bg-elevated hover:border-edge-active transition-[color,background-color,border-color,transform] active:scale-[0.96]"
+										>
+											{t(signInLinkCopied ? "remote.copySignInLinkDone" : "remote.copySignInLink")}
+										</button>
+									</>
+								)}
 							</div>
 						)}
 

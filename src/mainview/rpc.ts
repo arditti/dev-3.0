@@ -3,7 +3,8 @@ import type { AppRPCSchema } from "../shared/types";
 import { adjustZoom, applyZoom, ZOOM_STEP, DEFAULT_ZOOM } from "./zoom";
 import { createWatchdogState, decidePingOutcome, shouldAllowReload } from "./rpc-watchdog";
 import { recordDiagnostic, RPC_STATUS_EVENT, type RpcConnectionState } from "./diagnostics";
-import { createRemoteSession, type RemoteSessionState, type SocketLike } from "./remote-session";
+import { createRemoteSession, type AccessCodeOutcome, type RemoteSessionState, type SocketLike } from "./remote-session";
+import { readCodeFromFragment, stripCodeFromFragment } from "../shared/remote-sign-in-link";
 import { debugLog } from "./debug-log";
 
 // ── Transport connection state ──────────────────────────────────────
@@ -15,6 +16,21 @@ let rpcConnectionState: RpcConnectionState = "connected";
 // Set by whichever transport initializes — lets `reconnectRpc()` do a soft
 // recovery (re-open socket) before the user has to hard-reload the page.
 let reconnectImpl: (() => void) | null = null;
+
+// Wired by the browser transport only: the sign-in screen's access-code form.
+// The desktop bridge has no auth, so it stays null and the form never renders.
+let submitAccessCodeImpl: ((code: string) => Promise<AccessCodeOutcome>) | null = null;
+
+/**
+ * Trade the owner's permanent access code for a session cookie and reconnect.
+ * Returns "unsupported" on the desktop bridge, where there is nothing to sign
+ * into. A "rejected" answer is not terminal — the code is multi-use, so the
+ * user simply types it again.
+ */
+export async function submitRemoteAccessCode(code: string): Promise<AccessCodeOutcome | "unsupported"> {
+	if (!submitAccessCodeImpl) return "unsupported";
+	return submitAccessCodeImpl(code);
+}
 
 /**
  * One timed round trip of the cheapest request there is, through the transport
@@ -368,16 +384,27 @@ function initBrowserApi(): ApiShape {
 		window.dispatchEvent(new CustomEvent("rpc:authFailed", { detail }));
 	}
 
-	// Extract QR token from URL and clean it from the address bar. Only the
-	// token is a credential — keep other params (e.g. ?streamer=on, read later
-	// by initStreamerMode) instead of wiping the whole query.
+	// Lift both credentials off the URL and clean the address bar in one pass:
+	// the one-time QR token from the query, the permanent access code from the
+	// fragment of a bookmarked sign-in link. Everything else survives (e.g.
+	// ?streamer=on, read later by initStreamerMode) — only credentials go.
+	//
+	// Stripping the fragment matters more than stripping the query: the code is
+	// permanent, so leaving it in the address bar would put it in every
+	// screenshot of this tab and in whatever the user copies out of it next.
 	const urlParams = new URLSearchParams(window.location.search);
 	const qrToken = urlParams.get("token") || "";
-	debugLog("rpc", "[browser-rpc] init", { isViteDevServer, hasQrToken: !!qrToken, protocol: wsProtocol });
-	if (qrToken) {
+	const linkCode = readCodeFromFragment(window.location.hash);
+	debugLog("rpc", "[browser-rpc] init", { isViteDevServer, hasQrToken: !!qrToken, hasLinkCode: !!linkCode, protocol: wsProtocol });
+	if (qrToken || linkCode) {
 		urlParams.delete("token");
-		const rest = urlParams.toString();
-		window.history.replaceState({}, "", rest ? `${window.location.pathname}?${rest}` : window.location.pathname);
+		const query = urlParams.toString();
+		const fragment = stripCodeFromFragment(window.location.hash);
+		window.history.replaceState(
+			{},
+			"",
+			`${window.location.pathname}${query ? `?${query}` : ""}${fragment ? `#${fragment}` : ""}`,
+		);
 	}
 
 	function buildWsUrl(path: string, extraParams?: string): string {
@@ -451,6 +478,7 @@ function initBrowserApi(): ApiShape {
 
 	const session = createRemoteSession({
 		qrToken: qrToken || null,
+		accessCode: linkCode,
 		authMode: isViteDevServer ? "none" : "cookie",
 		// The HttpOnly session cookie rides same-origin requests; be explicit so
 		// a future fetch-default change can't silently drop auth.
@@ -488,6 +516,8 @@ function initBrowserApi(): ApiShape {
 			},
 		},
 	});
+
+	submitAccessCodeImpl = (code) => session.submitAccessCode(code);
 
 	// Soft reconnect for the bootstrap "Retry": replace the (possibly dead)
 	// socket without a full page reload.

@@ -48,8 +48,12 @@ vi.mock("../tunnel-provider", () => ({
 	isCustomTunnelProviderActive: () => tunnelProviderMocks.customActive.value,
 }));
 
+const settingsMocks = vi.hoisted(() => ({
+	settings: { value: { theme: "light", resolvedTheme: "light" } as Record<string, unknown> },
+}));
+
 vi.mock("../settings", () => ({
-	loadSettingsSync: vi.fn(() => ({ theme: "light", resolvedTheme: "light" })),
+	loadSettingsSync: vi.fn(() => settingsMocks.settings.value),
 }));
 
 vi.mock("../theme-state", () => ({
@@ -69,6 +73,8 @@ import {
 	handleAuthExchange,
 	handleAuthRefresh,
 	assertStaticCodeStrongEnough,
+	getStaticCode,
+	resetWeakSettingsCodeWarning,
 } from "../remote-access-server";
 import { initSecret, createQrToken, _resetForTests } from "../jwt";
 import { AUTH_FAILURE_LIMIT, _resetAuthRateLimitForTests } from "../remote-auth-rate-limit";
@@ -328,6 +334,11 @@ describe("handleAuthExchange (QR flow)", () => {
 describe("handleAuthExchange (static code)", () => {
 	beforeEach(() => {
 		process.env.DEV3_REMOTE_STATIC_CODE = "sesame42";
+		settingsMocks.settings.value = { theme: "light", resolvedTheme: "light" };
+	});
+
+	afterEach(() => {
+		settingsMocks.settings.value = { theme: "light", resolvedTheme: "light" };
 	});
 
 	it("accepts the static code and sets a session cookie", async () => {
@@ -341,10 +352,61 @@ describe("handleAuthExchange (static code)", () => {
 		expect(resp.status).toBe(401);
 	});
 
-	it("rejects a valid QR JWT while static code mode is active", async () => {
+	// The static code used to disable the QR exchange entirely, which meant a new
+	// device could not be onboarded by scanning while a code was configured.
+	it("accepts a valid QR JWT while a static code is also configured", async () => {
 		const qr = await createQrToken();
 		const resp = await handleAuthExchange(exchangeRequest(qr));
-		expect(resp.status).toBe(401);
+		expect(resp.status).toBe(200);
+		expect(cookieValue(resp.headers.get("set-cookie"))).toBeTruthy();
+	});
+
+	it("still rejects a consumed QR token on its own merits", async () => {
+		const qr = await createQrToken();
+		expect((await handleAuthExchange(exchangeRequest(qr))).status).toBe(200);
+		expect((await handleAuthExchange(exchangeRequest(qr))).status).toBe(401);
+	});
+
+	it("accepts the same code over and over — it is permanent and multi-use", async () => {
+		for (let i = 0; i < 3; i++) {
+			const resp = await handleAuthExchange(exchangeRequest("sesame42"));
+			expect(resp.status).toBe(200);
+			expect(cookieValue(resp.headers.get("set-cookie"))).toBeTruthy();
+		}
+	});
+
+	it("falls back to the settings file when the env var is unset", async () => {
+		delete process.env.DEV3_REMOTE_STATIC_CODE;
+		settingsMocks.settings.value = { theme: "light", resolvedTheme: "light", staticAccessCode: "from-settings" };
+		expect((await handleAuthExchange(exchangeRequest("from-settings"))).status).toBe(200);
+		expect((await handleAuthExchange(exchangeRequest("sesame42"))).status).toBe(401);
+	});
+
+	// Arseny's ruling: a settings code below the floor is DROPPED and logged once.
+	// The Settings field refuses to save one, but that check does not cover a
+	// hand-edited settings.json or a code saved before the check existed.
+	it("drops a settings code that is too short instead of honouring it", async () => {
+		delete process.env.DEV3_REMOTE_STATIC_CODE;
+		resetWeakSettingsCodeWarning();
+		settingsMocks.settings.value = { theme: "light", resolvedTheme: "light", staticAccessCode: "short" };
+		expect(getStaticCode()).toBeNull();
+		expect((await handleAuthExchange(exchangeRequest("short"))).status).toBe(401);
+	});
+
+	// Dropping it must never take the server down — this source is UI-editable and
+	// the boot check is a top-level await, so a throw would strand the user.
+	it("keeps serving one-time QR links after dropping a short settings code", async () => {
+		delete process.env.DEV3_REMOTE_STATIC_CODE;
+		resetWeakSettingsCodeWarning();
+		settingsMocks.settings.value = { theme: "light", resolvedTheme: "light", staticAccessCode: "short" };
+		const qr = await createQrToken();
+		expect((await handleAuthExchange(exchangeRequest(qr))).status).toBe(200);
+	});
+
+	it("lets the env var win over the settings file", async () => {
+		settingsMocks.settings.value = { theme: "light", resolvedTheme: "light", staticAccessCode: "from-settings" };
+		expect((await handleAuthExchange(exchangeRequest("sesame42"))).status).toBe(200);
+		expect((await handleAuthExchange(exchangeRequest("from-settings"))).status).toBe(401);
 	});
 });
 

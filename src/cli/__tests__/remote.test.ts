@@ -221,11 +221,30 @@ async function withRemoteEnvRestored(fn: () => Promise<void>): Promise<void> {
 	}
 }
 
-describe("dev3 remote --static-code safety gate", () => {
-	it("rejects --static-code on a default-on public tunnel", async () => {
+describe("dev3 remote --static-code on a public tunnel", () => {
+	it("starts anyway and warns", async () => {
 		await withRemoteEnvRestored(async () => {
-			await expect(handleRemote(undefined, args({ "static-code": "secret123" }))).rejects.toThrow("__exit__");
-			expect(stderrText()).toContain("cannot be combined with a public tunnel");
+			await handleRemote(undefined, args({ "static-code": "secret123", "no-detach": "true" }));
+			expect(process.env.DEV3_REMOTE_STATIC_CODE).toBe("secret123");
+			expect(process.env.DEV3_REMOTE_NO_TUNNEL).toBeUndefined();
+			expect(stderrText()).toContain("public tunnel is on");
+		});
+	});
+
+	// The old gate read only the flag, so the same combination arriving through an
+	// exported env var was waved through silently. Both spellings warn now.
+	it("warns for a code inherited from the environment too", async () => {
+		await withRemoteEnvRestored(async () => {
+			process.env.DEV3_REMOTE_STATIC_CODE = "from-the-env";
+			await handleRemote(undefined, args({ "no-detach": "true" }));
+			expect(stderrText()).toContain("public tunnel is on");
+		});
+	});
+
+	it("stays quiet with --no-tunnel", async () => {
+		await withRemoteEnvRestored(async () => {
+			await handleRemote(undefined, args({ "static-code": "secret123", "no-tunnel": "true", "no-detach": "true" }));
+			expect(stderrText()).not.toContain("public tunnel is on");
 		});
 	});
 
@@ -378,6 +397,41 @@ describe("dev3 remote url", () => {
 		const out = stdoutText();
 		expect(out).toContain("QR-ASCII");
 		expect(out).toContain("http://192.168.1.5:41234/?token=abc");
+	});
+
+	// The bookmarkable link is the whole answer to "do I really retype 30
+	// characters on my phone every time" — if it stops being printed, the feature
+	// is unreachable for anyone not opening the desktop modal.
+	it("prints the bookmarkable sign-in link when a code is set", async () => {
+		mockReadState.mockReturnValue(liveState());
+		mockIsAlive.mockReturnValue(true);
+		mockSendRequest.mockResolvedValue({
+			id: "x", ok: true,
+			data: {
+				url: "http://192.168.1.5:41234/?token=abc",
+				tunnelUrl: null,
+				port: 41234,
+				staticCode: "sesame-open-up",
+				signInLink: "http://192.168.1.5:41234/?token=abc#code=sesame-open-up",
+			},
+		});
+		await expect(handleRemote("url", args())).rejects.toThrow("__exit__");
+		const out = stdoutText();
+		expect(out).toContain("#code=sesame-open-up");
+		// Both halves of the trade, or the user cannot judge whether to bookmark it.
+		expect(out).toContain("never sent to a server");
+		expect(out).toContain("live in the bookmark");
+	});
+
+	it("prints no link when no code is set", async () => {
+		mockReadState.mockReturnValue(liveState());
+		mockIsAlive.mockReturnValue(true);
+		mockSendRequest.mockResolvedValue({
+			id: "x", ok: true,
+			data: { url: "http://192.168.1.5:41234/?token=abc", tunnelUrl: null, port: 41234, staticCode: null, signInLink: null },
+		});
+		await expect(handleRemote("url", args())).rejects.toThrow("__exit__");
+		expect(stdoutText()).not.toContain("#code=");
 	});
 });
 

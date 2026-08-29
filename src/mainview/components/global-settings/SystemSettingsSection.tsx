@@ -5,6 +5,7 @@ import type { TFunction } from "../../i18n";
 import SettingsEntry from "./SettingsEntry";
 import SettingsSection from "./SettingsSection";
 import SettingsToggle from "./SettingsToggle";
+import { MIN_REMOTE_STATIC_CODE_LENGTH, remoteStaticCodeError } from "../../../shared/remote-static-code";
 
 export default function SystemSettingsSection({
 	t,
@@ -14,6 +15,7 @@ export default function SystemSettingsSection({
 	onUpdateChannelChange,
 	onRemoteTunnelChange,
 	onRemoteSilentUpdateToggle,
+	onStaticAccessCodeChange,
 	onPreventSleepToggle,
 	onConfirmBeforeQuitToggle,
 }: {
@@ -25,6 +27,8 @@ export default function SystemSettingsSection({
 	onUpdateChannelChange: (channel: UpdateChannel) => void;
 	onRemoteTunnelChange: (tunnel: RemoteTunnelSettings | undefined) => void;
 	onRemoteSilentUpdateToggle: (enabled: boolean) => void;
+	/** Empty string clears the code. */
+	onStaticAccessCodeChange: (code: string) => void;
 	onPreventSleepToggle: (enabled: boolean) => void;
 	onConfirmBeforeQuitToggle: (enabled: boolean) => void;
 }) {
@@ -85,6 +89,14 @@ export default function SystemSettingsSection({
 						<CustomTunnelFields t={t} tunnel={globalSettings.remoteTunnel} onChange={onRemoteTunnelChange} />
 					) : null}
 				</div>
+			</SettingsEntry>
+
+			<SettingsEntry anchor="static-access-code">
+				<StaticAccessCodeField
+					t={t}
+					value={globalSettings.staticAccessCode ?? ""}
+					onChange={onStaticAccessCodeChange}
+				/>
 			</SettingsEntry>
 
 			<SettingsEntry anchor="remote-silent-update">
@@ -223,6 +235,76 @@ function CustomTunnelFields({
 				/>
 				<p className="text-fg-muted text-xs mt-1">{t("settings.remoteTunnelUrlPatternHint")}</p>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * The permanent remote-access sign-in code. Persisted on blur so a half-typed
+ * value never becomes the live credential, and shown as a password field
+ * because this screen gets screenshotted and screen-shared.
+ *
+ * Deliberately NOT a strength meter or a generator: the code is whatever the
+ * owner wants it to be, and the minimum length is enforced by the host.
+ */
+function StaticAccessCodeField({
+	t,
+	value,
+	onChange,
+}: {
+	t: TFunction;
+	value: string;
+	onChange: (code: string) => void;
+}) {
+	const [draft, setDraft] = useState(value);
+	const [revealed, setRevealed] = useState(false);
+	const trimmed = draft.trim();
+	// The host drops a code that fails this check and falls back to QR links, so
+	// saving one would produce a field that looks set and a feature that is off.
+	// Same validator the CLI and the server use — the floor lives in one place.
+	const problem = trimmed ? remoteStaticCodeError(trimmed) : null;
+
+	return (
+		<div>
+			<label htmlFor="static-access-code" className="block text-fg text-sm font-semibold mb-2">
+				{t("settings.staticAccessCode")}
+			</label>
+			<p className="text-fg-3 text-sm mb-3">{t("settings.staticAccessCodeDesc")}</p>
+			<div className="flex items-center gap-2">
+				<input
+					id="static-access-code"
+					data-testid="static-access-code"
+					type={revealed ? "text" : "password"}
+					autoComplete="off"
+					value={draft}
+					placeholder={t("settings.staticAccessCodePlaceholder")}
+					onChange={(event) => setDraft(event.target.value)}
+					onBlur={() => { if (!problem) onChange(trimmed); }}
+					aria-invalid={problem !== null}
+					aria-describedby={problem ? "static-access-code-error" : undefined}
+					className={`flex-1 px-4 py-3 bg-raised border rounded-xl text-fg text-sm font-mono outline-none transition-colors streamer-private ${
+						problem ? "border-danger" : "border-edge focus:border-accent/40"
+					}`}
+				/>
+				<button
+					type="button"
+					data-testid="static-access-code-reveal"
+					onClick={() => setRevealed((on) => !on)}
+					className="px-3 py-3 rounded-xl border border-edge text-fg-2 text-xs hover:text-fg hover:bg-elevated hover:border-edge-active transition-[color,background-color,border-color,transform] active:scale-[0.96]"
+				>
+					{t(revealed ? "settings.staticAccessCodeHide" : "settings.staticAccessCodeReveal")}
+				</button>
+			</div>
+			{problem ? (
+				<p id="static-access-code-error" data-testid="static-access-code-error" role="alert" className="text-danger text-xs mt-2 leading-snug">
+					{t("settings.staticAccessCodeTooShort", { min: String(MIN_REMOTE_STATIC_CODE_LENGTH) })}
+				</p>
+			) : trimmed ? (
+				<p data-testid="static-access-code-warning" className="text-warning-strong text-xs mt-2 leading-snug">
+					{t("settings.staticAccessCodeTunnelWarning")}
+				</p>
+			) : null}
+			<p className="text-fg-muted text-xs mt-2 leading-snug">{t("settings.staticAccessCodeEnvHint")}</p>
 		</div>
 	);
 }
