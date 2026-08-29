@@ -1,6 +1,6 @@
 {
 	"name": "electrobun-react-tailwind-vite",
-	"version": "1.49.0",
+	"version": "1.50.0",
 	"description": "Electrobun app with React, Tailwind CSS, and Vite HMR",
 	"license": "Apache-2.0",
 	"author": "Arseny Pavlenko",
@@ -64,7 +64,7 @@
 		"test:ownership-e2e": "bun src/bun/terminal-process-ownership/__tests__/ownership.bun-e2e.ts",
 		"test:cli-loopback-e2e": "bun src/bun/__tests__/cli-loopback-transport.bun-e2e.ts",
 		"test:remote-port-e2e": "bun src/bun/__tests__/remote-access-port-in-use.bun-e2e.ts",
-    "test:headless-soak": "bun src/bun/__tests__/headless-remote-soak.bun-e2e.ts",
+		"test:headless-soak": "bun src/bun/__tests__/headless-remote-soak.bun-e2e.ts",
 		"test:cli-packaged-e2e": "bun src/cli/__tests__/cli-packaged-loopback.bun-e2e.ts",
 		"test:pane-run-exec": "bun src/cli/__tests__/pane-run-exec.bun-e2e.ts",
 		"test:terminal-state-spike": "bunx vitest run --config vitest.config.bun.ts src/bun/prototypes/terminal-state/__tests__",
