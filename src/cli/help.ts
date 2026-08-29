@@ -201,6 +201,25 @@ const COMMANDS: CommandHelp[] = [
 		],
 	},
 	{
+		name: "events",
+		summary: "Cross-task feed of what was recorded on the board, addressed by a cursor.",
+		subcommands: [],
+		usage: "dev3 events [--from <id|cursor|instant|duration>] [--limit <n>] [--project <ref>|all] [--kind all|note] [--json]",
+		details: [
+			"Every note from EVERY task, including completed and cancelled ones — a finished task cannot message you, its notes are all that survived.",
+			"--from <x>       An event id from the ID column (`8eb2da3d`, or any unambiguous prefix), a cursor (`2026-08-29T10:12:03.114`, the `Cursor:` line of a previous run), a plain date/instant, or a duration like 2h / 30m / 3d / 1w.",
+			"An id is the shortest form to carry, but notes can be deleted and a task keeps only its 50 most recent — a vanished id exits 19 rather than reporting a quiet board.",
+			"--limit <n>      Cap the lines, 1..1000 (default 100). The OLDEST matches are kept and the dropped newer ones are counted.",
+			"--project <ref>  One board; `--project all` sweeps every board. Defaults to the current worktree's project.",
+			"--kind all|note  v1 records notes only; the filter exists so a future kind does not reshape the output.",
+			"--json           Emit the raw selection object (events, droppedNewer, olderThanWindow, cursor).",
+			"With no --from it shows the last 24 hours and says, as a number, how many events are OLDER than that window.",
+			"The cursor is never guessed: an unparseable --from exits 19 and reads nothing, rather than falling back to a window.",
+			"Cursor precision is milliseconds on purpose — 73 individual seconds on this board carry more than one note, so a second-precision cursor would skip or repeat them.",
+			"One line per event — `dev3 note show <id> --task <seq>` prints the full body.",
+		],
+	},
+	{
 		name: "overview",
 		summary: "The task overview — a 1-2 sentence sticky-note summary.",
 		subcommands: [
