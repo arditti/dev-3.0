@@ -1,4 +1,5 @@
 import {
+	ARTIFACT_BRIDGE_DRAFT_MS,
 	ARTIFACT_BRIDGE_GESTURE_MS,
 	ARTIFACT_BRIDGE_TIMEOUT_MS,
 	artifactBridgeScript,
@@ -51,6 +52,7 @@ function install(opts: { canSend?: boolean; framed?: boolean } = {}): FakeWindow
 		canSend: opts.canSend ?? true,
 		gestureMs: ARTIFACT_BRIDGE_GESTURE_MS,
 		timeoutMs: ARTIFACT_BRIDGE_TIMEOUT_MS,
+		draftMs: ARTIFACT_BRIDGE_DRAFT_MS,
 	});
 	return win;
 }
@@ -152,6 +154,163 @@ describe("artifact bridge", () => {
 		expect(artifactBridgeScript(true)).toContain('"canSend":true');
 		expect(artifactBridgeScript(false)).toContain('"canSend":false');
 		expect(artifactBridgeScript(true)).toContain("data-dev3-artifact-bridge");
+	});
+
+	describe("unsent input", () => {
+		function form(html: string): FakeWindow {
+			document.body.innerHTML = html;
+			const win = fakeWindow();
+			// A real document, because the snapshot reads defaultValue/defaultChecked
+			// off live controls — the whole point is that it needs no author help.
+			Object.assign(win, { document, Event: window.Event, CustomEvent: window.CustomEvent, dispatchEvent: () => true });
+			installArtifactBridge(win, {
+				canSend: true,
+				gestureMs: ARTIFACT_BRIDGE_GESTURE_MS,
+				timeoutMs: ARTIFACT_BRIDGE_TIMEOUT_MS,
+				draftMs: ARTIFACT_BRIDGE_DRAFT_MS,
+			});
+			return win;
+		}
+
+		function drafts(win: FakeWindow): Array<{ fields: Array<{ key: string; value?: string; checked?: boolean }> }> {
+			return (win.sent as unknown as Array<{ type: string }>)
+				.filter((message) => message.type === "dev3-artifact-draft") as never;
+		}
+
+		function settle(win: FakeWindow): void {
+			win.fire("input", {});
+			vi.advanceTimersByTime(ARTIFACT_BRIDGE_DRAFT_MS + 1);
+		}
+
+		it("reports every edited control and stays silent about untouched ones", () => {
+			const win = form(`
+				<input id="who" value="">
+				<textarea name="answer"></textarea>
+				<input id="untouched" value="keep me">
+				<input id="agree" type="checkbox">
+			`);
+			(document.getElementById("who") as HTMLInputElement).value = "Evgeny";
+			(document.querySelector("textarea") as HTMLTextAreaElement).value = "a long answer";
+			(document.getElementById("agree") as HTMLInputElement).checked = true;
+			settle(win);
+
+			expect(drafts(win)).toHaveLength(1);
+			expect(drafts(win)[0].fields).toEqual([
+				{ key: "who", value: "Evgeny" },
+				{ key: "answer", value: "a long answer" },
+				{ key: "agree", checked: true },
+			]);
+		});
+
+		it("never lets a password out of the frame", () => {
+			const win = form(`<input id="secret" type="password"><input id="plain" value="">`);
+			(document.getElementById("secret") as HTMLInputElement).value = "hunter2";
+			(document.getElementById("plain") as HTMLInputElement).value = "fine";
+			settle(win);
+
+			expect(drafts(win)[0].fields).toEqual([{ key: "plain", value: "fine" }]);
+		});
+
+		it("reports an empty draft once the form matches its defaults again", () => {
+			const win = form(`<input id="who" value="">`);
+			const field = document.getElementById("who") as HTMLInputElement;
+			field.value = "typed";
+			settle(win);
+			field.value = "";
+			settle(win);
+
+			expect(drafts(win)[1].fields).toEqual([]);
+		});
+
+		// Every member of a radio or checkbox group carries the same `name`, so a
+		// name-only key matched all of them and the last one in the document won —
+		// the answer came back as a different answer, which is worse than losing it.
+		it("brings a radio group back on the option the user actually picked", () => {
+			const markup = ["1", "2", "3", "4", "5"]
+				.map((value) => `<input type="radio" name="rating" value="${value}">`).join("");
+			const win = form(markup);
+			(document.querySelectorAll("input")[1] as HTMLInputElement).checked = true;
+			settle(win);
+
+			const draft = drafts(win)[0];
+			form(markup);
+			win.fire("message", { data: { type: "dev3-artifact-draft-restore", draft } });
+
+			const picked = [...document.querySelectorAll("input")].map((el) => (el as HTMLInputElement).checked);
+			expect(picked).toEqual([false, true, false, false, false]);
+		});
+
+		it("brings back only the boxes ticked in a same-name checkbox group", () => {
+			const markup = ["a", "b", "c"]
+				.map((value) => `<input type="checkbox" name="tags" value="${value}">`).join("");
+			const win = form(markup);
+			(document.querySelectorAll("input")[0] as HTMLInputElement).checked = true;
+			settle(win);
+
+			const draft = drafts(win)[0];
+			form(markup);
+			win.fire("message", { data: { type: "dev3-artifact-draft-restore", draft } });
+
+			const ticked = [...document.querySelectorAll("input")].map((el) => (el as HTMLInputElement).checked);
+			expect(ticked).toEqual([true, false, false]);
+		});
+
+		// `saveDraft` takes an author-supplied value, and a value postMessage cannot
+		// clone would otherwise throw away the automatic half with it.
+		it("still reports the form when the report's own saved state cannot be cloned", () => {
+			const win = form(`<input id="who" value="">`);
+			(document.getElementById("who") as HTMLInputElement).value = "Evgeny";
+			(win.dev3 as unknown as { saveDraft(value: unknown): void }).saveDraft({ node: document.body });
+			const parent = win.parent as { postMessage(message: unknown, origin: string): void };
+			const real = parent.postMessage;
+			parent.postMessage = (message: unknown, origin: string) => {
+				if ((message as { custom?: unknown }).custom !== undefined) throw new Error("DataCloneError");
+				real.call(parent, message, origin);
+			};
+			vi.advanceTimersByTime(ARTIFACT_BRIDGE_DRAFT_MS + 1);
+
+			expect(drafts(win)[0].fields).toEqual([{ key: "who", value: "Evgeny" }]);
+		});
+
+		it("puts the values back when the viewer hands the draft in", () => {
+			const win = form(`<input id="who" value=""><textarea name="answer"></textarea><input id="agree" type="checkbox">`);
+			win.fire("message", { data: { type: "dev3-artifact-draft-restore", draft: { fields: [
+				{ key: "who", value: "Evgeny" },
+				{ key: "answer", value: "a long answer" },
+				{ key: "agree", checked: true },
+			] } } });
+
+			expect((document.getElementById("who") as HTMLInputElement).value).toBe("Evgeny");
+			expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("a long answer");
+			expect((document.getElementById("agree") as HTMLInputElement).checked).toBe(true);
+		});
+
+		it("carries whatever the report saved itself, and hands it back on restore", () => {
+			const win = form(`<div id="canvas"></div>`);
+			const seen: unknown[] = [];
+			Object.assign(win, { dispatchEvent: (event: CustomEvent) => { seen.push(event.detail); return true; } });
+			(win.dev3 as unknown as { saveDraft(value: unknown): void }).saveDraft({ picked: 3 });
+			vi.advanceTimersByTime(ARTIFACT_BRIDGE_DRAFT_MS + 1);
+			const posts = win.sent as unknown as Array<{ custom?: unknown }>;
+			expect(posts[posts.length - 1]?.custom).toEqual({ picked: 3 });
+
+			win.fire("message", { data: { type: "dev3-artifact-draft-restore", draft: { fields: [], custom: { picked: 3 } } } });
+			expect(seen).toEqual([{ picked: 3 }]);
+		});
+
+		it("takes the capability back and grants it again without being rebuilt", async () => {
+			const win = install({ canSend: false });
+			expect(win.dev3!.canSendToAgent).toBe(false);
+
+			win.fire("message", { data: { type: "dev3-artifact-can-send", canSend: true } });
+			expect(win.dev3!.canSendToAgent).toBe(true);
+			win.gesture();
+			void win.dev3!.sendToAgent("now allowed").catch(() => {});
+			expect(win.sent).toHaveLength(1);
+
+			win.fire("message", { data: { type: "dev3-artifact-can-send", canSend: false } });
+			expect(win.dev3!.canSendToAgent).toBe(false);
+		});
 	});
 
 	// The serializer is `Function.prototype.toString`, so the function may reference
