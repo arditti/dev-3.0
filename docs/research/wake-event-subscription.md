@@ -114,6 +114,43 @@ expires instead of waking an agent), dead-letter after N attempts (auto-pause + 
 as the blueprint). **Temporal/Kafka/SQS/BullMQ/DBOS all rejected** — each requires a server or
 datastore the update-channel rules cannot guarantee; steal semantics, not infrastructure.
 
+### Downtime, missed fires, and backfill
+
+dev3 is a desktop app: it is closed overnight, the laptop sleeps, the machine reboots. A cron
+that fired at 02:00 while the app was down has no runtime to fire into, so **every schedule
+declares what happens when it is missed** — never a silent global default. The existing
+automations scheduler already models exactly this (missed/catch-up taxonomy with a grace
+window, first-tick late-fire catch-up in the scheduled-message scheduler); the bus generalizes
+it into one policy field.
+
+| `catchUp` | On startup, for fires missed while down | Fits |
+|---|---|---|
+| `run-once` | Fire once now, however many were missed, marked late with the original due time | Nightly maintenance — running it 5 h late is still useful |
+| `skip-stale` | Drop it if older than `grace` (default 30 min); otherwise fire | Morning digests — yesterday's 09:00 digest is noise at 14:00 |
+| `coalesce` | Collapse all missed occurrences into one fire carrying the count and window | Hourly health polls — 10 missed fires are one "you were down" |
+| `all` | Replay each missed occurrence in order (hard cap, then coalesce the remainder) | Rare; only where each tick has independent meaning |
+| `drop` | Never catch up; wait for the next scheduled time | Anything whose value is purely "right now" |
+
+Two things make this honest rather than hand-waving:
+
+- **Every timer subscription persists `lastFiredAt` and `nextDueAt`.** On boot the engine
+  compares them against the clock, so "did we miss anything" is a computation, not a guess. A
+  cron with no `lastFiredAt` (freshly created while down) never backfills — it starts at its
+  next due time.
+- **External sources backfill by cursor, not by clock.** For GitHub-shaped sources the engine
+  re-polls with the stored etag/cursor and replays what genuinely happened while down (subject
+  to the same `messageTtl` and transition dedupe), which is strictly better than a timer's
+  guess. A webhook that arrived while the app was down is simply lost — that is inherent to a
+  desktop app with no always-on receiver, and it is why polling sources keep a cursor even after
+  webhooks exist.
+
+Sleep versus shutdown are the same case: the tick loop detects a wall-clock jump larger than the
+interval and runs the same catch-up evaluation (the existing pollers already re-stagger after a
+sleep). The user always learns what happened — the control center shows a "dev3 was closed
+HH:MM → HH:MM, N fires missed" banner with the per-waker verdict and a **Run skipped now**
+action, and nothing that was skipped is silently forgotten. TTL expiry, dead-letter, and this
+banner are the three places the platform admits it did not deliver something.
+
 ### Router (delivery resolution order)
 
 1. Live pane → `<dev3-event …>` envelope via `deliverAgentPrompt` (+hold).
