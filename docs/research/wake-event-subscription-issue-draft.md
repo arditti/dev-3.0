@@ -1,7 +1,8 @@
-# DRAFT — not filed yet
+# FILED — h0x91b/dev-3.0#1619
 
-Target repo: `h0x91b/dev-3.0` · Type: feature proposal · No dev3 task links (maintainer cannot open them).
-Suggested labels: `enhancement`, `needs-triage`.
+Published 2026-08-31: https://github.com/h0x91b/dev-3.0/issues/1619
+Labels could not be applied (a non-collaborator cannot label upstream issues); the maintainer
+triages. Image URLs are pinned to commit `35a57fb6` so they survive branch deletion.
 
 ---
 
@@ -188,33 +189,33 @@ masked.
 **The control center overlay — scope = Everything.** Missed-fires notice on top, then
 subscriptions from all four scopes with scope badges:
 
-![Control center overlay, scope Everything](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/03-overlay-scope-everything.png)
+![Control center overlay, scope Everything](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/03-overlay-scope-everything.png)
 
 **The same component pre-filtered to one task** — this is what "one component, four pre-filters"
 means in practice:
 
-![Same overlay, scope This task](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/05-overlay-scope-this-task.png)
+![Same overlay, scope This task](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/05-overlay-scope-this-task.png)
 
 **Lower half of the overlay** — pending delivery, dead-letter with auto-pause, TTL-expired, and
 the firing audit log:
 
-![Overlay pending, dead-letter and firing log](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/04-overlay-pending-deadletter-and-log.png)
+![Overlay pending, dead-letter and firing log](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/04-overlay-pending-deadletter-and-log.png)
 
 **Task card** — the existing shared deferred-timer chip in the `signals` zone showing the soonest
 next wake, and its popover:
 
-![Task card chip and popover](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/06-card-chip-popover.png)
+![Task card chip and popover](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/06-card-chip-popover.png)
 
 **Inspector** — a capped `Watching` preview, peer of Notes (newest 3 + count + `Show all`):
 
-![Inspector Watching preview](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/07-inspector-watching-preview.png)
+![Inspector Watching preview](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/07-inspector-watching-preview.png)
 
 <details>
 <summary>Baselines, for comparison — the same screens unmodified</summary>
 
-![Baseline board](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/00-baseline-board.png)
+![Baseline board](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/00-baseline-board.png)
 
-![Baseline Global Settings](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/01-baseline-settings.png)
+![Baseline Global Settings](https://raw.githubusercontent.com/arditti/dev-3.0/35a57fb68dd9d7f68c116450f392437a9b87e90d/docs/research/wake-event-subscription-mocks/screenshots/01-baseline-settings.png)
 
 </details>
 
