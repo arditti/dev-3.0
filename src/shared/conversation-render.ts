@@ -155,12 +155,14 @@ function renderTurn(
 }
 
 /** The first thing the user asked for, verbatim. Null when the session opened
- *  with an agent-written prompt (a compacted resume) or with no prose at all. */
+ *  with an agent-written prompt (a compacted resume) or with no prose at all.
+ *  Codex opens almost every session with injected context in the `user` role —
+ *  skipped here, or every Codex import would be titled after its AGENTS.md. */
 export function firstUserRequest(parsed: ParsedConversation): string | null {
 	for (const turn of parsed.turns) {
 		if (turn.trigger !== "user") continue;
 		const opener = turn.events.find((event) => event.kind === "message" && event.role === "user");
-		if (opener?.meta?.compactSummary === true) continue;
+		if (opener?.meta?.compactSummary === true || opener?.meta?.injected === true) continue;
 		const text = turn.userText?.trim();
 		if (text) return text;
 	}
@@ -243,6 +245,9 @@ export function renderImportedDescription(
 
 	const text = render(1);
 	if (text.length <= limit) return text;
-	const marker = `\n…[${text.length - limit} more characters cut — the full conversation is still in Claude Code's own transcript]\n`;
+	// Named from the transcript, not hardcoded: a Codex import must not be told to
+	// go look in Claude Code.
+	const agent = parsed.source === "codex" ? "Codex" : "Claude Code";
+	const marker = `\n…[${text.length - limit} more characters cut — the full conversation is still in ${agent}'s own transcript]\n`;
 	return `${text.slice(0, Math.max(0, limit - marker.length))}${marker}`;
 }
