@@ -176,6 +176,42 @@ HH:MM → HH:MM, N fires missed" banner with the per-waker verdict and a **Run s
 action, and nothing that was skipped is silently forgotten. TTL expiry, dead-letter, and this
 banner are the three places the platform admits it did not deliver something.
 
+### Hibernation is the point, not a side effect
+
+Hibernation today reclaims memory by destroying a task's agent, tmux session and dev server while
+keeping its worktree and column; waking is explicit and manual. That manual step is the only
+reason a task waiting on something external must stay live and expensive. The bus removes it:
+**a subscription is a reason to hibernate.** An agent that has said "wake me when the review
+lands" needs no process at all in the meantime — the subscription outlives the session because it
+is persisted on the `Task` record, and the router's wake-dead-pane path (un-hibernate → relaunch
+agent → deliver the envelope as its first prompt) is exactly the resume mechanism.
+
+That composition is worth stating as a rule rather than leaving implicit:
+
+- **A hibernated task keeps watching.** Hibernation currently refuses column changes and drops
+  scheduled messages; it must *not* drop subscriptions, or the feature inverts — the cheapest
+  tasks would be the blindest. The engine polls on behalf of a hibernated task exactly as for a
+  live one; only delivery differs.
+- **`hibernateOnIdle` becomes offerable.** Once an event can wake a task, the app can propose
+  hibernation when a task's only remaining work is waiting: "this task is idle with 2
+  subscriptions — hibernate until one fires?" Opt-in per task, never automatic, because
+  hibernation destroys a session the user may be reading.
+- **Waking has a cost, so the delivery policy carries the weight.** Relaunching an agent is far
+  more expensive than typing into a live pane, so a hibernated target is the strongest argument
+  for `digest`/`debounce` and for transition-only firing: one wake for a batch, not one per
+  comment. A subscription whose target is hibernated should default to coalescing.
+- **The wake reason must survive into the prompt.** The envelope already names the source and
+  kind; for a hibernated task it additionally states that the session is fresh — the agent lost
+  its context and must re-read the task, its notes, and the worktree before acting. Waking an
+  agent into a stale assumption is worse than not waking it.
+- **A wake that cannot start the agent is not a silent failure.** If relaunch fails the delivery
+  goes to the queue's retry path and then dead-letter with attention, never a dropped event.
+
+Net effect: the memory-reclaim feature and the automation feature reinforce each other. Today a
+task either stays live and costs resources or hibernates and goes blind; with the bus a task can
+be **cheap and still responsive**, which is the combination that makes many parallel long-lived
+tasks practical.
+
 ### Router (delivery resolution order)
 
 1. Live pane → `<dev3-event …>` envelope via `deliverAgentPrompt` (+hold).
