@@ -166,14 +166,76 @@ CLI: `dev3 subscribe <waker> [--scope …]`, `list [--scope task|project|space|a
 `unsubscribe <id> | --all`, `pause/resume <id>`, `show <id>` (record + firing history),
 `test` (dry-run a filter against recent log events), `clear <id>` (purge pending).
 
-UI: **scheduler control center — one component, four mounts** (task / project / space / global),
-pre-filtered per scope. Shows subscriptions (waker, filter, target, last/next fire, pending
-count), all other time-driven items (scheduled messages, deferred launches, automations —
-visible together before they are unified underneath), dead-letter/expired items, firing history.
-Concrete placement must pass `/ux-principal` at implementation time.
-
 Ownership: an agent freely manages its own task scope; wider-scope entries created by the user
 are the user's — an agent wanting one removed raises attention.
+
+### UI placement (decided via `/ux-principal`, 2026-08-31)
+
+The first draft put the control center in Global Settings. **Rejected**: `settings.forbidden`
+includes `daily_operational_action`, and pending deliveries, dead-letter items and a firing log
+are operational, not durable preferences ("Settings does not own daily operational commands").
+
+The feature is **not one surface** — it is three feature classes that the manifest sends to
+three different homes:
+
+| Part | Class | Home |
+|---|---|---|
+| Subscription/schedule **list**, pending, dead-letter, firing history | diagnostic / status + operational | **One overlay**, scope-parameterised |
+| **Per-task preview** — what will wake this task | status | Task card `signals` chip + a capped preview in the inspector body |
+| **Waker definitions**, custom wakers, catch-up policy | durable configuration | **Project Settings → existing `automations` tab, renamed `Events & Schedules`** |
+
+**1 · The control center is an overlay, not a destination.** It follows the `agent_traffic_log` /
+`task_notes_log` precedent exactly: dialog on wide, `BottomSheet` on narrow, opened to answer one
+question, costing **zero** nav budget and zero header chrome. Scope is a filter *inside* it
+(task / project / space / everything), pre-set by where it was opened from — one component, four
+pre-filters, which is what "same component, pre-filtered" means in practice. Entry points, all
+established for this shape: the task-card chip popover (`Manage…`), the inspector preview's
+`Show all N` row, the native **View** menu, the **⇧⌘P** action palette, and one shortcut
+registered in `keymap.ts` (⇧⌘E proposed — verify against the registry, which is the source of
+truth). Global scope is that same overlay opened with `scope=everything`, **not** a screen.
+
+**2 · Task scope reuses the existing chip; it does not add a card action.** The card's action
+strip is 4/4 ("there is no slot 5"), but the `signals` zone is where new badges land and already
+owns one shared **deferred-timer chip** slot (`scheduledLaunch` on a To Do card,
+`ScheduledMessagesChip` on a live-agent card, never both). Subscriptions are the same class —
+a deferred agent interaction — so the chip **shows the soonest next wake whatever its kind**, and
+its popover enumerates all of them. The manifest's "do not add a second timer badge class" is
+honoured by extension, not by a new badge. In the inspector, a `Watching` preview sits in the
+expanded body as a peer of `notes_preview`, capped the same way (newest 3 + count +
+`Show all N` → the overlay), per the 2026-08-14 log rule.
+
+**3 · Definitions go where Automations already went, and cost no new tab.** The 2026-07-05
+decision put RRULE automations in a Project Settings tab because they are durable config, with
+run history inside the tab. An automation *is* a timer subscription with
+`action: launch-task`, so the fourth tab is **renamed** rather than joined by a fifth: tabs stay
+4/6, waker definitions and catch-up policy land beside the automations they will eventually
+absorb, and the operational lists stay out of Settings.
+
+**Rejected placements**, each against a rule already on the books:
+
+- **A ninth nav destination** — the budget is 8/8, spent (restated 2026-08-22); a single-feature
+  screen was already refused for Automations.
+- **A GlobalHeader button or pill** — refused for stats and diagnostics; the wide header already
+  runs ~9-10 controls against §12.3's "never a 9-icon row". Failures instead ride the **existing
+  attention mechanism** (`raiseAttention` → card bell + count), which is what it is for.
+- **A board toolbar button** — the board has deliberately kept 0 of its 4 toolbar slots and has
+  no toolbar at all. The board expresses this through **filter tokens** instead
+  (`is:watching`, `has:pending`), the established extension path.
+- **A dashboard panel** — §10 rules a cross-project list there "nowhere", because a panel and the
+  project rows rendered the same tasks twice. Global scope is the overlay.
+- **A space screen or per-space entry** — a space is a subject of the board, never a place.
+- **Anything on the Productivity Stats cockpit** — read-only by charter; no filters, no mutation.
+- **A "dev3 was closed, N fires missed" dashboard banner** — missed runs already have a ruled
+  path: toast + status on startup (2026-07-05), with the detail inside the overlay.
+
+Manifest edits are deliberately **deferred to the implementing PR** — writing rules for an
+unbuilt surface would make the manifest describe a product that does not exist, and
+`docs/ux/` is under an enforced size budget. When stage 1 lands, that PR must: add the overlay
+to bible §5 + `ux-architecture.yaml` with its `allowed`/`forbidden` lists, extend
+`task_info_panel.allowed` with `watching_preview`, extend the `deferred_timer_chip` note to the
+third state, record the tab rename, and add one ≤5-line `UX_DECISIONS.md` entry. A `help.ts`
+topic plus `data-help-id` zone ship in the same commit, and the entry point must be
+touch-reachable (≥44px) — no feature may be touch-unreachable.
 
 ### Shipped skill
 
