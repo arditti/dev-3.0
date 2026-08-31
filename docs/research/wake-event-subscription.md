@@ -162,12 +162,53 @@ Two things make this honest rather than hand-waving:
   compares them against the clock, so "did we miss anything" is a computation, not a guess. A
   cron with no `lastFiredAt` (freshly created while down) never backfills — it starts at its
   next due time.
-- **External sources backfill by cursor, not by clock.** For GitHub-shaped sources the engine
-  re-polls with the stored etag/cursor and replays what genuinely happened while down (subject
-  to the same `messageTtl` and transition dedupe), which is strictly better than a timer's
-  guess. A webhook that arrived while the app was down is simply lost — that is inherent to a
-  desktop app with no always-on receiver, and it is why polling sources keep a cursor even after
-  webhooks exist.
+- **External sources backfill by cursor, not by clock** — but only some of them *can*. What is
+  recoverable after downtime is a property of the source, not of the bus, so each provider
+  declares its own `backfill` capability and the engine never pretends to more fidelity than the
+  source offers.
+
+#### Per-source backfill capability
+
+Three honest categories. **Replayable** — the source keeps queryable history, so the sequence can
+be reconstructed. **State-only** — no history exists, but the current state answers the question,
+so one comparison is enough. **Lost** — nothing survives, and the design must say so.
+
+| Source | Backfill | Mechanism after a restart |
+|---|---|---|
+| `github-pr`, `github-issue`, `ci` | **replayable** | Cursor = last seen event id / `updated_at`; re-poll with `since` + etag and reconstruct what happened. Full fidelity, at a rate-limit cost proportional to downtime |
+| `branch` / merge detection | **state-only, and sufficient** | The question is "is it merged now", never "when"; one check is idempotent and complete |
+| `timer` / `cron` | **computed** | From `lastFiredAt` / `nextDueAt` against the clock, per the `catchUp` policy above |
+| `command-poll` | **state-only by construction** | Dedupe is already an output hash: re-run once, compare to the stored hash, fire on transition. Naturally correct across downtime |
+| `file` | **state-only, needs a snapshot** | No filesystem history exists. Persist a content hash per watched path; on boot compare and emit at most one "changed while down" event with no sequence. **No stored snapshot ⇒ emit nothing** — an unknown is not a change |
+| `dev3 event emit` (CLI) | **lost unless spooled** | The app's socket is gone, so the emit cannot be delivered. See the spool rule below |
+| `webhook` | **lost, inherently** | Nothing is listening. See the fallback rule below |
+| `task-lifecycle` | **nothing to backfill** | dev3 being down means no task changed state; the source cannot produce events without the app |
+
+Four rules follow, and each closes a hole that would otherwise be discovered in production:
+
+- **A subscription is never webhook-only.** Every webhook source must be paired with a polling
+  provider that keeps a cursor. The webhook is a *latency optimisation* on top of a poll that
+  remains the source of truth — otherwise every restart is a silent gap. If a source cannot be
+  polled, its subscription must be marked lossy in the UI rather than implying durability.
+- **`dev3 event emit` spools to disk when the app is down.** A deploy script that finishes at
+  03:00 cannot retry later, so failing silently loses a real event. The CLI writes the envelope
+  into a small capped spool directory (with its own TTL and provenance intact) and the app drains
+  it on startup, marking each event late with its original `occurredAt`. `emit` also exits
+  non-zero so a script *can* react if it wants to; the spool means it does not have to.
+- **Replay is capped and collapsed, never a flood.** A week of downtime on a busy repo can hold
+  hundreds of events. Replay respects the subscription's delivery policy — a `digest` collapses
+  the window into one envelope carrying counts and the current end-state, and even `immediate`
+  coalesces beyond a hard per-subscription cap, appending "and N more, see the log".
+- **Replay must not re-run side effects blindly.** This is the sharp edge: a subscription with
+  `action: launch-task` replayed over 10 missed `issue-opened` events would create 10 tasks, and
+  `move-column` would fight the user's own board changes. So actions are classified for replay —
+  `deliver-to-agent` and `notify` replay freely (collapsed), while `launch-task` and
+  `move-column` **coalesce to one and require confirmation above a threshold**, surfaced in the
+  same missed-fires notice as "3 events would launch 3 tasks — launch one / launch all / skip".
+
+Cursors advance **after successful delivery, not after a successful fetch**, so a crash between
+the two replays rather than skips — at-least-once, with the event `key` and transition dedupe
+preventing a double wake.
 
 Sleep versus shutdown are the same case: the tick loop detects a wall-clock jump larger than the
 interval and runs the same catch-up evaluation (the existing pollers already re-stagger after a
