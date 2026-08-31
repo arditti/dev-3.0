@@ -40,6 +40,56 @@ export function safeHttpUri(raw: string): string | undefined {
 	}
 }
 
+/**
+ * Accept a local-machine file URI (`pathToFileURL` output — Claude Code wraps
+ * every file path it prints in one). Same control-character rules as
+ * `safeHttpUri`; a non-empty host other than "localhost" is a remote (UNC)
+ * target and is rejected. Activation never opens these as URLs — they are
+ * converted back to a path and go through the terminal-path resolve flow,
+ * which enforces the allowed-roots policy on the backend.
+ */
+export function safeFileUri(raw: string): string | undefined {
+	// eslint-disable-next-line no-control-regex
+	if (/[\x00-\x20\x7f]/.test(raw)) return undefined;
+	try {
+		const url = new URL(raw);
+		if (url.protocol !== "file:") return undefined;
+		return url.host === "" || url.host === "localhost" ? raw : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** A URI an OSC 8 link is allowed to carry: http(s) or a local file URI. */
+export function safeOsc8Uri(raw: string): string | undefined {
+	return safeHttpUri(raw) ?? safeFileUri(raw);
+}
+
+// file.ts:12 or file.ts:12:5 baked into the URI path — same convention the
+// file-path link provider strips before stat().
+const FILE_URI_LINE_SUFFIX = /:(\d+)(?::\d+)?$/;
+
+/**
+ * Convert a `file://` URI back to a local filesystem path, with an optional
+ * trailing :line[:col] carried out separately. Returns undefined for anything
+ * `safeFileUri` rejects or a path that fails percent-decoding.
+ */
+export function fileUriToLocalPath(uri: string): { path: string; line?: number } | undefined {
+	if (!safeFileUri(uri)) return undefined;
+	let pathname: string;
+	try {
+		pathname = decodeURIComponent(new URL(uri).pathname);
+	} catch {
+		return undefined;
+	}
+	// pathToFileURL on Windows yields "/C:/dir/file"; the leading slash is not
+	// part of the path there.
+	const path = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+	const suffix = FILE_URI_LINE_SUFFIX.exec(path);
+	if (!suffix) return { path };
+	return { path: path.slice(0, path.length - suffix[0].length), line: Number.parseInt(suffix[1]!, 10) };
+}
+
 export interface Osc8Tracker {
 	/** Parse one PTY chunk. Chunking is safe — parser state carries across calls. */
 	feed(chunk: string): void;
@@ -311,8 +361,8 @@ export function createOsc8LinkProvider(opts: {
 			// A label that IS a URI still works when the tracker missed it
 			// (e.g. scrolled past the LRU, or poisoned by a label collision):
 			// the visible text itself is the destination, so it cannot lie.
-			candidates.map((c) => safeHttpUri(c)).find(Boolean);
-		return uri !== undefined && safeHttpUri(uri) ? uri : undefined;
+			candidates.map((c) => safeOsc8Uri(c)).find(Boolean);
+		return uri !== undefined && safeOsc8Uri(uri) ? uri : undefined;
 	}
 
 	function linksForRow(y: number): Osc8RowLink[] {

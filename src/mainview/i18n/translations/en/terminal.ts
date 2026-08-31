@@ -248,6 +248,7 @@ const terminal = {
 	// File path links in terminal output (Cmd/Ctrl+Click)
 	"terminal.pathLinkFolderBrowser": "Folders can't be opened from the browser — use the desktop app.",
 	"terminal.pathLinkOpenFailed": "Couldn't open path: {error}",
+	"terminal.fileLinkNotFound": "File not found: {path}",
 	"terminal.filePreviewLoading": "Loading preview…",
 	"terminal.filePreviewNotFound": "File not found — it may have been moved or deleted.",
 	"terminal.filePreviewBinary": "Binary file ({size}) — no preview available.",

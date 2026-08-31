@@ -3,6 +3,8 @@ import {
 	createOsc8Tracker,
 	createOsc8LinkProvider,
 	safeHttpUri,
+	safeFileUri,
+	fileUriToLocalPath,
 	type HyperlinkLine,
 } from "../terminal-osc8-links";
 import type { ILink } from "ghostty-web";
@@ -169,14 +171,26 @@ describe("createOsc8LinkProvider", () => {
 	});
 
 	it("drops unknown labels and unsafe URIs", () => {
-		const text = "#9 file";
+		const text = "#9 evil";
 		const ids = [1, 1, 0, 3, 3, 3, 3];
 		const { links } = collectLinks(
 			{ 0: lineOf(text, ids) },
-			(l) => (l === "file" ? "file:///etc/passwd" : undefined),
+			(l) => (l === "evil" ? "javascript:alert(1)" : undefined),
 			0,
 		);
 		expect(links).toHaveLength(0);
+	});
+
+	it("produces a link for a file:// URI (agents wrap printed paths in them)", () => {
+		const text = "read a.png ok";
+		const ids = [0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 0, 0, 0];
+		const { links } = collectLinks(
+			{ 0: lineOf(text, ids) },
+			(l) => (l === "a.png" ? "file:///tmp/mock%20dir/a.png" : undefined),
+			0,
+		);
+		expect(links).toHaveLength(1);
+		expect(links[0].text).toBe("file:///tmp/mock%20dir/a.png");
 	});
 
 	it("stitches a wrapped link across rows to resolve the full label", () => {
@@ -289,5 +303,44 @@ describe("safeHttpUri", () => {
 	it("rejects non-URLs", () => {
 		expect(safeHttpUri("#3226")).toBeUndefined();
 		expect(safeHttpUri("https://")).toBeUndefined();
+	});
+});
+
+describe("safeFileUri", () => {
+	it("accepts local file URIs, empty or localhost host", () => {
+		expect(safeFileUri("file:///tmp/a.png")).toBe("file:///tmp/a.png");
+		expect(safeFileUri("file://localhost/tmp/a.png")).toBe("file://localhost/tmp/a.png");
+	});
+
+	it("rejects remote hosts, other schemes, and control characters", () => {
+		expect(safeFileUri("file://evil.example/share/x")).toBeUndefined();
+		expect(safeFileUri("https://a.dev")).toBeUndefined();
+		expect(safeFileUri("file:///tmp/a b.png")).toBeUndefined();
+		expect(safeFileUri("file:///tmp/a\nb.png")).toBeUndefined();
+	});
+});
+
+describe("fileUriToLocalPath", () => {
+	it("converts a pathToFileURL-style URI back to a path", () => {
+		expect(fileUriToLocalPath("file:///tmp/mock-cc-global.png")).toEqual({ path: "/tmp/mock-cc-global.png" });
+	});
+
+	it("percent-decodes the path", () => {
+		expect(fileUriToLocalPath("file:///tmp/mock%20dir/a.png")).toEqual({ path: "/tmp/mock dir/a.png" });
+	});
+
+	it("strips the leading slash of a Windows drive path", () => {
+		expect(fileUriToLocalPath("file:///C:/dir/file.ts")).toEqual({ path: "C:/dir/file.ts" });
+	});
+
+	it("carries a trailing :line[:col] suffix out separately", () => {
+		expect(fileUriToLocalPath("file:///a/b.ts:12")).toEqual({ path: "/a/b.ts", line: 12 });
+		expect(fileUriToLocalPath("file:///a/b.ts:12:5")).toEqual({ path: "/a/b.ts", line: 12 });
+	});
+
+	it("rejects what safeFileUri rejects, and undecodable paths", () => {
+		expect(fileUriToLocalPath("https://a.dev/x")).toBeUndefined();
+		expect(fileUriToLocalPath("file://evil.example/x")).toBeUndefined();
+		expect(fileUriToLocalPath("file:///tmp/%zz")).toBeUndefined();
 	});
 });
