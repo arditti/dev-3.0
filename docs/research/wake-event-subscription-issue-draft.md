@@ -179,6 +179,54 @@ deliberately keeps 0/4 and expresses this via filter tokens instead), a dashboar
 and anything on the read-only stats cockpit. Failures ride the existing attention mechanism rather
 than new chrome.
 
+### Mocks (rendered inside the real running UI, not a wireframe tool)
+
+Each of these is a screenshot of the actual dev-3.0 app with the proposed panels injected into the
+live DOM, so spacing, chrome and theme are real. Streamer mode is on, so identity values are
+masked.
+
+**The control center overlay — scope = Everything.** Missed-fires notice on top, then
+subscriptions from all four scopes with scope badges:
+
+![Control center overlay, scope Everything](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/03-overlay-scope-everything.png)
+
+**The same component pre-filtered to one task** — this is what "one component, four pre-filters"
+means in practice:
+
+![Same overlay, scope This task](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/05-overlay-scope-this-task.png)
+
+**Lower half of the overlay** — pending delivery, dead-letter with auto-pause, TTL-expired, and
+the firing audit log:
+
+![Overlay pending, dead-letter and firing log](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/04-overlay-pending-deadletter-and-log.png)
+
+**Task card** — the existing shared deferred-timer chip in the `signals` zone showing the soonest
+next wake, and its popover:
+
+![Task card chip and popover](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/06-card-chip-popover.png)
+
+**Inspector** — a capped `Watching` preview, peer of Notes (newest 3 + count + `Show all`):
+
+![Inspector Watching preview](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/07-inspector-watching-preview.png)
+
+<details>
+<summary>Baselines, for comparison — the same screens unmodified</summary>
+
+![Baseline board](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/00-baseline-board.png)
+
+![Baseline Global Settings](https://raw.githubusercontent.com/arditti/dev-3.0/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks/screenshots/01-baseline-settings.png)
+
+</details>
+
+Two caveats so nothing is over-claimed: the mocks use inline styles where an arbitrary Tailwind
+value is absent from the compiled CSS (real code would use the `docs/ux` §7 token classes — note
+there is **no `info` token**, so the sky-blue used for scope badges needs a mapping or a proper
+proposal), and the inspector preview is rendered as a positioned panel because React re-renders
+wipe injected DOM — its content and cap behaviour are the spec, its container is the inspector's
+expanded body. The injection scripts that produced every shot are in
+[`docs/research/wake-event-subscription-mocks/`](https://github.com/arditti/dev-3.0/tree/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks)
+so they can be re-run.
+
 ## Suggested staging
 
 | Stage | Ships | Size |
@@ -255,5 +303,15 @@ assumed.
    (the ruled path for missed automation runs). Is one summary per restart right, or should quiet
    verdicts (`skip-stale`, `drop`) be logged only and never shown?
 
-Full research notes, an open-source survey, and mocks rendered in the real UI are on the branch
-`docs/dev3-wake-event-subscription-research` (`docs/research/wake-event-subscription.md`).
+## Full material
+
+Everything below is on a public branch, readable without checking anything out:
+
+- **Research document** — the whole design in one file: existing-signal-path survey, subscription /
+  waker / filter model, delivery policies, queue semantics, per-source backfill, hibernation,
+  UI placement with rejections, staged plan, risks →
+  [`docs/research/wake-event-subscription.md`](https://github.com/arditti/dev-3.0/blob/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription.md)
+- **Mock screenshots + the injection scripts** that produced them →
+  [`docs/research/wake-event-subscription-mocks/`](https://github.com/arditti/dev-3.0/tree/docs/dev3-wake-event-subscription-research/docs/research/wake-event-subscription-mocks)
+- **Branch** →
+  [`arditti/dev-3.0@docs/dev3-wake-event-subscription-research`](https://github.com/arditti/dev-3.0/tree/docs/dev3-wake-event-subscription-research)
