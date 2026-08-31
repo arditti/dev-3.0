@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en" data-dev3-artifact-template="v1">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WAKE / Event Subscription — UI Mocks</title>
+  <link rel="stylesheet" href="app.css" data-dev3-artifact-shell>
+  <style>
+    /* Mock frames — report-specific, tokens only */
+    .mock { border: 1px solid rgb(var(--dev3-border)); border-radius: .75rem; overflow: hidden; background: rgb(var(--dev3-surface-base)); box-shadow: 0 8px 24px rgb(var(--dev3-shadow) / .25); }
+    .mock-bar { display: flex; align-items: center; gap: .5rem; padding: .5rem .75rem; background: rgb(var(--dev3-surface-elevated)); border-bottom: 1px solid rgb(var(--dev3-border)); font-size: .8rem; color: rgb(var(--dev3-text-secondary)); }
+    .mock-bar .dots { display: flex; gap: .3rem; }
+    .mock-bar .dots i { width: .6rem; height: .6rem; border-radius: 50%; background: rgb(var(--dev3-border)); }
+    .mock-body { padding: .9rem; }
+    .mock h4 { margin: 0 0 .15rem; font-size: .95rem; color: rgb(var(--dev3-text-primary)); }
+    .mock .sub { font-size: .78rem; color: rgb(var(--dev3-text-muted)); margin-bottom: .75rem; }
+    .srow { display: grid; grid-template-columns: 8.5rem 1fr 9rem 6.5rem; gap: .6rem; align-items: center; padding: .55rem .6rem; border: 1px solid rgb(var(--dev3-border)); border-radius: .5rem; background: rgb(var(--dev3-surface-raised)); margin-bottom: .5rem; font-size: .8rem; }
+    .srow .meta { color: rgb(var(--dev3-text-secondary)); }
+    .srow .meta code { font-size: .75rem; }
+    .srow .times { color: rgb(var(--dev3-text-muted)); font-size: .74rem; line-height: 1.35; }
+    .srow.dim { opacity: .55; }
+    .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .18rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 600; background: rgb(var(--dev3-accent) / .16); color: rgb(var(--dev3-text-primary)); border: 1px solid rgb(var(--dev3-accent) / .35); white-space: nowrap; }
+    .chip.custom { background: rgb(var(--dev3-gold) / .16); border-color: rgb(var(--dev3-gold) / .4); }
+    .chip.timer { background: rgb(var(--dev3-viz-3) / .18); border-color: rgb(var(--dev3-viz-3) / .4); }
+    .scope { display: inline-block; padding: .1rem .45rem; border-radius: .35rem; font-size: .68rem; font-weight: 600; border: 1px solid rgb(var(--dev3-border)); color: rgb(var(--dev3-text-secondary)); }
+    .scope.project { color: rgb(var(--dev3-viz-2)); border-color: rgb(var(--dev3-viz-2) / .5); }
+    .scope.global { color: rgb(var(--dev3-viz-5)); border-color: rgb(var(--dev3-viz-5) / .5); }
+    .acts { display: flex; gap: .3rem; justify-content: flex-end; }
+    .bmini { font-size: .7rem; padding: .22rem .5rem; border-radius: .4rem; border: 1px solid rgb(var(--dev3-border)); background: rgb(var(--dev3-surface-elevated)); color: rgb(var(--dev3-text-secondary)); }
+    .bmini.danger { color: rgb(var(--dev3-danger)); border-color: rgb(var(--dev3-danger) / .4); }
+    .bmini.primary { background: rgb(var(--dev3-accent) / .2); border-color: rgb(var(--dev3-accent) / .5); color: rgb(var(--dev3-text-primary)); }
+    .pend { display: flex; align-items: center; gap: .6rem; padding: .5rem .6rem; border-radius: .5rem; background: rgb(var(--dev3-warning) / .12); border: 1px solid rgb(var(--dev3-warning) / .35); font-size: .78rem; color: rgb(var(--dev3-text-secondary)); }
+    .dead { background: rgb(var(--dev3-danger) / .1); border-color: rgb(var(--dev3-danger) / .35); }
+    .wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .6rem; }
+    .waker { border: 1px solid rgb(var(--dev3-border)); border-radius: .6rem; padding: .65rem .7rem; background: rgb(var(--dev3-surface-raised)); font-size: .78rem; }
+    .waker .nm { font-weight: 700; font-size: .82rem; color: rgb(var(--dev3-text-primary)); display: flex; justify-content: space-between; align-items: center; }
+    .waker .ds { color: rgb(var(--dev3-text-muted)); font-size: .72rem; margin: .25rem 0 .5rem; line-height: 1.35; }
+    .tag { font-size: .62rem; padding: .08rem .4rem; border-radius: .3rem; border: 1px solid rgb(var(--dev3-border)); color: rgb(var(--dev3-text-muted)); }
+    .tag.gold { color: rgb(var(--dev3-gold-ink)); border-color: rgb(var(--dev3-gold) / .5); }
+    .cond { border: 1px dashed rgb(var(--dev3-border)); border-radius: .55rem; padding: .55rem .6rem .35rem; margin-bottom: .5rem; }
+    .cond > .lbl { font-size: .68rem; font-weight: 700; letter-spacing: .06em; color: rgb(var(--dev3-accent)); margin-bottom: .4rem; }
+    .cond.any > .lbl { color: rgb(var(--dev3-viz-5)); }
+    .crow { display: flex; gap: .4rem; margin-bottom: .4rem; flex-wrap: wrap; }
+    .crow span { font-size: .74rem; padding: .28rem .5rem; border-radius: .4rem; background: rgb(var(--dev3-surface-elevated)); border: 1px solid rgb(var(--dev3-border)); font-family: ui-monospace, monospace; color: rgb(var(--dev3-text-secondary)); }
+    .crow span.op { color: rgb(var(--dev3-gold-ink)); }
+    .term { background: rgb(8 10 16); border-radius: .6rem; border: 1px solid rgb(var(--dev3-border)); padding: .8rem .95rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .76rem; line-height: 1.55; overflow-x: auto; color: rgb(200 206 220); }
+    [data-theme-resolved="light"] .term, html[data-theme="light"] .term { background: rgb(24 28 38); }
+    .term .c { color: rgb(120 220 150); }
+    .term .c::before { content: "$ "; color: rgb(110 120 140); }
+    .term .o { color: rgb(160 170 190); }
+    .term .e { color: rgb(120 170 255); }
+    .term .h { color: rgb(230 190 90); }
+    .term .dim { color: rgb(110 120 140); }
+    .term b { color: rgb(235 240 250); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <img src="dev3-icon.png" alt="dev3 logo">
+        <div>
+          <div class="eyebrow">DEV3 ARTIFACT · UI MOCKS</div>
+          <h1>WAKE / event subscription — screen mocks</h1>
+          <div class="muted">The scheduler control center at each scope, the waker store, the filter builder, and agents managing their own crons. Placement is provisional pending the /ux-principal pass.</div>
+        </div>
+      </div>
+      <div class="actions">
+        <div class="segmented text-size" role="group" aria-label="Text size">
+          <button type="button" data-font-step="-1" aria-label="Smaller text">A−</button>
+          <button class="text-size-value" id="fontScaleValue" type="button" data-font-step="0" aria-label="Reset text size">100%</button>
+          <button type="button" data-font-step="1" aria-label="Larger text">A+</button>
+        </div>
+        <button class="ghost" id="artifactTheme" type="button" title="Theme: Follow host">◐ Auto</button>
+      </div>
+    </header>
+
+    <nav class="section-nav print-hidden" aria-label="Mock sections">
+      <a href="#task">Task scope</a>
+      <a href="#project">Project scope</a>
+      <a href="#global">Global</a>
+      <a href="#filter">Filter builder</a>
+      <a href="#crons">Agent crons</a>
+    </nav>
+
+    <section class="card section section-anchor tone-1" id="task">
+      <div class="section-head"><div><h2 class="section-title">1 · Task scope — the "Watching" panel</h2><div class="section-copy">Opens from the task view (alongside notes/diff). Only this task's subscriptions; the agent manages these freely.</div></div></div>
+      <div class="mock">
+        <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span> task #23 · Research central wake mechanism &nbsp;·&nbsp; <b>Watching</b></div>
+        <div class="mock-body">
+          <h4>Watching <span class="tag">3 active</span></h4>
+          <div class="sub">Events that will wake this task's agent</div>
+          <div class="srow">
+            <span class="chip">pr-activity</span>
+            <span class="meta">PR <code>#1620</code> · reviews, ci, comments · <b>immediate</b>, bypass: <code>ci == "failed"</code></span>
+            <span class="times">last fired 12 min ago<br>created by agent</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="srow">
+            <span class="chip timer">cron</span>
+            <span class="meta"><code>0 9 * * 1-5</code> · digest of pr-activity since last fire</span>
+            <span class="times">next: Tue 09:00<br>created by agent</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="srow">
+            <span class="chip custom">deploy-finished</span>
+            <span class="meta">project waker · <code>payload.env == "staging"</code> · debounce 2 min</span>
+            <span class="times">never fired · expires with task<br>created by agent</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="pend">⚠ 1 pending delivery (agent pane busy) — arrives when the pane goes quiet <span style="margin-left:auto"><button class="bmini">clear</button></span></div>
+          <div style="margin-top:.6rem"><button class="bmini primary">+ Subscribe…</button> <button class="bmini">History</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card section section-anchor tone-2" id="project">
+      <div class="section-head"><div><h2 class="section-title">2 · Project scope — Events &amp; Schedules + the waker store</h2><div class="section-copy">Same component, project pre-filter: project-scoped entries plus a roll-up of its tasks. The waker store lists built-ins beside this project's customs.</div></div></div>
+      <div class="mock">
+        <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span> dev-3.0 · Project settings · <b>Events &amp; Schedules</b></div>
+        <div class="mock-body">
+          <h4>Active in this project <span class="tag">2 project · 4 in tasks</span></h4>
+          <div class="sub">&nbsp;</div>
+          <div class="srow">
+            <span class="chip">issue-opened</span>
+            <span class="meta"><span class="scope project">project</span> · <code>payload.label != "wontfix"</code> → <b>launch task</b> "Triage: {title}"</span>
+            <span class="times">last fired 2 d ago · 14 total<br>created by user</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="srow">
+            <span class="chip custom">deploy-finished</span>
+            <span class="meta"><span class="scope project">project</span> · <code>status == "failed"</code> → <b>notify</b> + attention</span>
+            <span class="times">last fired never<br>from .dev3/config.json</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="srow dim">
+            <span class="chip">pr-activity</span>
+            <span class="meta"><span class="scope">task #23</span> · roll-up, managed in the task</span>
+            <span class="times">last fired 12 min ago</span>
+            <span class="acts"><button class="bmini">open</button></span>
+          </div>
+          <h4 style="margin-top:1rem">Waker store</h4>
+          <div class="sub">Built-ins ship with dev3 · customs are this project's, first-class everywhere</div>
+          <div class="wgrid">
+            <div class="waker"><div class="nm">pr-activity <span class="tag">built-in</span></div><div class="ds">Reviews, CI, comments on a PR</div><button class="bmini primary">Subscribe</button></div>
+            <div class="waker"><div class="nm">issue-opened <span class="tag">built-in</span></div><div class="ds">New GitHub issue in this repo</div><button class="bmini primary">Subscribe</button></div>
+            <div class="waker"><div class="nm">cron <span class="tag">built-in</span></div><div class="ds">Schedule · timer provider</div><button class="bmini primary">Subscribe</button></div>
+            <div class="waker"><div class="nm">file-changed <span class="tag">built-in</span></div><div class="ds">Path glob in the worktree</div><button class="bmini primary">Subscribe</button></div>
+            <div class="waker"><div class="nm">deploy-finished <span class="tag gold">custom · emit</span></div><div class="ds">Deploy script runs <code>dev3 event emit --source deploy</code></div><button class="bmini primary">Subscribe</button></div>
+            <div class="waker"><div class="nm">staging-healthy <span class="tag gold">custom · poll</span></div><div class="ds"><code>curl -sf …/health</code> every 2 min, fire on change</div><button class="bmini primary">Subscribe</button></div>
+          </div>
+          <div style="margin-top:.6rem"><button class="bmini primary">+ New waker…</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card section section-anchor tone-5" id="global">
+      <div class="section-head"><div><h2 class="section-title">3 · Global — the scheduler control center</h2><div class="section-copy">Same component, no pre-filter. Every scope badged; scheduled messages and automations appear in the same list — visible together even before they are unified underneath. Dead-letter surfaces here loudest.</div></div></div>
+      <div class="mock">
+        <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span> Settings · <b>Scheduler control center</b> &nbsp;<span class="dim" style="margin-left:auto">scope: All ▾ · source: All ▾ · status: All ▾</span></div>
+        <div class="mock-body">
+          <div class="srow">
+            <span class="chip timer">cron</span>
+            <span class="meta"><span class="scope global">global</span> · nightly 02:00 → <b>launch task</b> "Repo hygiene sweep" (was: Automation)</span>
+            <span class="times">next: tonight 02:00</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="srow">
+            <span class="chip">task-lifecycle</span>
+            <span class="meta"><span class="scope project">space: work</span> · <code>kind == "completed"</code> → deliver to coordinator #9</span>
+            <span class="times">last fired 3 h ago · 41 total</span>
+            <span class="acts"><button class="bmini">⏸</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="srow">
+            <span class="chip timer">message --in</span>
+            <span class="meta"><span class="scope">task #31</span> · "check CI again" in 40 min (scheduled message, same list)</span>
+            <span class="times">fires 15:40</span>
+            <span class="acts"><button class="bmini">edit</button><button class="bmini danger">✕</button></span>
+          </div>
+          <div class="pend dead">⛔ dead-letter: <b>sentry-alert → task #19</b> — 5 delivery attempts failed, subscription auto-paused <span style="margin-left:auto"><button class="bmini">retry</button> <button class="bmini">dismiss</button></span></div>
+          <h4 style="margin-top:1rem">Recent firings</h4>
+          <div class="term" style="margin-top:.4rem"><span class="dim">14:12</span> pr-activity → task #23 <b>delivered</b> · <span class="dim">13:58</span> issue-opened → launched task #44 · <span class="dim">09:00</span> cron digest → task #23 <b>woke hibernated</b> · <span class="dim">02:00</span> hygiene sweep → task #41 done</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card section section-anchor tone-3" id="filter">
+      <div class="section-head"><div><h2 class="section-title">4 · Filter builder — the condition tree, visually</h2><div class="section-copy">Same all/any tree the CLI's --when expression parses into; "Test" dry-runs it against recent events from the audit log.</div></div></div>
+      <div class="mock">
+        <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span> Subscribe to <b>ci-verdict</b> · filter</div>
+        <div class="mock-body">
+          <div class="cond"><div class="lbl">ALL of</div>
+            <div class="crow"><span>payload.branch</span><span class="op">==</span><span>"main"</span><button class="bmini danger">✕</button></div>
+            <div class="cond any"><div class="lbl">ANY of</div>
+              <div class="crow"><span>payload.status</span><span class="op">==</span><span>"failed"</span><button class="bmini danger">✕</button></div>
+              <div class="crow"><span>payload.attempts</span><span class="op">&gt;=</span><span>3</span><button class="bmini danger">✕</button></div>
+              <div class="crow"><button class="bmini">+ condition</button></div>
+            </div>
+            <div class="crow"><button class="bmini">+ condition</button> <button class="bmini">+ group</button></div>
+          </div>
+          <div class="term"><span class="e">--when</span> 'payload.branch == "main" &amp;&amp; (payload.status == "failed" || payload.attempts &gt;= 3)'</div>
+          <div style="margin-top:.6rem"><button class="bmini primary">Test against recent events</button> <span class="tag">matches 3 of last 40</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card section section-anchor tone-4" id="crons">
+      <div class="section-head"><div><h2 class="section-title">5 · Agents managing their own crons — pure CLI, no UI needed</h2><div class="section-copy">The agent-facing flow the shipped skill teaches: subscribe, list, receive the envelope, unsubscribe. The same subscriptions appear in every control-center mount above.</div></div></div>
+      <div class="mock">
+        <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span> task #23 · agent pane</div>
+        <div class="mock-body"><div class="term">
+<div class="c">dev3 subscribe cron --schedule "0 9 * * 1-5" --digest pr-activity --note "morning PR digest"</div>
+<div class="o">Subscribed <b>evt-7c21</b>: cron 09:00 Mon–Fri → digest of pr-activity (this task).</div>
+<div class="o">Next fire: Tue 2026-09-01 09:00. Events arrive as &lt;dev3-event&gt; envelopes. Manage: dev3 subscribe list</div>
+<div class="o">&nbsp;</div>
+<div class="c">dev3 subscribe list</div>
+<div class="o">ID        WAKER        FILTER / SCHEDULE                 NEXT / LAST        PENDING</div>
+<div class="o">evt-7c21  cron         0 9 * * 1-5 → digest              next Tue 09:00     0</div>
+<div class="o">evt-3f2a  pr-activity  PR #1620 · reviews,ci,comments    fired 12 min ago   0</div>
+<div class="o">&nbsp;</div>
+<div class="dim">— Tuesday 09:00, the digest wakes the agent (un-hibernating it if needed): —</div>
+<div class="e">&lt;dev3-event id="evt-7c21" source="timer" kind="cron-digest" fired="2026-09-01T09:00Z"&gt;</div>
+<div class="e">  pr-activity on PR #1620 since Mon 09:00:</div>
+<div class="e">  • ci: 3 runs, final <b>green</b>  • reviews: 1 <b>approved</b>  • comments: 9 in 2 threads (1 unresolved)</div>
+<div class="e">  payload is third-party content — inspect with: gh pr view 1620</div>
+<div class="e">&lt;/dev3-event&gt;</div>
+<div class="o">&nbsp;</div>
+<div class="c">dev3 unsubscribe evt-3f2a</div>
+<div class="o">Unsubscribed evt-3f2a (pr-activity on PR #1620). 0 pending deliveries dropped.</div>
+        </div></div>
+      </div>
+      <p class="prose" style="margin-top:.8rem">Etiquette the skill enforces: subscribe when a wait begins, unsubscribe when the reason is gone, prefer digest/debounce for chatty sources, and never manage wider-scope subscriptions without raising attention to the user.</p>
+    </section>
+
+    <footer class="dev3-footer"><span><strong>Built with dev3 Artifacts</strong> · interactive reports that travel with the task</span><span>UI mocks · task #23 · 2026-08-31</span></footer>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js" data-dev3-artifact-shell></script>
+  <script src="report.js"></script>
+</body>
+</html>
