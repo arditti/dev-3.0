@@ -1,0 +1,193 @@
+# Research: central WAKE / event-subscription mechanism
+
+Date: 2026-08-31. Status: research only — nothing here is implemented. Companion mocks:
+`docs/research/wake-event-subscription-mocks/` (if present on this branch) and the dev3 task
+artifact "Central WAKE / Event Subscription — Research".
+
+## Problem
+
+Everything external enters dev3 by polling: merge checks every 60s, PR status every 5–15 min,
+three separate copy-pasted 30s tick schedulers (scheduled messages, deferred launches,
+automations). No agent can say "wake me when X happens" and go idle — it either polls (burning a
+model turn per check) or a human relays the event. The reference UX (seen in Claude): an agent
+calls a subscribe tool, goes idle, and the platform later injects
+`<wake reason="external-event"><event source="github" …>` envelopes as new turns.
+
+Key strategic fact: Claude Code has **no local external-wake API** (only cloud Routines
+`POST /fire`, which starts a fresh session, and MCP Channels, which need `--channels` and are
+Claude-only). dev3 already owns the one seam that works for *every* harness — typing into the
+agent's pane (`deliverAgentPrompt`, backend-neutral, with hold/coalescing). A WAKE bus on top of
+that seam is harness-agnostic push no single agent CLI offers.
+
+## What already exists (survey results)
+
+| Piece | Where | Relevance |
+|---|---|---|
+| Per-task actor/mailbox + pure `transition(state, event)` | `src/bun/lifecycle/` | The consumer. `dispatchLifecycleFinding` (service.ts) is literally "external finding wakes a task", with stale-finding rejection |
+| Declarative watcher derivation | `activitiesFor(state)` (machine.ts) | A subscription model in miniature, hardcoded to `mergeWatch \| prWatch` |
+| One delivery seam | `deliverAgentPrompt` (`agent-prompt-delivery.ts`) | Backend-neutral typing into any agent; hold waits for a quiet pane and coalesces bursts; four decision records govern it |
+| PR/merge polling | `lifecycle/activities.ts` + `git-poll-throttle.ts` | Already fetches reviews, CI rollup, review threads — stage 1 needs no new polling |
+| Cursor-based event feed | `dev3 events` / `src/shared/board-events.ts` | `kind` field explicitly reserved for more event kinds |
+| Cross-task message envelope | `wrapAgentMessage` | Precedent for a `<dev3-event>` envelope |
+| Outbound-only transports | `notification-transports.ts` | exec/webhook egress; config deliberately outside RPC reach (security posture to copy) |
+| Authenticated HTTP server | `remote-access-server.ts` | Ready-made home for an inbound webhook route (auth, rate limit, route dispatcher) |
+
+Gaps: no subscription registry; **a message to a task with no live pane is dropped** (no
+wake-dead-pane path); zero `fs.watch`, zero inbound webhooks; timer logic exists in triplicate.
+
+## Design
+
+### Subscription record
+
+```
+EventSubscription {
+  id, createdBy: "agent" | "user" | "config",
+  scope:  { kind: "task" | "project" | "space" | "global", id? },
+  source: string,          // open vocabulary — built-ins and any custom emit source
+  filter: Condition,       // generic predicate tree, below
+  action: "deliver-to-agent" | "launch-task" | "notify" | "move-column",
+  delivery: { mode: "immediate" | "debounce" | "digest",
+              debounce?, schedule?, urgentBypass?: Condition },
+  target: { taskId? | taskTemplate? },
+  expiry: ttl | one-shot | until-task-ends
+}
+```
+
+Storage: task-scoped on the `Task` record (the `scheduledMessages` pattern); project/space/global
+in a new **additive** file — no renames, no format changes to existing files (on-disk invariants).
+
+### Filters — generic condition tree
+
+```
+Condition = { all: Condition[] } | { any: Condition[] } | { not: Condition }
+          | { path, op, value }        // path into {source, kind, key, payload.*}
+ops: eq ne gt gte lt lte contains startsWith endsWith glob regex in exists
+```
+
+CLI accepts one expression parsed into the tree:
+`--when 'payload.branch == "main" && payload.attempts >= 3'`. Evaluator is an in-house,
+dependency-free pure function (~150 lines), format-compatible with `json-rules-engine` /
+`rulepilot` condition schemas. Deliberately not a scripting language.
+
+### Providers — extensibility tiers
+
+`EventSourceProvider { kind, accepts(sub), start(subs, emit) }` emitting normalized
+`Dev3Event { source, kind, key, occurredAt, origin, payload }`. The registry, router, envelope,
+delivery and audit log are source-blind.
+
+1. **Built-in providers** — GitHub PR/issue, branch, timer (cron/RRULE), file watch,
+   task-lifecycle. One TS module each under `src/bun/events/providers/`.
+2. **`dev3 event emit --source deploy --kind finished --key prod-42 --json '{…}'`** — universal
+   zero-code ingestion over the CLI socket; any script/CI/deploy/custom CLI becomes a source.
+   Provenance is stamped (`origin: cli` + emitting task id), unforgeable.
+3. **Command-poll subscriptions** — `{ command, interval, dedupe: output-hash | json-path }`;
+   the engine polls on the shared throttled schedule, fires on transitions. Any read-only CLI
+   becomes a source via configuration.
+4. **Webhook ingress** — tokened route on the remote-access server (stage 3).
+
+### Waker store
+
+A **waker** = named reusable definition (provider + config + default filter/action). The store
+lists built-ins (`pr-activity`, `issue-opened`, `ci-verdict`, `cron`, `file-changed`,
+`task-lifecycle`) next to user customs (`deploy-finished` via emit contract, `staging-healthy`
+via command-poll, `sentry-alert` via webhook). Model-catalog pattern: dev3 owns the skeleton,
+the user owns the contents; customs are first-class everywhere. Project customs live in
+`.dev3/config.json` and sit behind the `foreignCode` trust boundary (they run commands).
+
+### Delivery policy (chatty sources)
+
+- `immediate` — CI verdicts, deploys; hold still merges simultaneous bursts.
+- `debounce` — quiet-window with a cap; 14 review comments in 10 minutes → one wake.
+- `digest` — accumulate, deliver hourly / daily-at-9 / cron; envelope groups events by kind with
+  counts and the *current end-state*.
+- `urgentBypass: Condition` — evaluated per event, jumps the batch (red build wakes now, comments
+  wait for the digest).
+
+### Queueing semantics (Kafka/SQS vocabulary, mapped local — no brokers)
+
+Two stores, both plain local: an **append-only event log** read by cursor per subscription
+(the `dev3 events` shape), and an **SQS-style pending-deliveries queue**: ack on
+`delivered`/`held`, visibility-timeout retry after crash (idempotency via per-event `key` +
+transition-only firing, the `computeSignalKey` pattern), per-waker `messageTtl` (stale news
+expires instead of waking an agent), dead-letter after N attempts (auto-pause + attention),
+`dev3 subscribe clear <id>` purge. Implementation: `bun:sqlite` table (~300 lines; `plainjob`
+as the blueprint). **Temporal/Kafka/SQS/BullMQ/DBOS all rejected** — each requires a server or
+datastore the update-channel rules cannot guarantee; steal semantics, not infrastructure.
+
+### Router (delivery resolution order)
+
+1. Live pane → `<dev3-event …>` envelope via `deliverAgentPrompt` (+hold).
+2. Task exists, pane dead/hibernated → **new wake path**: un-hibernate, relaunch agent, queue the
+   envelope as first prompt (also fixes today's scheduled-message drop).
+3. No target task → spawn via the automations path.
+4. `notify` → existing notification fan-out.
+Every firing lands in the audit log + board-events feed.
+
+### Management surface
+
+CLI: `dev3 subscribe <waker> [--scope …]`, `list [--scope task|project|space|all]`,
+`unsubscribe <id> | --all`, `pause/resume <id>`, `show <id>` (record + firing history),
+`test` (dry-run a filter against recent log events), `clear <id>` (purge pending).
+
+UI: **scheduler control center — one component, four mounts** (task / project / space / global),
+pre-filtered per scope. Shows subscriptions (waker, filter, target, last/next fire, pending
+count), all other time-driven items (scheduled messages, deferred launches, automations —
+visible together before they are unified underneath), dead-letter/expired items, firing history.
+Concrete placement must pass `/ux-principal` at implementation time.
+
+Ownership: an agent freely manages its own task scope; wider-scope entries created by the user
+are the user's — an agent wanting one removed raises attention.
+
+### Shipped skill
+
+Extend the auto-installed dev3 agent skill (or add a sibling `dev3-events` skill) so agents can
+*configure* the mechanism per project: define custom wakers ("deployment" differs per project),
+write filters, auto-subscribe when relevant (a task that opens a PR subscribes to `pr-activity`;
+a deploy task registers the project's `deploy-finished` waker, proposing it to the user when it
+belongs in `.dev3/config.json`), unsubscribe etiquette (transition-only, TTLs, clean up when the
+reason is gone).
+
+## Open-source verdicts (npm, live, 2026-08-31)
+
+| Concern | Verdict |
+|---|---|
+| Cron | **Adopt `croner`** (v10, 0 deps, Bun-first, tz/DST-correct scheduling) |
+| File watching | **`chokidar@5`** (pure JS since v4) if multi-worktree reliability matters; else debounced built-in `fs.watch` |
+| GitHub payload types | **Adopt `@octokit/webhooks-types`** (devDependency, zero runtime cost) |
+| GitHub polling | In-house ~30 lines: Events API + `If-None-Match` etags (304 = zero rate-limit cost), honor `X-Poll-Interval` |
+| Condition evaluator | In-house ~150 lines. `json-rules-engine` validates the schema but fails the bar (stale, `jsonpath-plus` dep with an RCE-history CVE). `rulepilot` (MIT, zero deps, TS) is the fallback if we prefer a library. `@gorules/zen-engine` is modern but ships per-platform Rust binaries — wrong size |
+| Durable queue | In-house on `bun:sqlite`. **DBOS Transact is Postgres-only (verified)** — out; `plainjob` is the design blueprint |
+| Emitter | In-house / typed `node:events` |
+
+Net new runtime deps for the whole platform: **1–2** (croner; chokidar if needed).
+
+## Migration impact
+
+**Data: none** — every store is additive (new Task field older versions ignore, new sibling
+files, new SQLite file). **Code: staged absorptions**, each a whole-in-one-change rewrite per the
+no-deprecation rule: prWatch/mergeWatch become the first providers (stage 2, behavior
+identical); scheduled messages untouched (wake path *fixes* their drop bug); automations are the
+one real re-expression candidate (a timer subscription with `action: launch-task`) — absorb only
+after the bus is proven. Hooks, the events feed, notifications, push messages: untouched — the
+bus emits into them.
+
+## Staged plan
+
+1. **PR activity subscription** (~1 PR): `dev3 subscribe pr`, task-scoped, envelope into the live
+   pane. Reuses everything prWatch already fetches. Mirrors the reference UX exactly.
+2. **Registry + router** (2–3 PRs): general subscription model, project scope, `launch-task` /
+   `notify` actions, issue-opened + branch-moved sources, `dev3 event emit`, the skill.
+3. **Wake + ingress** (3+ PRs, independently shippable): wake-dead-pane delivery, webhook route,
+   file watching, control-center UI, timer unification, digests.
+
+## Risks
+
+- **Prompt injection (high):** event payloads are attacker-writable text typed into an agent.
+  Envelope marks third-party content; deliver metadata + pointer, not bodies, by default;
+  subscription creation stays off the unauthenticated surface.
+- **Wake storms / token burn (high):** transition-only firing, hold coalescing, delivery
+  policies, rate caps, TTLs.
+- GitHub rate limits: one shared poll per repo; etag polling.
+- Zombie subscriptions: task-scoped die with the task; wider scopes get TTL + visible list.
+- Not to be confused with the typed main→renderer push-bus redesign
+  (`decisions/2026/07/16/typed-push-bus-design.md`) — a sibling, kept separate.
