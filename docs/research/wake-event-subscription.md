@@ -56,6 +56,31 @@ EventSubscription {
 Storage: task-scoped on the `Task` record (the `scheduledMessages` pattern); project/space/global
 in a new **additive** file — no renames, no format changes to existing files (on-disk invariants).
 
+#### Scope is exactly four levels, and a column is not one of them
+
+`global > space > project > task`, matching the product's own object model — the same four levels
+the control-center overlay pre-filters by. A subscription belongs to exactly one, and a narrower
+scope never inherits a wider one's subscriptions: a project-scoped subscription fires once for the
+project, it is not silently copied onto each of its tasks.
+
+**A Kanban column is deliberately not a scope.** It is a view of task state inside one project,
+it is renameable and user-created, and a subscription keyed to it would break the moment someone
+reorganises the board. The thing people actually want from "watch this column" is already
+expressible without a new scope, as a **filter on a project-scoped subscription**:
+
+```
+scope:  { kind: "project", id: … }
+source: "task-lifecycle"
+filter: { all: [ { path: "payload.toColumn", op: "eq", value: "review-by-ai" } ] }
+```
+
+So a column may appear in a `filter` (which tasks moved where) and in an `action`
+(`move-column`, where the event pushes a task), but never in `scope`. Same reasoning excludes
+label, agent, and priority: those are filter dimensions over a project's events, not owners of
+subscriptions. The test for a scope is ownership and lifetime — who deletes it and when it dies —
+and only the four objects above answer that: a task subscription dies with its worktree, a project
+one with the project, a space one with the space, a global one only when the user removes it.
+
 ### Filters — generic condition tree
 
 ```
