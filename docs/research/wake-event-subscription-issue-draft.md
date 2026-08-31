@@ -218,5 +218,42 @@ pulls `jsonpath-plus`; `rulepilot` (MIT, zero deps) is the fallback if a library
 4. Is a lossy (webhook-only, unpollable) source acceptable at all, or should it be refused rather
    than marked?
 
+### Open questions specifically about downtime
+
+dev3 is a desktop app: it is closed overnight, sleeps, and reboots. The mechanics above are
+implementable, but the *policy* is a product judgment and I would rather have it decided than
+assumed.
+
+5. **Should dev3 reconstruct the sequence at all, or only ever report current state?** The
+   maximal reading replays what happened while the app was down (per-source, where the source
+   keeps history). The minimal reading is that a desktop app should never pretend it was watching:
+   on startup it re-reads current state and delivers one "here is where things stand now"
+   envelope, and no subscription ever claims to have seen the intervening steps. The minimal
+   version is much less code and much harder to get wrong; the cost is that "a review was left and
+   then withdrawn" becomes invisible. My inclination is minimal-by-default with replay opt-in per
+   waker, but this is the load-bearing decision for everything else here.
+6. **What is the right default `catchUp` per waker kind?** A nightly maintenance cron probably
+   wants to run 5 hours late (`run-once`); a 09:00 PR digest probably does not want to fire at
+   14:00 (`skip-stale`, grace ~30 min); an hourly health poll wants the ten missed fires collapsed
+   into one (`coalesce`). Those are my guesses — are they yours? And should a waker be allowed to
+   have *no* default, forcing the author to choose?
+7. **Should `dev3 event emit` spool to disk when the app is down, or just fail?** Spooling means a
+   deploy script that finishes at 03:00 is not lost, at the cost of a small on-disk queue with its
+   own TTL, capping, and a "these arrived late" path. Failing loudly is simpler and keeps the app
+   the only writer, but the event is gone and the script usually cannot retry. Related: if it does
+   spool, should an event older than its TTL be delivered as history, or dropped with a note?
+8. **How much friction should a replayed side effect carry?** `deliver-to-agent` and `notify` are
+   safe to replay collapsed. `launch-task` and `move-column` are not: ten missed `issue-opened`
+   events would otherwise create ten tasks, and a queued `move-column` can fight board changes the
+   user made in the meantime. I proposed coalescing to one plus a confirmation above a threshold —
+   but should replayed side-effecting actions instead be **skipped by default** and merely
+   reported, on the grounds that anything the user did on the board while dev3 was open outranks a
+   stale queued intent?
+9. **How should this be surfaced without becoming noise?** A restart after three days away could
+   otherwise open with a wall of notices. Currently: one "dev3 was closed HH:MM → HH:MM, N fires
+   missed" summary with per-waker verdicts and a `Run skipped now` action, plus a startup toast
+   (the ruled path for missed automation runs). Is one summary per restart right, or should quiet
+   verdicts (`skip-stale`, `drop`) be logged only and never shown?
+
 Full research notes, an open-source survey, and mocks rendered in the real UI are on the branch
 `docs/dev3-wake-event-subscription-research` (`docs/research/wake-event-subscription.md`).
