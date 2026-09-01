@@ -43,10 +43,12 @@ export function safeHttpUri(raw: string): string | undefined {
 /**
  * Accept a local-machine file URI (`pathToFileURL` output — Claude Code wraps
  * every file path it prints in one). Same control-character rules as
- * `safeHttpUri`; a non-empty host other than "localhost" is a remote (UNC)
- * target and is rejected. Activation never opens these as URLs — they are
- * converted back to a path and go through the terminal-path resolve flow,
- * which enforces the allowed-roots policy on the backend.
+ * `safeHttpUri`; a host other than "localhost" is a remote (UNC) target and is
+ * rejected — the authority form only, `file:////server/share` carries no host
+ * and stays a path the backend then refuses for being outside the allowed
+ * roots. Activation never opens these as URLs — they are converted back to a
+ * path and go through the terminal-path resolve flow, which enforces the
+ * allowed-roots policy on the backend.
  */
 export function safeFileUri(raw: string): string | undefined {
 	// eslint-disable-next-line no-control-regex
@@ -66,8 +68,9 @@ export function safeOsc8Uri(raw: string): string | undefined {
 }
 
 // file.ts:12 or file.ts:12:5 baked into the URI path — same convention the
-// file-path link provider strips before stat().
-const FILE_URI_LINE_SUFFIX = /:(\d+)(?::\d+)?$/;
+// file-path link provider strips before stat(). Bounded: an editor has no use
+// for a line number wider than the digits any real file could carry.
+const FILE_URI_LINE_SUFFIX = /:(\d{1,9})(?::\d+)?$/;
 
 /**
  * Convert a `file://` URI back to a local filesystem path, with an optional
@@ -82,6 +85,11 @@ export function fileUriToLocalPath(uri: string): { path: string; line?: number }
 	} catch {
 		return undefined;
 	}
+	// Decoding re-introduces what safeFileUri rejected in the raw URI: "%00"
+	// and "%0A" pass the check above and come back out as a NUL or a newline.
+	// A space is legitimate here, so this is the tighter set, not the same one.
+	// eslint-disable-next-line no-control-regex
+	if (/[\x00-\x1f\x7f]/.test(pathname)) return undefined;
 	// pathToFileURL on Windows yields "/C:/dir/file"; the leading slash is not
 	// part of the path there.
 	const path = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
@@ -311,6 +319,12 @@ export function createOsc8LinkProvider(opts: {
 	 */
 	isRowWrapped?: (y: number) => boolean | undefined;
 	uriFor: (label: string) => string | undefined;
+	/**
+	 * The cell a click landed on. ghostty-web caches links by hyperlink id and
+	 * gives every OSC 8 link the same id, so the ILink it hands to `activate`
+	 * is whichever one was scanned first — see the re-resolve in `activate`.
+	 */
+	cellFromEvent?: (event: MouseEvent) => { y: number; x: number } | undefined;
 	onActivate: (uri: string, event: MouseEvent) => void;
 }): Osc8LinkProvider {
 	function wrapsToNext(y: number): boolean {
@@ -389,6 +403,14 @@ export function createOsc8LinkProvider(opts: {
 		return links;
 	}
 
+	function linkAt(y: number, x: number): Osc8RowLink | undefined {
+		try {
+			return linksForRow(y).find((link) => x >= link.x0 && x <= link.x1);
+		} catch {
+			return undefined;
+		}
+	}
+
 	return {
 		provideLinks(y: number, callback: (links: ILink[] | undefined) => void): void {
 			try {
@@ -399,7 +421,15 @@ export function createOsc8LinkProvider(opts: {
 						// ghostty hit-tests a multi-row range as whole rows.
 						range: { start: { x: x0, y }, end: { x: x1, y } },
 						activate: (event: MouseEvent) => {
-							if (event.ctrlKey || event.metaKey) opts.onActivate(uri, event);
+							if (!(event.ctrlKey || event.metaKey)) return;
+							// This closure may belong to a different link: ghostty-web
+							// keys its link cache by hyperlink id, every OSC 8 link on
+							// screen carries the same id, and the cache is answered
+							// before the clicked row is scanned. So the cell under the
+							// cursor decides, not this row's capture.
+							const cell = opts.cellFromEvent?.(event);
+							const hit = cell ? linkAt(cell.y, cell.x) : undefined;
+							opts.onActivate(hit?.uri ?? uri, event);
 						},
 					}),
 				);
@@ -408,12 +438,6 @@ export function createOsc8LinkProvider(opts: {
 				callback(undefined);
 			}
 		},
-		linkAt(y: number, x: number): Osc8RowLink | undefined {
-			try {
-				return linksForRow(y).find((link) => x >= link.x0 && x <= link.x1);
-			} catch {
-				return undefined;
-			}
-		},
+		linkAt,
 	};
 }

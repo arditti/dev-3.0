@@ -47,10 +47,11 @@ import { imageFilesFromClipboard } from "./utils/clipboardImageFiles";
 import { createAnsiThemeFilter } from "./utils/ansi-theme-adapt";
 import { submitPastedText } from "./terminal-submit";
 import { createFilePathLinkProvider, type FilePathLinkProvider } from "./terminal-file-links";
-import { createOsc8Tracker, createOsc8LinkProvider, fileUriToLocalPath } from "./terminal-osc8-links";
+import { createOsc8Tracker, createOsc8LinkProvider } from "./terminal-osc8-links";
+import { cellFromMouseEvent } from "./terminal-cell-hit";
 import { installOsc8HoverTooltip, type Osc8HoverHandle } from "./terminal-osc8-hover";
 import { installFilePathUnderlines, type FilePathUnderlinesHandle } from "./terminal-link-underlines";
-import { activateTerminalPath } from "./terminal-path-open";
+import { activateTerminalPath, activateOsc8Uri } from "./terminal-path-open";
 import { isRemote } from "./utils/platform";
 import { paneHighlightRect, type PaneRectPct } from "./utils/paneHighlight";
 import TerminalSearchBar, { type TerminalSearchBarHandle } from "./components/TerminalSearchBar";
@@ -808,28 +809,9 @@ function TerminalView({ ptyUrl, taskId, projectId, onReady, onNativeStatus, onSe
 					return term.buffer.active.getLine(y)?.isWrapped;
 				},
 				uriFor: osc8Tracker.uriFor,
+				cellFromEvent: (event) => cellFromMouseEvent(term, event),
 				onActivate: (uri) => {
-					// Agents wrap printed file paths in file:// hyperlinks (Claude
-					// Code does since FORCE_HYPERLINK=1); those open like Cmd+Clicked
-					// plain paths, through the same resolve + allowed-roots gate.
-					const file = fileUriToLocalPath(uri);
-					if (!file) {
-						window.open(uri, "_blank", "noopener,noreferrer");
-						return;
-					}
-					void (async () => {
-						try {
-							const { resolved } = await api.request.resolveTerminalPaths({ taskId, projectId, paths: [file.path] });
-							const target = resolved[file.path];
-							if (target) {
-								await activateTerminalPath(target, tRef.current, file.line, taskId);
-							} else {
-								toast.error(tRef.current("terminal.fileLinkNotFound", { path: file.path }), { taskId, source: "terminal" });
-							}
-						} catch (err) {
-							toast.error(tRef.current("terminal.pathLinkOpenFailed", { error: String(err) }), { taskId, source: "terminal" });
-						}
-					})();
+					void activateOsc8Uri(uri, { t: tRef.current, taskId, projectId });
 				},
 			});
 			term.registerLinkProvider(osc8Provider);

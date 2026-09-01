@@ -163,6 +163,40 @@ describe("createOsc8LinkProvider", () => {
 		expect(onActivate).toHaveBeenCalledWith("https://x.dev", expect.anything());
 	});
 
+	it("activates the link under the cursor, not the ILink it was handed", () => {
+		// ghostty-web keys its link cache by hyperlink id and gives every OSC 8
+		// link on screen the same id, so a click in row 1 arrives carrying the
+		// ILink built for row 0. The cell under the cursor has to win, or the
+		// hover tooltip promises one target and the click opens another.
+		const rows: Record<number, HyperlinkLine> = {
+			0: lineOf("ONE", [1, 1, 1]),
+			1: lineOf("TWO", [1, 1, 1]),
+		};
+		const uriFor = (label: string) =>
+			label === "ONE" ? "file:///tmp/one.txt" : label === "TWO" ? "file:///tmp/two.txt" : undefined;
+		const onActivate = vi.fn();
+		const provider = createOsc8LinkProvider({
+			getLine: (row) => rows[row],
+			isRowWrapped: () => false,
+			uriFor,
+			cellFromEvent: () => ({ y: 1, x: 0 }),
+			onActivate,
+		});
+		let links: ILink[] = [];
+		provider.provideLinks(0, (found) => {
+			links = found ?? [];
+		});
+		expect(links[0].text).toBe("file:///tmp/one.txt");
+		links[0].activate(new MouseEvent("click", { metaKey: true }));
+		expect(onActivate).toHaveBeenCalledWith("file:///tmp/two.txt", expect.anything());
+	});
+
+	it("keeps its own URI when the click lands on no link at all", () => {
+		const { links, onActivate } = collectLinks({ 0: lineOf("#7", [1, 1]) }, () => "https://x.dev", 0);
+		links[0].activate(new MouseEvent("click", { metaKey: true }));
+		expect(onActivate).toHaveBeenCalledWith("https://x.dev", expect.anything());
+	});
+
 	it("falls back to the label itself when it is a safe URI", () => {
 		const text = "https://self.dev";
 		const { links } = collectLinks({ 0: lineOf(text, text.split("").map(() => 2)) }, () => undefined, 0);
@@ -336,6 +370,21 @@ describe("fileUriToLocalPath", () => {
 	it("carries a trailing :line[:col] suffix out separately", () => {
 		expect(fileUriToLocalPath("file:///a/b.ts:12")).toEqual({ path: "/a/b.ts", line: 12 });
 		expect(fileUriToLocalPath("file:///a/b.ts:12:5")).toEqual({ path: "/a/b.ts", line: 12 });
+	});
+
+	it("rejects a path whose decoding re-introduces a control character", () => {
+		// safeFileUri sees the encoded form and passes it; the NUL and the
+		// newline only exist after decodeURIComponent. A space is legitimate.
+		expect(fileUriToLocalPath("file:///tmp/a%00b")).toBeUndefined();
+		expect(fileUriToLocalPath("file:///tmp/a%0Ab")).toBeUndefined();
+		expect(fileUriToLocalPath("file:///tmp/a%20b")).toEqual({ path: "/tmp/a b" });
+	});
+
+	it("leaves an absurd line suffix as part of the path instead of parsing it", () => {
+		expect(fileUriToLocalPath("file:///a/b.ts:99999999999999999999")).toEqual({
+			path: "/a/b.ts:99999999999999999999",
+		});
+		expect(fileUriToLocalPath("file:///a/b.ts:999999999")).toEqual({ path: "/a/b.ts", line: 999_999_999 });
 	});
 
 	it("rejects what safeFileUri rejects, and undecodable paths", () => {
