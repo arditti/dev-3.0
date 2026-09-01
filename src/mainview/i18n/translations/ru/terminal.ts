@@ -258,6 +258,8 @@ const terminal = {
 	// File path links in terminal output (Cmd/Ctrl+Click)
 	"terminal.pathLinkFolderBrowser": "Папки нельзя открыть из браузера — используйте настольное приложение.",
 	"terminal.pathLinkOpenFailed": "Не удалось открыть путь: {error}",
+	"terminal.fileLinkNotFound": "Не удалось открыть {path} — файла нет или он вне разрешённых папок.",
+	"terminal.fileLinkUnreadable": "Эта ссылка не похожа на путь к файлу: {uri}",
 	"terminal.filePreviewLoading": "Загрузка предпросмотра…",
 	"terminal.filePreviewNotFound": "Файл не найден — возможно, его переместили или удалили.",
 	"terminal.filePreviewBinary": "Двоичный файл ({size}) — предпросмотр недоступен.",

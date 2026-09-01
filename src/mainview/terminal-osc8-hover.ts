@@ -1,5 +1,5 @@
 import type { Terminal } from "ghostty-web";
-import { viewportRowToAbsolute } from "./terminal-link-underlines";
+import { cellFromMouseEvent } from "./terminal-cell-hit";
 import type { Osc8RowLink } from "./terminal-osc8-links";
 
 /**
@@ -46,12 +46,10 @@ export function installOsc8HoverTooltip(opts: {
 		const renderer = term.renderer;
 		const canvas = renderer?.getCanvas();
 		if (!renderer || !canvas || !renderer.charWidth || !renderer.charHeight) return hide();
-		const rect = canvas.getBoundingClientRect();
-		const col = Math.floor((e.clientX - rect.left) / renderer.charWidth);
-		const viewportRow = Math.floor((e.clientY - rect.top) / renderer.charHeight);
-		if (col < 0 || col >= term.cols || viewportRow < 0 || viewportRow >= term.rows) return hide();
-		const scrollback = Math.max(0, term.buffer.active.length - term.rows);
-		const link = linkAt(viewportRowToAbsolute(viewportRow, term.viewportY, scrollback), col);
+		const cell = cellFromMouseEvent(term, e);
+		if (!cell) return hide();
+		const { viewportRow } = cell;
+		const link = linkAt(cell.y, cell.x);
 		if (!link) return hide();
 		if (link.uri !== shownUri) {
 			shownUri = link.uri;

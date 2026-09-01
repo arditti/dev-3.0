@@ -248,6 +248,8 @@ const terminal = {
 	// File path links in terminal output (Cmd/Ctrl+Click)
 	"terminal.pathLinkFolderBrowser": "Las carpetas no se pueden abrir desde el navegador — usa la aplicación de escritorio.",
 	"terminal.pathLinkOpenFailed": "No se pudo abrir la ruta: {error}",
+	"terminal.fileLinkNotFound": "No se puede abrir {path}: no existe o está fuera de las carpetas permitidas.",
+	"terminal.fileLinkUnreadable": "Ese enlace no es una ruta de archivo legible: {uri}",
 	"terminal.filePreviewLoading": "Cargando vista previa…",
 	"terminal.filePreviewNotFound": "Archivo no encontrado — puede que se haya movido o eliminado.",
 	"terminal.filePreviewBinary": "Archivo binario ({size}) — vista previa no disponible.",

@@ -3,6 +3,8 @@ import {
 	createOsc8Tracker,
 	createOsc8LinkProvider,
 	safeHttpUri,
+	safeFileUri,
+	fileUriToLocalPath,
 	type HyperlinkLine,
 } from "../terminal-osc8-links";
 import type { ILink } from "ghostty-web";
@@ -161,6 +163,40 @@ describe("createOsc8LinkProvider", () => {
 		expect(onActivate).toHaveBeenCalledWith("https://x.dev", expect.anything());
 	});
 
+	it("activates the link under the cursor, not the ILink it was handed", () => {
+		// ghostty-web keys its link cache by hyperlink id and gives every OSC 8
+		// link on screen the same id, so a click in row 1 arrives carrying the
+		// ILink built for row 0. The cell under the cursor has to win, or the
+		// hover tooltip promises one target and the click opens another.
+		const rows: Record<number, HyperlinkLine> = {
+			0: lineOf("ONE", [1, 1, 1]),
+			1: lineOf("TWO", [1, 1, 1]),
+		};
+		const uriFor = (label: string) =>
+			label === "ONE" ? "file:///tmp/one.txt" : label === "TWO" ? "file:///tmp/two.txt" : undefined;
+		const onActivate = vi.fn();
+		const provider = createOsc8LinkProvider({
+			getLine: (row) => rows[row],
+			isRowWrapped: () => false,
+			uriFor,
+			cellFromEvent: () => ({ y: 1, x: 0 }),
+			onActivate,
+		});
+		let links: ILink[] = [];
+		provider.provideLinks(0, (found) => {
+			links = found ?? [];
+		});
+		expect(links[0].text).toBe("file:///tmp/one.txt");
+		links[0].activate(new MouseEvent("click", { metaKey: true }));
+		expect(onActivate).toHaveBeenCalledWith("file:///tmp/two.txt", expect.anything());
+	});
+
+	it("keeps its own URI when the click lands on no link at all", () => {
+		const { links, onActivate } = collectLinks({ 0: lineOf("#7", [1, 1]) }, () => "https://x.dev", 0);
+		links[0].activate(new MouseEvent("click", { metaKey: true }));
+		expect(onActivate).toHaveBeenCalledWith("https://x.dev", expect.anything());
+	});
+
 	it("falls back to the label itself when it is a safe URI", () => {
 		const text = "https://self.dev";
 		const { links } = collectLinks({ 0: lineOf(text, text.split("").map(() => 2)) }, () => undefined, 0);
@@ -169,14 +205,26 @@ describe("createOsc8LinkProvider", () => {
 	});
 
 	it("drops unknown labels and unsafe URIs", () => {
-		const text = "#9 file";
+		const text = "#9 evil";
 		const ids = [1, 1, 0, 3, 3, 3, 3];
 		const { links } = collectLinks(
 			{ 0: lineOf(text, ids) },
-			(l) => (l === "file" ? "file:///etc/passwd" : undefined),
+			(l) => (l === "evil" ? "javascript:alert(1)" : undefined),
 			0,
 		);
 		expect(links).toHaveLength(0);
+	});
+
+	it("produces a link for a file:// URI (agents wrap printed paths in them)", () => {
+		const text = "read a.png ok";
+		const ids = [0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 0, 0, 0];
+		const { links } = collectLinks(
+			{ 0: lineOf(text, ids) },
+			(l) => (l === "a.png" ? "file:///tmp/mock%20dir/a.png" : undefined),
+			0,
+		);
+		expect(links).toHaveLength(1);
+		expect(links[0].text).toBe("file:///tmp/mock%20dir/a.png");
 	});
 
 	it("stitches a wrapped link across rows to resolve the full label", () => {
@@ -289,5 +337,59 @@ describe("safeHttpUri", () => {
 	it("rejects non-URLs", () => {
 		expect(safeHttpUri("#3226")).toBeUndefined();
 		expect(safeHttpUri("https://")).toBeUndefined();
+	});
+});
+
+describe("safeFileUri", () => {
+	it("accepts local file URIs, empty or localhost host", () => {
+		expect(safeFileUri("file:///tmp/a.png")).toBe("file:///tmp/a.png");
+		expect(safeFileUri("file://localhost/tmp/a.png")).toBe("file://localhost/tmp/a.png");
+	});
+
+	it("rejects remote hosts, other schemes, and control characters", () => {
+		expect(safeFileUri("file://evil.example/share/x")).toBeUndefined();
+		expect(safeFileUri("https://a.dev")).toBeUndefined();
+		expect(safeFileUri("file:///tmp/a b.png")).toBeUndefined();
+		expect(safeFileUri("file:///tmp/a\nb.png")).toBeUndefined();
+	});
+});
+
+describe("fileUriToLocalPath", () => {
+	it("converts a pathToFileURL-style URI back to a path", () => {
+		expect(fileUriToLocalPath("file:///tmp/mock-cc-global.png")).toEqual({ path: "/tmp/mock-cc-global.png" });
+	});
+
+	it("percent-decodes the path", () => {
+		expect(fileUriToLocalPath("file:///tmp/mock%20dir/a.png")).toEqual({ path: "/tmp/mock dir/a.png" });
+	});
+
+	it("strips the leading slash of a Windows drive path", () => {
+		expect(fileUriToLocalPath("file:///C:/dir/file.ts")).toEqual({ path: "C:/dir/file.ts" });
+	});
+
+	it("carries a trailing :line[:col] suffix out separately", () => {
+		expect(fileUriToLocalPath("file:///a/b.ts:12")).toEqual({ path: "/a/b.ts", line: 12 });
+		expect(fileUriToLocalPath("file:///a/b.ts:12:5")).toEqual({ path: "/a/b.ts", line: 12 });
+	});
+
+	it("rejects a path whose decoding re-introduces a control character", () => {
+		// safeFileUri sees the encoded form and passes it; the NUL and the
+		// newline only exist after decodeURIComponent. A space is legitimate.
+		expect(fileUriToLocalPath("file:///tmp/a%00b")).toBeUndefined();
+		expect(fileUriToLocalPath("file:///tmp/a%0Ab")).toBeUndefined();
+		expect(fileUriToLocalPath("file:///tmp/a%20b")).toEqual({ path: "/tmp/a b" });
+	});
+
+	it("leaves an absurd line suffix as part of the path instead of parsing it", () => {
+		expect(fileUriToLocalPath("file:///a/b.ts:99999999999999999999")).toEqual({
+			path: "/a/b.ts:99999999999999999999",
+		});
+		expect(fileUriToLocalPath("file:///a/b.ts:999999999")).toEqual({ path: "/a/b.ts", line: 999_999_999 });
+	});
+
+	it("rejects what safeFileUri rejects, and undecodable paths", () => {
+		expect(fileUriToLocalPath("https://a.dev/x")).toBeUndefined();
+		expect(fileUriToLocalPath("file://evil.example/x")).toBeUndefined();
+		expect(fileUriToLocalPath("file:///tmp/%zz")).toBeUndefined();
 	});
 });
