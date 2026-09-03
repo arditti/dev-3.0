@@ -1,5 +1,13 @@
 # A long agent message carries a receipt, because we cannot promise it arrives whole
 
+> Superseded on 2026-09-03 by
+> [`decisions/2026/09/03/spill-at-the-pty-chunk-boundary.md`](../../09/03/spill-at-the-pty-chunk-boundary.md):
+> the mechanism was found (Claude Code drops the folded first ~1 KiB pty chunk at submit), so
+> nothing longer than one pty read is typed at all any more. **The receipt described here no
+> longer exists** — `writeAgentMessageReceipt`, `AGENT_MESSAGE_RECEIPT_*` and the `<full-copy>`
+> tag are deleted; the spill file is the only copy, and it is now the normal path for a long
+> message rather than a fallback.
+
 ## Context
 
 Issue #1608 (@yhattav, dev3 v1.35.1, tmux, macOS): roughly one in three `dev3 message`
