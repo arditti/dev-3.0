@@ -18,7 +18,6 @@ function ScrollToLatestButton({ onClick }: ScrollToLatestButtonProps) {
 			onMouseDown={(e) => e.preventDefault()}
 			onClick={onClick}
 			aria-label={t("terminal.scrollToLatest")}
-			title={t("terminal.scrollToLatest")}
 			data-testid="scroll-to-latest"
 			className="absolute right-3 bottom-14 z-20 w-12 h-12 rounded-full bg-accent-fill text-white shadow-lg shadow-black/40 flex items-center justify-center transition-transform active:scale-[0.96] hover:bg-accent-fill-hover"
 			style={{ marginBottom: "env(safe-area-inset-bottom)" }}

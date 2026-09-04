@@ -878,6 +878,61 @@ describe("TerminalView – scrolled-into-history signal (touch scroll-to-latest)
 		expect(mockedExitCopyModeAllPanes).not.toHaveBeenCalled();
 	});
 
+	// A second send arriving inside the cancel's round trip used to read the
+	// already-cleared flag, take the synchronous path, and land in copy-mode.
+	it("a second send inside the cancel round trip waits for the same request", async () => {
+		mockTermInstance.hasMouseTracking.mockReturnValue(true);
+		const { handle, wheelHandler } = await renderWithSignal();
+		act(() => { wheelHandler({ deltaY: -100, clientX: 20, clientY: 20 } as WheelEvent); });
+
+		let release!: () => void;
+		mockedExitCopyModeAllPanes.mockClear();
+		mockedExitCopyModeAllPanes.mockReturnValue(
+			new Promise<{ panesExited: number }>((resolve) => { release = () => resolve({ panesExited: 1 }); }),
+		);
+		mockPaste.mockClear();
+
+		handle.paste("first");
+		handle.paste("second");
+		expect(mockPaste).not.toHaveBeenCalled();
+		expect(mockedExitCopyModeAllPanes).toHaveBeenCalledTimes(1);
+
+		await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
+		expect(mockPaste.mock.calls.map((call) => call[0])).toEqual(["first", "second"]);
+		mockedExitCopyModeAllPanes.mockResolvedValue({ panesExited: 1 });
+	});
+
+	// The poll is the only tmux traffic this feature adds, and a pointer host
+	// never renders the button — so it must not arm there at all.
+	it("arms no poll when the host passes no signal (pointer input), but still exits on click", async () => {
+		mockTermInstance.hasMouseTracking.mockReturnValue(true);
+		let container!: HTMLElement;
+		await act(async () => {
+			const rendered = render(
+				<I18nProvider>
+					<TerminalView ptyUrl="ws://localhost:1234" taskId="t1" projectId="p1" />
+				</I18nProvider>,
+			);
+			container = rendered.container;
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		await act(async () => { fireResize?.(); });
+		const wheelCalls = mockTermInstance.attachCustomWheelEventHandler.mock.calls;
+		const wheelHandler = wheelCalls[wheelCalls.length - 1]?.[0] as (event: WheelEvent) => boolean;
+
+		// Fake timers only once the terminal is mounted: arming them earlier stalls setup.
+		vi.useFakeTimers();
+		act(() => { wheelHandler({ deltaY: -100, clientX: 20, clientY: 20 } as WheelEvent); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+		expect(vi.mocked(api.request.tmuxPanesInMode)).not.toHaveBeenCalled();
+
+		// The flag still armed the desktop path: a plain click leaves copy-mode.
+		mockedExitCopyModeAllPanes.mockClear();
+		fireEvent.click(container.querySelector('[data-terminal="true"]') as HTMLElement);
+		expect(mockedExitCopyModeAllPanes).toHaveBeenCalledWith({ taskId: "t1" });
+	});
+
 	it("ghostty's own scrollback raises the signal on viewportY > 0 and lowers it at 0", async () => {
 		const { onScrolledIntoHistory } = await renderWithSignal();
 		const scrollCalls = mockTermInstance.onScroll.mock.calls as unknown as [() => void][];

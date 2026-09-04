@@ -16,6 +16,9 @@ import ExtraKeyBar from "./ExtraKeyBar";
 import TerminalComposer, { type TerminalComposerApi } from "./TerminalComposer";
 import MobilePaneCarousel from "./MobilePaneCarousel";
 import ScrollToLatestButton from "./ScrollToLatestButton";
+
+/** Scroll-signal key for the tmux path, which renders one TerminalView for the whole session. */
+const TMUX_VIEW = "tmux-view";
 import MobileWindowCarousel from "./MobileWindowCarousel";
 import PaneZoomBadge from "./PaneZoomBadge";
 import ClosePanePicker from "./ClosePanePicker";
@@ -59,8 +62,26 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 	const t = useT();
 	const isTouchDevice = navigator.maxTouchPoints > 0;
 	const touchInput = !isElectrobun && isTouchDevice;
-	// The focused pane is scrolled into history — shows the touch scroll-to-latest button.
-	const [scrolledUp, setScrolledUp] = useState(false);
+	// Which pane is scrolled into history, by pane id (the single tmux view uses
+	// TMUX_VIEW). Keyed rather than a boolean: focus can move in the tiled layout
+	// while another pane is still scrolled up, and the button must never offer to
+	// scroll a pane that is already live.
+	const [scrolledUpKey, setScrolledUpKey] = useState<string | null>(null);
+	/**
+	 * Passed to a TerminalView as `onScrolledIntoHistory`. Undefined off touch —
+	 * its absence is what keeps the copy-mode poll from ever arming on a pointer.
+	 */
+	const scrollSignalFor = useCallback((key: string) => (
+		touchInput
+			? (scrolledUp: boolean) => setScrolledUpKey((prev) => (scrolledUp ? key : prev === key ? null : prev))
+			: undefined
+	), [touchInput]);
+	/** The one place the button's gate lives: the right pane, scrolled up, on touch. */
+	const scrollToLatestFor = useCallback((key: string, handle: TerminalHandle | null | undefined) => (
+		handle && scrolledUpKey === key
+			? <ScrollToLatestButton onClick={() => handle.scrollToBottom()} />
+			: null
+	), [scrolledUpKey]);
 	const [rawMode, setRawMode] = useState(false);
 	const composerApiRef = useRef<TerminalComposerApi | null>(null);
 	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
@@ -828,7 +849,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 							onNativeStatus={makePaneNativeStatusHandler(paneId)}
 							onSessionLost={() => markPaneGone(paneId)}
 							touchComposeMode={touchInput && !rawMode}
-							onScrolledIntoHistory={isFocused ? setScrolledUp : undefined}
+							onScrolledIntoHistory={scrollSignalFor(paneId)}
 						/>
 					) : (
 						<div className="flex items-center justify-center h-full">
@@ -861,7 +882,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					onNativeStatus={focusPaneId ? makePaneNativeStatusHandler(focusPaneId) : undefined}
 					onSessionLost={focusPaneId ? () => markPaneGone(focusPaneId) : undefined}
 					touchComposeMode={touchInput && !rawMode}
-					onScrolledIntoHistory={setScrolledUp}
+					onScrolledIntoHistory={focusPaneId ? scrollSignalFor(focusPaneId) : undefined}
 				/>
 			) : (
 				<div className="flex items-center justify-center h-full">
@@ -890,9 +911,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					)}
 					<div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
 						<MobilePaneCarousel taskId={taskId}>{nativeTerminalArea}</MobilePaneCarousel>
-						{touchInput && scrolledUp && focusedPaneHandle && (
-							<ScrollToLatestButton onClick={() => focusedPaneHandle.scrollToBottom()} />
-						)}
+						{scrollToLatestFor(focusPaneId ?? "", focusedPaneHandle)}
 					</div>
 					{setupFailedNotice}
 					{touchInput && focusedPaneHandle && (
@@ -995,9 +1014,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 							/>
 						)}
 						<ClosePanePicker taskId={taskId} />
-						{touchInput && scrolledUp && focusedPaneHandle && (
-							<ScrollToLatestButton onClick={() => focusedPaneHandle.scrollToBottom()} />
-						)}
+						{scrollToLatestFor(focusPaneId ?? "", focusedPaneHandle)}
 					</div>
 				) : (
 					// No panes yet (loading).
@@ -1041,7 +1058,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 			}}
 			onNativeStatus={handleNativeStatus}
 			touchComposeMode={touchInput && !rawMode}
-			onScrolledIntoHistory={setScrolledUp}
+			onScrolledIntoHistory={scrollSignalFor(TMUX_VIEW)}
 		/>
 	) : (
 		<div className="flex items-center justify-center h-full">
@@ -1075,9 +1092,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					<MobileWindowCarousel taskId={taskId} onSwitch={() => setWindowEpoch((e) => e + 1)}>
 						<MobilePaneCarousel taskId={taskId} refreshKey={windowEpoch}>{terminalArea}</MobilePaneCarousel>
 					</MobileWindowCarousel>
-					{touchInput && scrolledUp && termHandle && (
-						<ScrollToLatestButton onClick={() => termHandle.scrollToBottom()} />
-					)}
+					{scrollToLatestFor(TMUX_VIEW, termHandle)}
 					{setupFailedNotice}
 				</div>
 			) : (
@@ -1085,9 +1100,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					{terminalArea}
 					{ptyUrl && <PaneZoomBadge taskId={taskId} />}
 					{ptyUrl && <ClosePanePicker taskId={taskId} />}
-					{touchInput && scrolledUp && termHandle && (
-						<ScrollToLatestButton onClick={() => termHandle.scrollToBottom()} />
-					)}
+					{scrollToLatestFor(TMUX_VIEW, termHandle)}
 					{setupFailedNotice}
 				</div>
 			)}

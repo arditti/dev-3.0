@@ -155,6 +155,7 @@ vi.mock("../pty-server", () => ({
 	getSessionSocket: vi.fn(() => "dev3"),
 	getSessionTmuxName: vi.fn((key: string) => `dev3-${key.slice(0, 8)}`),
 	getSessionType: vi.fn(() => null),
+	isProjectSessionKey: vi.fn(() => false),
 	capturePane: vi.fn(),
 	applyTmuxTheme: vi.fn(),
 }));
@@ -8896,18 +8897,27 @@ describe("tmuxPaneCount", () => {
 describe("handlers.tmuxPanesInMode", () => {
 	beforeEach(() => vi.clearAllMocks());
 
-	function routeListPanes(out: string, exit = 0, opts?: { devSession?: string }) {
+	// clearAllMocks keeps implementations, so a per-test override of the session
+	// naming would leak into every later suite. Put the defaults back.
+	afterEach(() => {
+		vi.mocked(pty.getSessionTmuxName).mockImplementation((key: string) => `dev3-${key.slice(0, 8)}`);
+		vi.mocked(pty.isProjectSessionKey).mockReturnValue(false);
+	});
+
+	function routeListPanes(out: string, exit = 0, opts?: { devSession?: string; ownMissing?: boolean }) {
 		mockSpawn.mockImplementation((args: string[]) => {
 			const sub = args[3];
 			const target = args[args.indexOf("-t") + 1] ?? "";
+			const isDevSession = target.startsWith("dev3-dev-");
 			if (sub === "has-session") {
+				const exists = isDevSession ? opts?.devSession !== undefined : !opts?.ownMissing;
 				return {
 					stderr: new Response("").body,
 					stdout: new Response("").body,
-					exited: Promise.resolve(opts?.devSession === undefined ? 1 : 0),
+					exited: Promise.resolve(exists ? 0 : 1),
 				};
 			}
-			const body = sub !== "list-panes" ? "" : (target.startsWith("dev3-dev-") ? (opts?.devSession ?? "") : out);
+			const body = sub !== "list-panes" ? "" : (isDevSession ? (opts?.devSession ?? "") : out);
 			return {
 				stderr: new Response("").body,
 				stdout: new Response(body).body,
@@ -8943,9 +8953,27 @@ describe("handlers.tmuxPanesInMode", () => {
 		);
 	});
 
+	// The quick shell's key is `project-<id>`, whose session is `dev3-pt-<id>`.
+	// Resolving it as a task name reported "no session" for every quick shell,
+	// which made the scroll-to-latest button vanish one poll tick after appearing.
+	it("resolves a quick-shell key to its own dev3-pt session and probes no dev-server", async () => {
+		vi.mocked(pty.getSessionTmuxName).mockReturnValue("dev3-pt-abcd1234");
+		vi.mocked(pty.isProjectSessionKey).mockReturnValue(true);
+		routeListPanes("%7\t1\n");
+
+		await expect(handlers.tmuxPanesInMode({ taskId: "project-abcd1234-full" })).resolves.toEqual({ inMode: true });
+		expect(mockSpawn).toHaveBeenCalledWith(
+			["tmux", "-L", "dev3", "list-panes", "-s", "-t", "dev3-pt-abcd1234", "-F", "#{pane_id}\t#{pane_in_mode}"],
+			expect.any(Object),
+		);
+		expect(mockSpawn).not.toHaveBeenCalledWith(
+			expect.arrayContaining(["dev3-dev-abcd1234"]),
+			expect.any(Object),
+		);
+	});
+
 	it("reports false for a task without a tmux session (native backend) — no pane is listed", async () => {
-		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(false);
-		routeListPanes("");
+		routeListPanes("", 0, { ownMissing: true });
 		await expect(handlers.tmuxPanesInMode({ taskId: "abcd1234-full-id" })).resolves.toEqual({ inMode: false });
 		expect(mockSpawn).not.toHaveBeenCalledWith(expect.arrayContaining(["list-panes"]), expect.any(Object));
 	});
@@ -8961,7 +8989,8 @@ describe("handlers.exitCopyModeAllPanes", () => {
 	// Spawn router: matches by tmux subcommand so individual tests can declare
 	// what each tmux command should return without ordering fragility.
 	function setupSpawnRouter(routes: {
-		hasSession?: number; // exit code for has-session (dev-server check)
+		hasSession?: number; // exit code for the dev-server session probe
+		ownMissing?: boolean; // the terminal's own session does not exist
 		listTaskPanes?: { exit: number; out: string };
 		listDevPanes?: { exit: number; out: string };
 	}) {
@@ -8970,10 +8999,14 @@ describe("handlers.exitCopyModeAllPanes", () => {
 			const sessionArg = args[args.indexOf("-t") + 1] ?? "";
 
 			if (sub === "has-session") {
+				// Both sessions are probed the same way now, so answer per target.
+				const exit = sessionArg.startsWith("dev3-dev-")
+					? (routes.hasSession ?? 1)
+					: (routes.ownMissing ? 1 : 0);
 				return {
 					stderr: new Response("").body,
 					stdout: new Response("").body,
-					exited: Promise.resolve(routes.hasSession ?? 1),
+					exited: Promise.resolve(exit),
 				};
 			}
 			if (sub === "list-panes") {
@@ -9044,8 +9077,7 @@ describe("handlers.exitCopyModeAllPanes", () => {
 	});
 
 	it("no-op when neither task nor dev-server session exists", async () => {
-		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(false);
-		setupSpawnRouter({ hasSession: 1 });
+		setupSpawnRouter({ hasSession: 1, ownMissing: true });
 
 		const result = await handlers.exitCopyModeAllPanes({ taskId: "abcd1234-full-id" });
 

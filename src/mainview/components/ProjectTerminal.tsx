@@ -22,6 +22,8 @@ function ProjectTerminal({ projectId, projectPath, onBack }: ProjectTerminalProp
 	// Same touch input model as TaskTerminal: compose mode by default, ⌨ raw toggle.
 	const touchInput = !isElectrobun && navigator.maxTouchPoints > 0;
 	const [scrolledUp, setScrolledUp] = useState(false);
+	// Undefined off touch: its absence keeps the copy-mode poll from arming on a pointer.
+	const scrollSignal = touchInput ? setScrolledUp : undefined;
 	const [termHandle, setTermHandle] = useState<TerminalHandle | null>(null);
 	const [rawMode, setRawMode] = useState(false);
 	const composerApiRef = useRef<TerminalComposerApi | null>(null);
@@ -140,7 +142,7 @@ function ProjectTerminal({ projectId, projectPath, onBack }: ProjectTerminalProp
 						projectId={projectId}
 						onReady={setTermHandle}
 						touchComposeMode={touchInput && !rawMode}
-						onScrolledIntoHistory={setScrolledUp}
+						onScrolledIntoHistory={scrollSignal}
 					/>
 				) : (
 					<div className="flex items-center justify-center h-full">
@@ -150,7 +152,7 @@ function ProjectTerminal({ projectId, projectPath, onBack }: ProjectTerminalProp
 						</div>
 					</div>
 				)}
-				{touchInput && scrolledUp && termHandle && (
+				{scrolledUp && termHandle && (
 					<ScrollToLatestButton onClick={() => termHandle.scrollToBottom()} />
 				)}
 			</div>

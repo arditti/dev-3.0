@@ -2503,6 +2503,23 @@ async function tmuxAltClickMoveCursor(params: { taskId: string; col: number; row
 	return { moved: true };
 }
 
+/**
+ * Every tmux session whose panes a terminal key owns: the session itself, plus
+ * the task's detached dev-server sibling (the window users most often scroll).
+ * Registry-aware, so a quick shell resolves to its own `dev3-pt-<id>` instead of
+ * a task name that cannot exist — asking `tmuxSessionExists` here reported "no
+ * session" for every quick shell and made copy-mode invisible there.
+ */
+async function copyModeSessions(key: string, socket: string): Promise<string[]> {
+	const found: string[] = [];
+	const own = pty.getSessionTmuxName(key);
+	if (await tmux.hasSession(own, { socket })) found.push(own);
+	if (pty.isProjectSessionKey(key)) return found;
+	const devSession = devServerSessionName(key);
+	if (await tmux.hasSession(devSession, { socket })) found.push(devSession);
+	return found;
+}
+
 async function exitCopyModeInSession(socket: string, tmuxSession: string): Promise<number> {
 	let panesInMode: string[];
 	try {
@@ -2528,19 +2545,7 @@ async function exitCopyModeInSession(socket: string, tmuxSession: string): Promi
  */
 async function tmuxPanesInMode(params: { taskId: string }): Promise<{ inMode: boolean }> {
 	const socket = pty.getSessionSocket(params.taskId);
-	// Both sessions, same reason exitCopyModeAllPanes visits both: the pane the
-	// user scrolled is often the dev-server's (dev3-dev-<id>), and answering for
-	// the agent session alone reports "live" for a pane that is still in copy-mode.
-	const sessions: string[] = [];
-	if (await pty.tmuxSessionExists(params.taskId, socket)) {
-		sessions.push(pty.getSessionTmuxName(params.taskId));
-	}
-	const devSession = devServerSessionName(params.taskId);
-	if (await tmux.hasSession(devSession, { socket })) {
-		sessions.push(devSession);
-	}
-
-	for (const session of sessions) {
+	for (const session of await copyModeSessions(params.taskId, socket)) {
 		try {
 			const rows = await tmux.listPanes(PANE_IN_MODE_FORMAT, { target: session, scope: "session", socket });
 			if (rows.some((row) => row.paneId && row.inMode)) return { inMode: true };
@@ -2553,20 +2558,9 @@ async function tmuxPanesInMode(params: { taskId: string }): Promise<{ inMode: bo
 
 async function exitCopyModeAllPanes(params: { taskId: string }): Promise<{ panesExited: number }> {
 	const socket = pty.getSessionSocket(params.taskId);
-	const taskSession = pty.getSessionTmuxName(params.taskId);
-	const devSession = devServerSessionName(params.taskId);
-
-	// dev-server lives in a separate tmux session (dev3-dev-<id>) — the user's
-	// scroll-mode is typically there, not in the agent session. Hit both. Copy
-	// mode is a tmux concept, so a native task has neither session to visit and
-	// this whole handler is a no-op for it.
-	const sessions: string[] = [];
-	if (await pty.tmuxSessionExists(params.taskId, socket)) {
-		sessions.push(taskSession);
-	}
-	if (await tmux.hasSession(devSession, { socket })) {
-		sessions.push(devSession);
-	}
+	// Copy mode is a tmux concept, so a native task owns no session here and this
+	// whole handler is a no-op for it.
+	const sessions = await copyModeSessions(params.taskId, socket);
 
 	let total = 0;
 	for (const session of sessions) {
