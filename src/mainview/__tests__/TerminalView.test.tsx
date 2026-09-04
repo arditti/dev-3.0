@@ -818,8 +818,8 @@ describe("TerminalView – scrolled-into-history signal (touch scroll-to-latest)
 			await Promise.resolve();
 		});
 		await act(async () => { fireResize?.(); });
-		const wheelHandler = mockTermInstance.attachCustomWheelEventHandler.mock.calls.at(-1)?.[0] as
-			(event: WheelEvent) => boolean;
+		const wheelCalls = mockTermInstance.attachCustomWheelEventHandler.mock.calls;
+		const wheelHandler = wheelCalls[wheelCalls.length - 1]?.[0] as (event: WheelEvent) => boolean;
 		return { onScrolledIntoHistory, handle: handle!, wheelHandler };
 	}
 
@@ -880,7 +880,8 @@ describe("TerminalView – scrolled-into-history signal (touch scroll-to-latest)
 
 	it("ghostty's own scrollback raises the signal on viewportY > 0 and lowers it at 0", async () => {
 		const { onScrolledIntoHistory } = await renderWithSignal();
-		const onScroll = mockTermInstance.onScroll.mock.calls.at(-1)?.[0] as () => void;
+		const scrollCalls = mockTermInstance.onScroll.mock.calls as unknown as [() => void][];
+		const onScroll = scrollCalls[scrollCalls.length - 1][0];
 		mockTermInstance.viewportY = 12;
 		act(() => { onScroll(); });
 		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(true);

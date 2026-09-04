@@ -8896,12 +8896,24 @@ describe("tmuxPaneCount", () => {
 describe("handlers.tmuxPanesInMode", () => {
 	beforeEach(() => vi.clearAllMocks());
 
-	function routeListPanes(out: string, exit = 0) {
-		mockSpawn.mockImplementation((args: string[]) => ({
-			stderr: new Response("").body,
-			stdout: new Response(args[3] === "list-panes" ? out : "").body,
-			exited: Promise.resolve(args[3] === "list-panes" ? exit : 0),
-		}));
+	function routeListPanes(out: string, exit = 0, opts?: { devSession?: string }) {
+		mockSpawn.mockImplementation((args: string[]) => {
+			const sub = args[3];
+			const target = args[args.indexOf("-t") + 1] ?? "";
+			if (sub === "has-session") {
+				return {
+					stderr: new Response("").body,
+					stdout: new Response("").body,
+					exited: Promise.resolve(opts?.devSession === undefined ? 1 : 0),
+				};
+			}
+			const body = sub !== "list-panes" ? "" : (target.startsWith("dev3-dev-") ? (opts?.devSession ?? "") : out);
+			return {
+				stderr: new Response("").body,
+				stdout: new Response(body).body,
+				exited: Promise.resolve(sub === "list-panes" ? exit : 0),
+			};
+		});
 	}
 
 	it("reports true when any pane of the task session is in copy-mode", async () => {
@@ -8921,10 +8933,21 @@ describe("handlers.tmuxPanesInMode", () => {
 		expect(mockSpawn).not.toHaveBeenCalledWith(expect.arrayContaining(["send-keys"]), expect.any(Object));
 	});
 
-	it("reports false for a task without a tmux session (native backend)", async () => {
+	it("also sees a dev-server pane in copy-mode — that is the window users scroll", async () => {
+		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(true);
+		routeListPanes("%0\t0\n", 0, { devSession: "%99\t1\n" });
+		await expect(handlers.tmuxPanesInMode({ taskId: "abcd1234-full-id" })).resolves.toEqual({ inMode: true });
+		expect(mockSpawn).toHaveBeenCalledWith(
+			["tmux", "-L", "dev3", "list-panes", "-s", "-t", "dev3-dev-abcd1234", "-F", "#{pane_id}\t#{pane_in_mode}"],
+			expect.any(Object),
+		);
+	});
+
+	it("reports false for a task without a tmux session (native backend) — no pane is listed", async () => {
 		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(false);
+		routeListPanes("");
 		await expect(handlers.tmuxPanesInMode({ taskId: "abcd1234-full-id" })).resolves.toEqual({ inMode: false });
-		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(mockSpawn).not.toHaveBeenCalledWith(expect.arrayContaining(["list-panes"]), expect.any(Object));
 	});
 });
 

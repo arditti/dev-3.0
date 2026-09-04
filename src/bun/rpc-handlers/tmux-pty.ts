@@ -2528,18 +2528,27 @@ async function exitCopyModeInSession(socket: string, tmuxSession: string): Promi
  */
 async function tmuxPanesInMode(params: { taskId: string }): Promise<{ inMode: boolean }> {
 	const socket = pty.getSessionSocket(params.taskId);
-	if (!(await pty.tmuxSessionExists(params.taskId, socket))) return { inMode: false };
-	try {
-		const rows = await tmux.listPanes(PANE_IN_MODE_FORMAT, {
-			target: pty.getSessionTmuxName(params.taskId),
-			scope: "session",
-			socket,
-		});
-		return { inMode: rows.some((row) => row.paneId && row.inMode) };
-	} catch (err) {
-		if (err instanceof TmuxError) return { inMode: false };
-		throw err;
+	// Both sessions, same reason exitCopyModeAllPanes visits both: the pane the
+	// user scrolled is often the dev-server's (dev3-dev-<id>), and answering for
+	// the agent session alone reports "live" for a pane that is still in copy-mode.
+	const sessions: string[] = [];
+	if (await pty.tmuxSessionExists(params.taskId, socket)) {
+		sessions.push(pty.getSessionTmuxName(params.taskId));
 	}
+	const devSession = devServerSessionName(params.taskId);
+	if (await tmux.hasSession(devSession, { socket })) {
+		sessions.push(devSession);
+	}
+
+	for (const session of sessions) {
+		try {
+			const rows = await tmux.listPanes(PANE_IN_MODE_FORMAT, { target: session, scope: "session", socket });
+			if (rows.some((row) => row.paneId && row.inMode)) return { inMode: true };
+		} catch (err) {
+			if (!(err instanceof TmuxError)) throw err;
+		}
+	}
+	return { inMode: false };
 }
 
 async function exitCopyModeAllPanes(params: { taskId: string }): Promise<{ panesExited: number }> {

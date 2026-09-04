@@ -2,14 +2,17 @@
 
 Compact index of UX architecture decisions — the *why* behind rules that live in
 `PRODUCT_UX_BIBLE.md` / `ux-architecture.yaml`. Max ~5 lines per entry; details live in
-git history, PRs, and the records in `decisions/`. Newest first.
+git history and the records in `decisions/`. Newest first.
 
 **Once a decision has a record under `decisions/`, this entry folds to a pointer:** the
-rule in one clause plus where it lives, and the record for the why. Two files were
-carrying the same reasoning — 48 of this file's 50 dates also had a record — so the
-record wins and this file stays an index. Write the entry in full only while no record
-exists; that is the case for 84 of the entries below, and their reasoning lives nowhere
-else, so do not compact them by deleting it.
+rule in one clause plus where it lives, and the record for the why — the record wins and
+this file stays an index. Write the entry in full only while no record exists; most entries
+below are in that state and their reasoning lives nowhere else, so never compact them by
+deleting it.
+
+## 2026-09-03 — Touch scrollback return is a floating button
+
+- **Rule:** one round floating button, only while scrolled up; never a key-bar, composer or pane-bar slot (bible §10); why: `decisions/2026/09/03/touch-scroll-to-latest-button.md`.
 
 ## 2026-08-30 — Sidebar rows carry the task_card PR badge cluster
 
