@@ -56,7 +56,7 @@ The app runs as the **Electrobun desktop** shell **and** as a **headless remote 
 - Errors / info / success → the toast service (`src/mainview/toast.tsx`, `toast.error()/info()/success()`).
 - Anything richer → a regular React modal (see existing `*Modal.tsx` components).
 
-**Exception — genuinely OS-level chrome, not dialogs:** `Utils.showNotification` (Notification Center) and the native macOS menu bar (`application-menu.ts`) are allowed (they no-op / are absent in browser mode). Any *dialog* triggered from a menu action must be routed to the renderer via a push message and shown as React UI.
+**Exception — genuinely OS-level chrome, not dialogs:** `Utils.showNotification` (Notification Center) and the native macOS menu bar (`src/shared/application-menu.ts`) are allowed (they no-op / are absent in browser mode). Any *dialog* triggered from a menu action must be routed to the renderer via a push message and shown as React UI.
 
 ## Telemetry — anonymous always, opt-out always respected (MANDATORY)
 
@@ -224,11 +224,11 @@ Rules:
 
 ## Keyboard shortcuts
 
-**`src/mainview/keymap.ts` is the single source of truth for app-level keyboard shortcuts.** When you add or change one (a renderer `useGlobalShortcut` binding, a task-switcher key, or a native-menu accelerator users rely on), update its `keymap.ts` entry in the same commit — the registry renders the in-app Keyboard Shortcuts overlay (`KeyboardShortcutsModal`, Help → Keyboard Shortcuts / ⌘/ / ⇧⌘P), the [`docs/keyboard-shortcuts.md`](docs/keyboard-shortcuts.md) table, and the website, so an unregistered shortcut is invisible everywhere. `__tests__/keymap.test.ts` guards basic validity; keeping the registry in lockstep with handlers is your discipline. The registry **documents**, it does not dispatch — do not refactor the `App.tsx` handler chain to read from it. Terminal/tmux `⌃B` prefix bindings are not app-level; they live in `src/bun/tmux/config.ts` and render on the overlay's Terminal tab.
+**`src/mainview/keymap.ts` is the single source of truth for app-level keyboard shortcuts.** When you add or change one (a renderer `useGlobalShortcut` binding, a task-switcher key, or a native-menu accelerator users rely on), update its `keymap.ts` entry in the same commit — the registry renders the in-app Keyboard Shortcuts overlay (`KeyboardShortcutsModal`, Help → Keyboard Shortcuts / ⌘/ / ⇧⌘P), the [`docs/keyboard-shortcuts.md`](docs/keyboard-shortcuts.md) table, and the website, so an unregistered shortcut is invisible everywhere. `src/mainview/__tests__/keymap.test.ts` guards basic validity; keeping the registry in lockstep with handlers is your discipline. The registry **documents**, it does not dispatch — do not refactor the `App.tsx` handler chain to read from it. Terminal/tmux `⌃B` prefix bindings are not app-level; they live in `src/bun/tmux/config.ts` and render on the overlay's Terminal tab.
 
 ## Decision records
 
-Non-obvious architectural decisions, hacks, and workarounds go in `decisions/YYYY/MM/DD/short-slug.md` — dated directories exactly like `change-logs/`, plus a descriptive slug, e.g. `decisions/2026/08/06/worktree-branch-cleanup.md`. They record **why**, not just what, for future agents and humans.
+Non-obvious architectural decisions, hacks, and workarounds go in `decisions/YYYY/MM/DD/short-slug.md` — dated directories exactly like `change-logs/`, plus a descriptive slug, e.g. `decisions/2026/08/06/doctor-worktrees-only-sanctioned-deletion.md`. They record **why**, not just what, for future agents and humans.
 
 **Never number a record.** Sequential numbering cannot survive parallel agents: everyone branches off the same `main`, sees the same highest number, and picks it. Before this rule, 98 numbers were shared by two to seven records each — the number was not an identity. The **slug is the identity** and has never collided; the date only sorts. All the old `NNN-slug.md` records were moved into the tree once, and [`decisions/README.md`](decisions/README.md) maps every old name to its new path so existing citations still resolve.
 
@@ -387,11 +387,11 @@ All user-facing renderer strings are localized via `src/mainview/i18n/`; locales
 
 **Interpolation:** `{variable}` placeholders — `t("dashboard.failedAdd", { error: String(err) })`.
 
-**Pluralization:** suffix convention `_one`, `_few`, `_many`, `_other`; call `t.plural("dashboard.projectCount", count)`. English needs only `_one`/`_other`; Russian needs all four (`"{count} проект"` / `"{count} проекта"` / `"{count} проектов"` / `"{count} проектов"`). Which suffix a count selects comes from `Intl.PluralRules` (`i18n/interpolate.ts`), so the categories are CLDR's — a new locale needs no code, only its keys.
+**Pluralization:** suffix convention `_one`, `_few`, `_many`, `_other`; call `t.plural("dashboard.projectCount", count)`. English needs only `_one`/`_other`; Russian needs all four (`"{count} проект"` / `"{count} проекта"` / `"{count} проектов"` / `"{count} проектов"`). Which suffix a count selects comes from `Intl.PluralRules` (`src/mainview/i18n/interpolate.ts`), so the categories are CLDR's — a new locale needs no code, only its keys.
 
 **A `{count}` string is plural by default.** `src/mainview/i18n/__tests__/plural-keys.test.ts` fails on any translation value containing `{count}` whose key has no plural suffix, on an incomplete form set, and on a plural base one locale has and another does not. A count that genuinely needs no agreement — a parenthetical `(N)`, a ratio `N/M`, an abbreviated unit, the total in "N of M" — goes in that test's `FLAT_COUNT_KEYS` **with a reason**. Never render a count with a hand-written ternary: `{n} {n === 1 ? "file" : "files"}` is untranslated and wrong in two of the three locales.
 
-**Adding a locale:** mirror the `en/` domain files under `translations/{locale}/` + a merging barrel satisfying `TranslationRecord` (copy `ru.ts` structure); register in `ALL_LOCALES`/`LOCALE_LABELS` (`i18n/types.ts`) and `translationSets` (`i18n/context.tsx`). Plural rules need no code — `Intl.PluralRules` already knows the new locale; give every plural base the suffixes CLDR asks for (Polish and Czech want `_few`/`_many`, Arabic also `_zero`/`_two`), and `plural-keys.test.ts` will name the missing ones.
+**Adding a locale:** mirror the `en/` domain files under `translations/{locale}/` + a merging barrel satisfying `TranslationRecord` (copy `ru.ts` structure); register in `ALL_LOCALES`/`LOCALE_LABELS` (`src/mainview/i18n/types.ts`) and `translationSets` (`src/mainview/i18n/context.tsx`). Plural rules need no code — `Intl.PluralRules` already knows the new locale; give every plural base the suffixes CLDR asks for (Polish and Czech want `_few`/`_many`, Arabic also `_zero`/`_two`), and `plural-keys.test.ts` will name the missing ones.
 
 **Do NOT translate:** input placeholders that are command examples (`"bun install"`, `"claude"`, `"main"`), terminal output (`term.writeln()`), the app name in breadcrumbs (`"dev-3.0"`).
 
