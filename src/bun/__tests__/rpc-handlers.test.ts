@@ -8890,6 +8890,45 @@ describe("tmuxPaneCount", () => {
 });
 
 // ================================================================
+// handlers.tmuxPanesInMode
+// ================================================================
+
+describe("handlers.tmuxPanesInMode", () => {
+	beforeEach(() => vi.clearAllMocks());
+
+	function routeListPanes(out: string, exit = 0) {
+		mockSpawn.mockImplementation((args: string[]) => ({
+			stderr: new Response("").body,
+			stdout: new Response(args[3] === "list-panes" ? out : "").body,
+			exited: Promise.resolve(args[3] === "list-panes" ? exit : 0),
+		}));
+	}
+
+	it("reports true when any pane of the task session is in copy-mode", async () => {
+		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(true);
+		routeListPanes("%0\t0\n%1\t1\n");
+		await expect(handlers.tmuxPanesInMode({ taskId: "abcd1234-full-id" })).resolves.toEqual({ inMode: true });
+		expect(mockSpawn).toHaveBeenCalledWith(
+			["tmux", "-L", "dev3", "list-panes", "-s", "-t", "dev3-abcd1234", "-F", "#{pane_id}\t#{pane_in_mode}"],
+			expect.any(Object),
+		);
+	});
+
+	it("reports false when every pane is live, and touches nothing", async () => {
+		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(true);
+		routeListPanes("%0\t0\n");
+		await expect(handlers.tmuxPanesInMode({ taskId: "abcd1234-full-id" })).resolves.toEqual({ inMode: false });
+		expect(mockSpawn).not.toHaveBeenCalledWith(expect.arrayContaining(["send-keys"]), expect.any(Object));
+	});
+
+	it("reports false for a task without a tmux session (native backend)", async () => {
+		vi.mocked(pty.tmuxSessionExists).mockResolvedValue(false);
+		await expect(handlers.tmuxPanesInMode({ taskId: "abcd1234-full-id" })).resolves.toEqual({ inMode: false });
+		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+});
+
+// ================================================================
 // handlers.exitCopyModeAllPanes
 // ================================================================
 

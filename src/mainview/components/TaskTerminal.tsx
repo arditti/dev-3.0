@@ -15,6 +15,7 @@ import BackToKanbanEmptyState from "./BackToKanbanEmptyState";
 import ExtraKeyBar from "./ExtraKeyBar";
 import TerminalComposer, { type TerminalComposerApi } from "./TerminalComposer";
 import MobilePaneCarousel from "./MobilePaneCarousel";
+import ScrollToLatestButton from "./ScrollToLatestButton";
 import MobileWindowCarousel from "./MobileWindowCarousel";
 import PaneZoomBadge from "./PaneZoomBadge";
 import ClosePanePicker from "./ClosePanePicker";
@@ -58,6 +59,8 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 	const t = useT();
 	const isTouchDevice = navigator.maxTouchPoints > 0;
 	const touchInput = !isElectrobun && isTouchDevice;
+	// The focused pane is scrolled into history — shows the touch scroll-to-latest button.
+	const [scrolledUp, setScrolledUp] = useState(false);
 	const [rawMode, setRawMode] = useState(false);
 	const composerApiRef = useRef<TerminalComposerApi | null>(null);
 	const narrow = useNarrowViewport(CAROUSEL_MAX_WIDTH);
@@ -825,6 +828,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 							onNativeStatus={makePaneNativeStatusHandler(paneId)}
 							onSessionLost={() => markPaneGone(paneId)}
 							touchComposeMode={touchInput && !rawMode}
+							onScrolledIntoHistory={isFocused ? setScrolledUp : undefined}
 						/>
 					) : (
 						<div className="flex items-center justify-center h-full">
@@ -857,6 +861,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					onNativeStatus={focusPaneId ? makePaneNativeStatusHandler(focusPaneId) : undefined}
 					onSessionLost={focusPaneId ? () => markPaneGone(focusPaneId) : undefined}
 					touchComposeMode={touchInput && !rawMode}
+					onScrolledIntoHistory={setScrolledUp}
 				/>
 			) : (
 				<div className="flex items-center justify-center h-full">
@@ -883,7 +888,12 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 							onTakeControl={() => paneHandlesRef.current.get(focusPaneId)?.claimWriter()}
 						/>
 					)}
-					<MobilePaneCarousel taskId={taskId}>{nativeTerminalArea}</MobilePaneCarousel>
+					<div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+						<MobilePaneCarousel taskId={taskId}>{nativeTerminalArea}</MobilePaneCarousel>
+						{touchInput && scrolledUp && focusedPaneHandle && (
+							<ScrollToLatestButton onClick={() => focusedPaneHandle.scrollToBottom()} />
+						)}
+					</div>
 					{setupFailedNotice}
 					{touchInput && focusedPaneHandle && (
 						<div className={rawMode ? "hidden" : "contents"}>
@@ -985,6 +995,9 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 							/>
 						)}
 						<ClosePanePicker taskId={taskId} />
+						{touchInput && scrolledUp && focusedPaneHandle && (
+							<ScrollToLatestButton onClick={() => focusedPaneHandle.scrollToBottom()} />
+						)}
 					</div>
 				) : (
 					// No panes yet (loading).
@@ -1028,6 +1041,7 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 			}}
 			onNativeStatus={handleNativeStatus}
 			touchComposeMode={touchInput && !rawMode}
+			onScrolledIntoHistory={setScrolledUp}
 		/>
 	) : (
 		<div className="flex items-center justify-center h-full">
@@ -1061,6 +1075,9 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					<MobileWindowCarousel taskId={taskId} onSwitch={() => setWindowEpoch((e) => e + 1)}>
 						<MobilePaneCarousel taskId={taskId} refreshKey={windowEpoch}>{terminalArea}</MobilePaneCarousel>
 					</MobileWindowCarousel>
+					{touchInput && scrolledUp && termHandle && (
+						<ScrollToLatestButton onClick={() => termHandle.scrollToBottom()} />
+					)}
 					{setupFailedNotice}
 				</div>
 			) : (
@@ -1068,6 +1085,9 @@ function TaskTerminal({ projectId, taskId, tasks, projects, navigate, dispatch, 
 					{terminalArea}
 					{ptyUrl && <PaneZoomBadge taskId={taskId} />}
 					{ptyUrl && <ClosePanePicker taskId={taskId} />}
+					{touchInput && scrolledUp && termHandle && (
+						<ScrollToLatestButton onClick={() => termHandle.scrollToBottom()} />
+					)}
 					{setupFailedNotice}
 				</div>
 			)}

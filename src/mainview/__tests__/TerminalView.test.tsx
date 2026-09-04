@@ -61,6 +61,7 @@ const {
 		attachCustomKeyEventHandler: vi.fn(),
 		attachCustomWheelEventHandler: vi.fn(),
 		hasMouseTracking: vi.fn(() => false),
+		scrollToBottom: vi.fn(),
 		hasSelection: vi.fn(() => false),
 		isAlternateScreen: vi.fn(() => false),
 		getSelection: vi.fn(() => ""),
@@ -126,6 +127,7 @@ vi.mock("../rpc", () => ({
 			tmuxNewWindow: vi.fn(),
 			tmuxAltClickMoveCursor: vi.fn().mockResolvedValue({ moved: true }),
 			exitCopyModeAllPanes: vi.fn().mockResolvedValue({ panesExited: 1 }),
+			tmuxPanesInMode: vi.fn().mockResolvedValue({ inMode: true }),
 			logRendererDiagnostic: vi.fn().mockResolvedValue(undefined),
 			copyTerminalSelection: vi.fn().mockResolvedValue({ ok: true, tool: "pbcopy" }),
 			resolveTerminalPaths: vi.fn().mockResolvedValue({ resolved: {} }),
@@ -784,6 +786,107 @@ describe("TerminalView – selection clipboard bridge", () => {
 		});
 
 		expect(mockedCopyTerminalSelection).not.toHaveBeenCalled();
+	});
+});
+
+describe("TerminalView – scrolled-into-history signal (touch scroll-to-latest)", () => {
+	const mockedTmuxPanesInMode = vi.mocked(api.request.tmuxPanesInMode);
+
+	afterEach(() => {
+		mockTermInstance.hasMouseTracking.mockReturnValue(false);
+		mockTermInstance.viewportY = 0;
+		mockedTmuxPanesInMode.mockResolvedValue({ inMode: true });
+		vi.useRealTimers();
+	});
+
+	async function renderWithSignal() {
+		const onScrolledIntoHistory = vi.fn();
+		let handle: TerminalHandle | null = null;
+		await act(async () => {
+			render(
+				<I18nProvider>
+					<TerminalView
+						ptyUrl="ws://localhost:1234"
+						taskId="t1"
+						projectId="p1"
+						onReady={(h) => { handle = h; }}
+						onScrolledIntoHistory={onScrolledIntoHistory}
+					/>
+				</I18nProvider>,
+			);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		await act(async () => { fireResize?.(); });
+		const wheelHandler = mockTermInstance.attachCustomWheelEventHandler.mock.calls.at(-1)?.[0] as
+			(event: WheelEvent) => boolean;
+		return { onScrolledIntoHistory, handle: handle!, wheelHandler };
+	}
+
+	it("a wheel-up through tmux raises the signal once; scrollToBottom leaves copy-mode and lowers it", async () => {
+		mockTermInstance.hasMouseTracking.mockReturnValue(true);
+		const { onScrolledIntoHistory, handle, wheelHandler } = await renderWithSignal();
+		mockedExitCopyModeAllPanes.mockClear();
+
+		act(() => {
+			wheelHandler({ deltaY: -100, clientX: 20, clientY: 20 } as WheelEvent);
+			wheelHandler({ deltaY: -100, clientX: 20, clientY: 20 } as WheelEvent);
+		});
+		expect(onScrolledIntoHistory).toHaveBeenCalledTimes(1);
+		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(true);
+
+		await act(async () => { handle.scrollToBottom(); });
+		expect(mockedExitCopyModeAllPanes).toHaveBeenCalledWith({ taskId: "t1" });
+		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(false);
+		expect(mockTermInstance.scrollToBottom).toHaveBeenCalled();
+	});
+
+	it("lowers the signal by itself once tmux reports no pane in copy-mode (swipe reached the bottom)", async () => {
+		mockTermInstance.hasMouseTracking.mockReturnValue(true);
+		const { onScrolledIntoHistory, wheelHandler } = await renderWithSignal();
+		// Fake timers only from here: the poll interval is armed by the wheel-up.
+		vi.useFakeTimers();
+		act(() => { wheelHandler({ deltaY: -100, clientX: 20, clientY: 20 } as WheelEvent); });
+		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(true);
+
+		mockedTmuxPanesInMode.mockResolvedValue({ inMode: false });
+		await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+		expect(mockedTmuxPanesInMode).toHaveBeenCalledWith({ taskId: "t1" });
+		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(false);
+	});
+
+	it("a paste while copy-mode may be active leaves copy-mode before the text goes out", async () => {
+		mockTermInstance.hasMouseTracking.mockReturnValue(true);
+		const { handle, wheelHandler } = await renderWithSignal();
+		act(() => { wheelHandler({ deltaY: -100, clientX: 20, clientY: 20 } as WheelEvent); });
+		mockedExitCopyModeAllPanes.mockClear();
+		mockPaste.mockClear();
+
+		await act(async () => { handle.paste("ls"); });
+		expect(mockedExitCopyModeAllPanes).toHaveBeenCalledWith({ taskId: "t1" });
+		expect(mockPaste).toHaveBeenCalledWith("ls");
+		// The order matters: copy-mode is cancelled before the keys reach the pane.
+		expect(mockedExitCopyModeAllPanes.mock.invocationCallOrder[0]).toBeLessThan(mockPaste.mock.invocationCallOrder[0]);
+	});
+
+	it("without a pending scroll-up, paste stays synchronous and never calls tmux", async () => {
+		const { handle } = await renderWithSignal();
+		mockedExitCopyModeAllPanes.mockClear();
+		mockPaste.mockClear();
+		handle.paste("ls");
+		expect(mockPaste).toHaveBeenCalledWith("ls");
+		expect(mockedExitCopyModeAllPanes).not.toHaveBeenCalled();
+	});
+
+	it("ghostty's own scrollback raises the signal on viewportY > 0 and lowers it at 0", async () => {
+		const { onScrolledIntoHistory } = await renderWithSignal();
+		const onScroll = mockTermInstance.onScroll.mock.calls.at(-1)?.[0] as () => void;
+		mockTermInstance.viewportY = 12;
+		act(() => { onScroll(); });
+		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(true);
+		mockTermInstance.viewportY = 0;
+		act(() => { onScroll(); });
+		expect(onScrolledIntoHistory).toHaveBeenLastCalledWith(false);
 	});
 });
 

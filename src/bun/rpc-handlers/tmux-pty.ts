@@ -2520,6 +2520,28 @@ async function exitCopyModeInSession(socket: string, tmuxSession: string): Promi
 	return panesInMode.length;
 }
 
+/**
+ * Is any pane of the task's tmux session still in copy-mode? The touch
+ * scroll-to-latest button polls this while it believes the pane is scrolled
+ * into history: tmux leaves copy-mode on its own when a swipe reaches the
+ * bottom, and the renderer has no other way to notice.
+ */
+async function tmuxPanesInMode(params: { taskId: string }): Promise<{ inMode: boolean }> {
+	const socket = pty.getSessionSocket(params.taskId);
+	if (!(await pty.tmuxSessionExists(params.taskId, socket))) return { inMode: false };
+	try {
+		const rows = await tmux.listPanes(PANE_IN_MODE_FORMAT, {
+			target: pty.getSessionTmuxName(params.taskId),
+			scope: "session",
+			socket,
+		});
+		return { inMode: rows.some((row) => row.paneId && row.inMode) };
+	} catch (err) {
+		if (err instanceof TmuxError) return { inMode: false };
+		throw err;
+	}
+}
+
 async function exitCopyModeAllPanes(params: { taskId: string }): Promise<{ panesExited: number }> {
 	const socket = pty.getSessionSocket(params.taskId);
 	const taskSession = pty.getSessionTmuxName(params.taskId);
@@ -3348,6 +3370,7 @@ export const tmuxPtyHandlers = {
 	tmuxWindowNavigate,
 	tmuxAltClickMoveCursor,
 	exitCopyModeAllPanes,
+	tmuxPanesInMode,
 	tmuxSearchUpdate,
 	tmuxSearchStep,
 	tmuxSearchCancel,
