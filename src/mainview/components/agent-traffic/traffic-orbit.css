@@ -592,6 +592,177 @@
 	padding: 20px;
 	color: rgb(var(--text-secondary));
 }
+/* The task's own conversation. A reader, so density is lower than the message
+   list and the two speakers must never be confusable with each other. */
+.traffic-conversation {
+	font-size: 12px;
+	line-height: 1.6;
+}
+.traffic-conversation-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 16px;
+	border-bottom: 1px solid rgb(var(--border-default) / 0.3);
+}
+.traffic-conversation-head b {
+	color: rgb(var(--agent));
+}
+.traffic-conversation-head small {
+	color: rgb(var(--text-tertiary));
+}
+.traffic-conversation-head select {
+	max-width: 170px;
+	font-size: 11px;
+	padding: 3px 6px;
+	border-radius: 6px;
+	background: rgb(var(--surface-base) / 0.6);
+	color: rgb(var(--text-primary));
+}
+.traffic-conversation-origin {
+	font-size: 10px;
+	padding: 2px 6px;
+	border-radius: 999px;
+	color: rgb(var(--text-secondary));
+	background: rgb(var(--surface-base) / 0.7);
+}
+.traffic-conversation-origin.origin-archived {
+	color: rgb(var(--warning-strong));
+}
+.traffic-conversation-earlier {
+	width: 100%;
+	padding: 8px 16px;
+	font-size: 11px;
+	color: rgb(var(--accent));
+	border-bottom: 1px solid rgb(var(--border-default) / 0.3);
+}
+.traffic-turn {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px 16px;
+	border-bottom: 1px solid rgb(var(--border-default) / 0.3);
+}
+.traffic-turn time {
+	font-size: 10px;
+	color: rgb(var(--text-tertiary));
+}
+.traffic-turn b {
+	display: block;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	margin-bottom: 2px;
+}
+.traffic-turn p {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+/* Markdown inside a 340px column: the renderer's own spacing is tuned for a
+   page, so tighten it and let code and tables scroll rather than push the
+   inspector wider. */
+.traffic-turn-body {
+	min-width: 0;
+	font-size: 12px;
+	line-height: 1.6;
+}
+.traffic-turn-body p,
+.traffic-turn-body ul,
+.traffic-turn-body ol,
+.traffic-turn-body pre,
+.traffic-turn-body blockquote,
+.traffic-turn-body table {
+	margin: 6px 0;
+}
+.traffic-turn-body > :first-child {
+	margin-top: 0;
+}
+.traffic-turn-body > :last-child {
+	margin-bottom: 0;
+}
+.traffic-turn-body ul,
+.traffic-turn-body ol {
+	padding-left: 18px;
+}
+.traffic-turn-body li {
+	margin: 2px 0;
+}
+.traffic-turn-body h1,
+.traffic-turn-body h2,
+.traffic-turn-body h3,
+.traffic-turn-body h4 {
+	margin: 8px 0 4px;
+	font-size: 13px;
+	font-weight: 600;
+}
+.traffic-turn-body pre {
+	overflow-x: auto;
+	padding: 8px;
+	border-radius: 6px;
+	background: rgb(var(--surface-base) / 0.7);
+}
+.traffic-turn-body :not(pre) > code {
+	padding: 1px 4px;
+	border-radius: 4px;
+	background: rgb(var(--surface-base) / 0.7);
+	overflow-wrap: anywhere;
+}
+.traffic-turn-body a {
+	color: rgb(var(--accent));
+	overflow-wrap: anywhere;
+}
+.traffic-turn-body table {
+	display: block;
+	overflow-x: auto;
+	border-collapse: collapse;
+}
+.traffic-turn-body th,
+.traffic-turn-body td {
+	padding: 3px 6px;
+	border: 1px solid rgb(var(--border-default) / 0.5);
+	white-space: nowrap;
+}
+.traffic-turn-body img {
+	max-width: 100%;
+	height: auto;
+}
+.traffic-turn-user {
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: rgb(var(--surface-base) / 0.5);
+}
+.traffic-turn-user b {
+	color: rgb(var(--text-tertiary));
+}
+.traffic-turn-agent b {
+	color: rgb(var(--agent));
+}
+.traffic-turn-agent p {
+	color: rgb(var(--text-secondary));
+}
+.traffic-turn-actions {
+	margin: 0;
+	font-size: 11px;
+	color: rgb(var(--text-tertiary));
+	overflow-wrap: anywhere;
+}
+.traffic-turn-clamped {
+	font-size: 10px;
+	color: rgb(var(--text-tertiary));
+}
+/* The fold's own control: a link inside the message, never a button competing
+   with the panel's real actions. */
+.traffic-turn-more {
+	margin-top: 4px;
+	padding: 0;
+	font-size: 11px;
+	color: rgb(var(--accent));
+	background: none;
+}
+.traffic-turn-more:hover {
+	text-decoration: underline;
+}
 .traffic-statusbar {
 	display: flex;
 	align-items: center;
