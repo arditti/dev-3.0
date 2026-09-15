@@ -130,9 +130,15 @@ export function composeArtifactDocument(
 				return [resolve(parts[0]), ...parts.slice(1)].join(" ");
 			}).join(", "),
 	);
+	// A `url(` that starts its own token, so the tail of `createObjectURL(` never matches.
+	// Casing is kept and a value that is not a copied asset stays byte-exact; a bare
+	// `url(` written inside a script still matches, which only bites on an asset name.
 	html = html.replace(
-		/url\(\s*(["']?)(.*?)\1\s*\)/gi,
-		(_match, quote: string, value: string) => `url(${quote}${resolve(value)}${quote})`,
+		/(?<![\w$-])(url)\(\s*(["']?)(.*?)\2\s*\)/gi,
+		(match, token: string, quote: string, value: string) => {
+			const resolved = resolve(value);
+			return resolved === value ? match : `${token}(${quote}${resolved}${quote})`;
+		},
 	);
 
 	// The channel goes first: every other injected script reaches for it by name.
