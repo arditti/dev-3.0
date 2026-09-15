@@ -18,14 +18,15 @@ export type { TemplateContext } from "./template";
 /** Agent-native trust routine a launch needs, in apply order (executor maps each
  *  to its ensure* function). Current dev3 applies Claude trust to *every* agent
  *  (harmless superset + MCP pre-approval), so most adapters include "claude". */
-export type TrustKind = "claude" | "codex" | "gemini";
+export type TrustKind = "claude" | "codex" | "gemini" | "copilot";
 
 /** Declarative description of the agent-native lifecycle hooks to install. The
  *  backend executor dispatches on `kind`; the hook *content* is the pure
  *  build*Hooks data in src/shared/agent-hooks.ts. */
 export type HooksSpec =
 	| { kind: "claude"; stopTarget?: TaskStatus; permissionMode?: PermissionMode }
-	| { kind: "codex" };
+	| { kind: "codex" }
+	| { kind: "copilot" };
 
 /** Codex-only launch runtime resolved by the backend (theme state + a
  *  `codex --help` probe are impure) and threaded into the pure CodexAdapter. */

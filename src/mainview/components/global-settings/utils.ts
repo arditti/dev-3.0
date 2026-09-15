@@ -111,6 +111,15 @@ export function normalizeExternalApps(
 	return validApps.length > 0 ? validApps : undefined;
 }
 
+/** dev3's permission modes in Copilot's own flags — mirrors `copilotAdapter`. */
+const COPILOT_PREVIEW_MODE_ARGS: Record<string, string[]> = {
+	plan: ["--mode", "plan"],
+	acceptEdits: ["--allow-tool", "write"],
+	auto: ["--allow-all-tools"],
+	dontAsk: ["--allow-all-tools", "--no-ask-user"],
+	bypassPermissions: ["--allow-all"],
+};
+
 function quoteIfUnsafeForPreview(s: string): string {
 	return /^[A-Za-z0-9_\-./:]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
 }
@@ -132,6 +141,7 @@ export function buildCommandPreview(
 	const isCursor = cmdName === "agent";
 	const isCodex = cmdName === "codex";
 	const isClaude = cmdName === "claude";
+	const isCopilot = cmdName === "copilot";
 
 	// Mirror the launcher: only a backend registered for THIS agent applies
 	// (same guard as agentProvider in agents.ts).
@@ -170,6 +180,8 @@ export function buildCommandPreview(
 			} else if (config.permissionMode === "bypassPermissions") {
 				parts.push("--force");
 			}
+		} else if (isCopilot) {
+			parts.push(...(COPILOT_PREVIEW_MODE_ARGS[config.permissionMode] ?? []));
 		} else {
 			parts.push("--permission-mode", config.permissionMode);
 		}
@@ -185,11 +197,14 @@ export function buildCommandPreview(
 		if (!hasBypassFlag) parts.push("--allow-dangerously-skip-permissions");
 	}
 
-	if (config.effort && !isCursor && !isCodex) {
+	// Copilot refuses `--model auto --effort <level>` outright; the launcher drops
+	// the flag there, so the preview must too.
+	if (config.effort && !isCursor && !isCodex && !(isCopilot && config.model === "auto")) {
 		parts.push("--effort", config.effort);
 	}
 
-	if (config.maxBudgetUsd != null && config.maxBudgetUsd > 0 && !isCursor && !isCodex) {
+	// Copilot budgets in AI credits, not dollars — the launcher drops this too.
+	if (config.maxBudgetUsd != null && config.maxBudgetUsd > 0 && !isCursor && !isCodex && !isCopilot) {
 		parts.push("--max-budget-usd", String(config.maxBudgetUsd));
 	}
 
@@ -210,6 +225,8 @@ export function buildCommandPreview(
 	if (isCursor) {
 		prompt += "\\n\\n…dev3 prompt…";
 	}
+	// Copilot takes the prompt behind -i, which runs it and STAYS interactive.
+	if (isCopilot) parts.push("-i");
 	parts.push(`'${prompt}'`);
 
 	// Mirror the launcher's env: provider env (Bedrock flag + pinned model)

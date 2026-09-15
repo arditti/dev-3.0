@@ -13,6 +13,13 @@ import { DEV3_HOME } from "./paths";
 // Writer and pruner share one path constant: whatever registers an entry must
 // agree with whatever removes it.
 import { GEMINI_TRUSTED_FOLDERS } from "./worktree-trust";
+import {
+	ensureCopilotCommandApproval,
+	ensureCopilotTrustedFolder,
+	updateCopilotConfig,
+	updateCopilotPermissions,
+} from "../shared/agent-hooks";
+import { resolveCopilotHome } from "./copilot-config";
 import { loadSettings, saveSettings } from "./settings";
 import { getCodexProfileForCurrentUiTheme, getCodexThemeForCurrentUiTheme } from "./theme-state";
 import { ensureClaudeStatusLineSettings } from "./rate-limit-monitor";
@@ -1038,6 +1045,40 @@ export function buildTaskEnv(
 	}
 
 	return env;
+}
+
+// ---- Copilot Trust ----
+
+/**
+ * Ensure a worktree is listed in `trustedFolders` in Copilot's `config.json`, so
+ * `copilot` skips the "Confirm folder trust" dialog. Without it the agent opens
+ * on a question in a pane nobody is watching, and the task never starts.
+ *
+ * Resolves symlinks first — the dialog names the real path. Non-fatal: the worst
+ * case is the dialog the user saw before.
+ */
+export async function ensureCopilotTrust(dirPath: string, projectPath?: string): Promise<void> {
+	try {
+		const resolved = await realpath(dirPath);
+		const home = resolveCopilotHome();
+		const written = updateCopilotConfig(home, (config) =>
+			ensureCopilotTrustedFolder(config, resolved));
+		if (written) log.info("Registered worktree in Copilot trustedFolders", { path: resolved });
+	} catch (err) {
+		log.warn("Failed to register Copilot worktree trust", { error: String(err) });
+	}
+
+	// Copilot keys command approvals by the repository's main working tree, not
+	// by the worktree, so every task of this project is covered by one entry.
+	if (!projectPath) return;
+	try {
+		const home = resolveCopilotHome();
+		const written = updateCopilotPermissions(home, (permissions) =>
+			ensureCopilotCommandApproval(permissions, projectPath));
+		if (written) log.info("Pre-approved the dev3 CLI for Copilot", { projectPath });
+	} catch (err) {
+		log.warn("Failed to pre-approve the dev3 CLI for Copilot", { error: String(err) });
+	}
 }
 
 // ---- Gemini Trust ----
