@@ -346,20 +346,29 @@ describe("buildCodexHooks", () => {
 
 	it("tool hooks cover Bash, apply_patch aliases, and MCP tools", () => {
 		const hooks = buildCodexHooks();
-		const matcher = "Bash|Edit|Write|^apply_patch$|^mcp__.*";
+		const matcher = "Bash|Edit|Write|^apply_patch$|^mcp__.*|^(functions\\.)?request_user_input(_async)?$";
 
 		expect(hooks.PreToolUse[0].matcher).toBe(matcher);
 		expect(hooks.PermissionRequest[0].matcher).toBe(matcher);
 		expect(hooks.PostToolUse[0].matcher).toBe(matcher);
 	});
 
+	it.each(["request_user_input", "request_user_input_async", "functions.request_user_input_async"])(
+		"subscribes to question tool %s", (tool) => {
+			const hooks = buildCodexHooks();
+			for (const event of ["PreToolUse", "PostToolUse"]) {
+				expect(hooks[event].some(group => new RegExp(group.matcher!).test(tool))).toBe(true);
+			}
+		},
+	);
+
 	it("every event calls one stable worktree-local handler", () => {
 		const hooks = buildCodexHooks();
 
-		for (const groups of Object.values(hooks)) {
+		for (const [event, groups] of Object.entries(hooks)) {
 			for (const group of groups) {
 				expect(group.hooks).toEqual([
-					{ type: "command", command: CODEX_DEV3_HOOK_COMMAND, timeout: 5 },
+					{ type: "command", command: CODEX_DEV3_HOOK_COMMAND, timeout: event === "Interrupt" || event === "SessionEnd" ? 3 : 5 },
 				]);
 			}
 		}

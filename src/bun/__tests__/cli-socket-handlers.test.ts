@@ -1,3 +1,4 @@
+import codexQuestionHookTrace from "./fixtures/codex-0.154-question-hooks.json";
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import { COORDINATOR_PROMPT, DEFAULT_PR_REVIEW_PROMPT, TASK_REF_UNRESOLVED_PREFIX, getAllowedTransitions, withPresetPrompt, type Project, type Task, type CliRequest, type TaskNote, type TaskMovement, type SharedArtifact, type SharedImage } from "../../shared/types";
 
@@ -118,10 +119,12 @@ vi.mock("../task-start-ref", () => ({
 	resolveTaskStartRef: vi.fn(async () => undefined),
 }));
 
+const hookInfo = vi.hoisted(() => vi.fn());
+
 vi.mock("../logger", () => ({
 	createLogger: () => ({
 		debug: vi.fn(),
-		info: vi.fn(),
+		info: hookInfo,
 		warn: vi.fn(),
 		error: vi.fn(),
 	}),
@@ -485,6 +488,103 @@ describe("task.agentHook", () => {
 			return { task: { ...initialTask, ...updates }, result };
 		});
 	}
+
+	it.each([
+		["request_user_input", "in-progress"], ["request_user_input_async", "in-progress"],
+		["request_user_input", "review-by-ai"], ["request_user_input_async", "review-by-ai"],
+	] as const)(
+		"keeps %s questions visible from %s across unrelated tools and Stop", async (toolName, initialStatus) => {
+			const project = makeProject({ autoReviewEnabled: true });
+			let storedTask = makeTask({ status: initialStatus });
+			vi.mocked(data.getProject).mockResolvedValue(project);
+			vi.mocked(data.loadTasks).mockImplementation(async () => [storedTask]);
+			vi.mocked(data.updateTaskWith).mockImplementation(async (_project, _taskId, mutator: any) => {
+				const { updates, result } = await mutator(storedTask);
+				storedTask = { ...storedTask, ...updates };
+				return { task: storedTask, result };
+			});
+			const hook = async (event: string, name?: string) => {
+				const response = await handleRequest(makeRequest("task.agentHook", {
+					taskId: storedTask.id, projectId: project.id, sessionId: `questions-${toolName}-${initialStatus}`,
+					event, toolName: name, toolUseId: "question-1",
+				}));
+				expect(response.ok).toBe(true);
+				storedTask = response.data as Task;
+			};
+			await hook(toolName === "request_user_input" ? "PreToolUse" : "PostToolUse", toolName);
+			expect(storedTask.status).toBe("user-questions");
+			await hook("PreToolUse", "Bash");
+			await hook("PostToolUse", "Bash");
+			expect(storedTask.status).toBe("user-questions");
+			if (toolName === "request_user_input_async") {
+				await hook("Stop");
+				expect(storedTask.status).toBe("user-questions");
+				await hook("UserPromptSubmit");
+			} else {
+				await hook("PostToolUse", toolName);
+			}
+			expect(storedTask.status).toBe(initialStatus);
+			await hook("Stop");
+			expect(storedTask.status).toBe(initialStatus === "review-by-ai" ? "review-by-user" : "review-by-ai");
+		},
+	);
+
+	it.each(["Interrupt", "SessionEnd"])("releases a blocking question on %s", async event => {
+		const project = makeProject();
+		let task = makeTask({ status: "in-progress" });
+		mockAtomicHookUpdate(project, task);
+		const params = { taskId: task.id, projectId: project.id, sessionId: `cancel-${event}` };
+		const question = await handleRequest(makeRequest("task.agentHook", {
+			...params, event: "PreToolUse", toolName: "request_user_input", toolUseId: "q",
+		}));
+		task = question.data as Task;
+		expect(task.status).toBe("user-questions");
+		mockAtomicHookUpdate(project, task);
+		const cancelled = await handleRequest(makeRequest("task.agentHook", { ...params, event }));
+		expect((cancelled.data as Task).status).toBe("review-by-user");
+	});
+
+	it("logs hook order and status decisions without question or answer content", async () => {
+		const project = makeProject();
+		const task = makeTask({ status: "in-progress" });
+		mockAtomicHookUpdate(project, task);
+		await handleRequest(makeRequest("task.agentHook", {
+			taskId: task.id, projectId: project.id, sessionId: "log-test",
+			event: "PostToolUse", toolName: "request_user_input_async", toolUseId: "q",
+			questionIds: ["fingerprint"], prompt: "private answer", toolInput: "private question",
+		}));
+		expect(hookInfo).toHaveBeenCalledWith("Codex lifecycle hook", {
+			taskId: task.id, sessionId: "log-test", event: "PostToolUse",
+			toolName: "request_user_input_async", toolUseId: "q", pendingQuestions: true,
+			previousStatus: "in-progress", targetStatus: "user-questions",
+			actualStatus: "user-questions", moveAccepted: true,
+		});
+		expect(JSON.stringify(hookInfo.mock.calls)).not.toContain("private");
+		mockAtomicHookUpdate(project, makeTask({ status: "user-questions" }));
+		await handleRequest(makeRequest("task.agentHook", {
+			taskId: task.id, projectId: project.id, sessionId: "log-test", event: "SessionEnd",
+		}));
+	});
+
+	it("replays installed Codex 0.154 hooks and preserves Has Questions at Stop", async () => {
+		const project = makeProject({ autoReviewEnabled: true });
+		let task = makeTask({ status: "in-progress" });
+		const observed: string[] = [];
+		for (const event of codexQuestionHookTrace) {
+			mockAtomicHookUpdate(project, task);
+			const response = await handleRequest(makeRequest("task.agentHook", {
+				...event, taskId: task.id, projectId: project.id, sessionId: "codex-live-trace",
+			}));
+			expect(response.ok).toBe(true);
+			task = response.data as Task;
+			observed.push(task.status);
+		}
+		expect(observed).toEqual(["in-progress", "in-progress", "in-progress", "user-questions", "user-questions"]);
+		mockAtomicHookUpdate(project, task);
+		await handleRequest(makeRequest("task.agentHook", {
+			taskId: task.id, projectId: project.id, sessionId: "codex-live-trace", event: "SessionEnd",
+		}));
+	});
 
 	it("moves a resumed turn to in-progress", async () => {
 		const project = makeProject();
