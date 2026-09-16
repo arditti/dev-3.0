@@ -128,6 +128,28 @@ describe("resolveTerminalPaths", () => {
 		expect(resolved[`${"../".repeat(12)}etc/hosts`]).toBeNull();
 	});
 
+	it("resolves absolute paths under the OS temp directories, where agents park scratch files", async () => {
+		// Not registered as a project and not under $HOME: only the temp-dir
+		// allowance can make these resolve.
+		const scratch = mkdtempSync(join(tmpdir(), "dev3-terminal-paths-scratch-"));
+		const inTmpdir = join(scratch, "rebuilt-1-cropped.png");
+		writeFileSync(inTmpdir, "png\n");
+		const literalTmp = process.platform === "win32" ? null : `/tmp/dev3-terminal-paths-${process.pid}.png`;
+		if (literalTmp) writeFileSync(literalTmp, "png\n");
+		try {
+			const { resolved } = await appHandlers.resolveTerminalPaths({
+				taskId: "task-1",
+				projectId: "proj-1",
+				paths: [inTmpdir, ...(literalTmp ? [literalTmp] : [])],
+			});
+			expect(resolved[inTmpdir]).toEqual({ path: inTmpdir, kind: "file" });
+			if (literalTmp) expect(resolved[literalTmp]).toEqual({ path: literalTmp, kind: "file" });
+		} finally {
+			rmSync(scratch, { recursive: true, force: true });
+			if (literalTmp) rmSync(literalTmp, { force: true });
+		}
+	});
+
 	it("resolves a bare filename to the one nested file whose path ends with it", async () => {
 		const { resolved } = await appHandlers.resolveTerminalPaths({
 			taskId: "task-1",

@@ -1,6 +1,7 @@
+import { realpathSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { Utils } from "../electrobun-platform";
 import type { FilePreviewResult, ResolvedTerminalPath } from "../../shared/types";
@@ -21,8 +22,8 @@ import { log } from "./shared";
  * decisions/2026/08/24/terminal-links-unique-suffix-fallback.md.
  *
  * All three handlers take client-supplied paths, so every path they touch is
- * gated to {@link allowedRoots} — the home directory plus registered project
- * roots. Resolution is gated too: an out-of-scope path must never become a
+ * gated to {@link allowedRoots} — the home directory, the OS temp directories
+ * and registered project roots. Resolution is gated too: an out-of-scope path must never become a
  * link that then refuses to open, and `..` segments let even a relative
  * candidate escape its base. Same exposure class as `listDirectory` behind
  * the same auth, but bounded — see decisions/2026/08/06/terminal-file-path-links.md.
@@ -62,8 +63,26 @@ function isUnder(absPath: string, root: string): boolean {
 	return absPath === root || absPath.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
+/**
+ * Agents park screenshots and scratch output in the OS temp directory, and on
+ * macOS they name it literally as `/tmp` — a symlink to `/private/tmp`, which
+ * the string-prefix gate would not otherwise recognise as the same place.
+ */
+function tempRoots(): string[] {
+	const roots = new Set<string>([tmpdir()]);
+	if (process.platform !== "win32") {
+		roots.add("/tmp");
+		try {
+			roots.add(realpathSync("/tmp"));
+		} catch {
+			// no /tmp on this system
+		}
+	}
+	return [...roots];
+}
+
 async function allowedRoots(): Promise<string[]> {
-	return [homedir(), ...(await projectRoots())];
+	return [homedir(), ...tempRoots(), ...(await projectRoots())];
 }
 
 async function isTerminalPathAllowed(absPath: string): Promise<boolean> {
