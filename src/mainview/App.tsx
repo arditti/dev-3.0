@@ -436,7 +436,7 @@ function App() {
 	// `paneless`: opened from a surface that has no workspace pane behind it (the
 	// task detail modal). Such a viewer is a popup for its whole life — it neither
 	// docks nor hides with the route, because there is no task screen it belongs to.
-	const [artifactViewer, setArtifactViewer] = useState<{ taskId: string; taskStatus?: TaskStatus; artifacts: SharedArtifact[]; index: number; paneless?: boolean } | null>(null);
+	const [artifactViewer, setArtifactViewer] = useState<{ taskId: string; projectId?: string; taskStatus?: TaskStatus; artifacts: SharedArtifact[]; index: number; paneless?: boolean } | null>(null);
 	const markSharedItemsRead = useCallback((
 		projectId: string,
 		taskId: string,
@@ -1897,6 +1897,7 @@ function App() {
 				// fresh one lands on the task the user is looking at, so it can dock.
 				setArtifactViewer((prev) => ({
 					taskId,
+					projectId,
 					artifacts,
 					index: artifacts.length - 1,
 					paneless: prev?.taskId === taskId ? prev.paneless : false,
@@ -1911,7 +1912,7 @@ function App() {
 					// in its pane rather than as a popup over the board it came from.
 					openTaskFromNotification(taskId, projectId);
 					markSharedItemsRead(projectId, taskId, "artifacts", artifacts);
-					setArtifactViewer({ taskId, artifacts, index: artifacts.length - 1, paneless: false });
+					setArtifactViewer({ taskId, projectId, artifacts, index: artifacts.length - 1, paneless: false });
 				},
 			});
 		}
@@ -1935,7 +1936,7 @@ function App() {
 			// slot for it, so it lives as a popup — only a viewer that started docked
 			// may later hide itself when the route walks away from its task.
 			const noPane = paneless === true || routeTaskId(routeRef.current) !== taskId;
-			setArtifactViewer({ taskId, taskStatus, artifacts, index: index ?? artifacts.length - 1, paneless: noPane });
+			setArtifactViewer({ taskId, projectId, taskStatus, artifacts, index: index ?? artifacts.length - 1, paneless: noPane });
 		}
 		window.addEventListener("dev3:openArtifactViewer", onOpenArtifactViewer);
 		return () => window.removeEventListener("dev3:openArtifactViewer", onOpenArtifactViewer);
@@ -3532,6 +3533,8 @@ function App() {
 			{artifactViewer && (
 				<TaskArtifactViewer
 					taskId={artifactViewer.taskId}
+					projectId={artifactViewer.projectId}
+					task={state.currentProjectTasks.find((candidate) => candidate.id === artifactViewer.taskId)}
 					taskStatus={artifactViewer.taskStatus}
 					artifacts={artifactViewer.artifacts}
 					initialIndex={artifactViewer.index}
