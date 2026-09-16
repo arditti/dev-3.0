@@ -567,7 +567,8 @@ export async function resolveAgentCommand(
  * appears as an ordinary word in that prose matches every running agent, so one
  * agent's routine cleanup SIGTERMed all of its siblings (#1734).
  *
- * Only Claude has such a flag (`--append-system-prompt-file`). Codex delivers
+ * Claude (`--append-system-prompt-file`) and omp (`--append-system-prompt`,
+ * which reads a file when the value names one) have such a flag. Codex delivers
  * the body through `-c developer_instructions=…` and the rest concatenate it
  * onto the prompt, so on Windows those launches are still over the ceiling — a
  * separate per-agent channel, not something this function can paper over.
@@ -575,9 +576,12 @@ export async function resolveAgentCommand(
  * A failed write throws rather than falling back to the inline body: that
  * fallback is the argv exposure being closed.
  */
+const SYSTEM_PROMPT_FILE_COMMANDS = new Set(["claude", "omp"]);
+
 function systemPromptFileFor(adapter: { command: string; skillBody?: string }): string | undefined {
-	if (adapter.command !== "claude" || !adapter.skillBody) return undefined;
-	return ensureAgentSystemPromptFile("claude", adapter.skillBody);
+	if (!SYSTEM_PROMPT_FILE_COMMANDS.has(adapter.command) || !adapter.skillBody) return undefined;
+	// Named per agent so two bodies never share a file. Claude keeps its own name.
+	return ensureAgentSystemPromptFile(adapter.command, adapter.skillBody);
 }
 
 /** Every raw arg a launch adds beyond the preset's own: the selected backend's

@@ -13,6 +13,7 @@ import {
 	cursorAdapter,
 	opencodeAdapter,
 	copilotAdapter,
+	ompAdapter,
 	genericAdapter,
 	shellEscape,
 	type AdapterLaunchOptions,
@@ -60,6 +61,7 @@ describe("registry", () => {
 		expect(getAgentAdapter("agent")).toBe(cursorAdapter);
 		expect(getAgentAdapter("opencode")).toBe(opencodeAdapter);
 		expect(getAgentAdapter("/Users/me/.local/bin/copilot")).toBe(copilotAdapter);
+		expect(getAgentAdapter("omp")).toBe(ompAdapter);
 	});
 
 	it("falls back to the generic adapter for unknown / custom commands", () => {
@@ -81,7 +83,7 @@ describe("registry", () => {
 // drag every skill body (~32 KB) along — so families.ts restates those facts as
 // plain data. These are the tests that keep the copy honest.
 describe("agent families (the renderer's copy of the registry)", () => {
-	const ADAPTERS = [claudeAdapter, codexAdapter, geminiAdapter, cursorAdapter, opencodeAdapter, copilotAdapter];
+	const ADAPTERS = [claudeAdapter, codexAdapter, geminiAdapter, cursorAdapter, opencodeAdapter, copilotAdapter, ompAdapter];
 
 	it("lists exactly the commands that have a first-class adapter", () => {
 		expect([...KNOWN_AGENT_COMMANDS].sort()).toEqual(ADAPTERS.map((a) => a.command).sort());
@@ -167,6 +169,7 @@ describe("capability flags", () => {
 		[cursorAdapter, "agent", true, true],
 		[opencodeAdapter, "opencode", true, false],
 		[copilotAdapter, "copilot", true, true],
+		[ompAdapter, "omp", true, false],
 		[genericAdapter, "", false, false],
 	] as const)("%s", (adapter, command, resume, preassign) => {
 		expect(adapter.command).toBe(command);
@@ -183,6 +186,7 @@ describe("trustKinds", () => {
 		[cursorAdapter, ["claude"]],
 		[opencodeAdapter, ["claude"]],
 		[copilotAdapter, ["claude", "copilot"]],
+		[ompAdapter, ["claude"]],
 		[genericAdapter, ["claude"]],
 	] as const)("%s", (adapter, kinds) => {
 		expect(adapter.trustKinds).toEqual(kinds);
@@ -201,10 +205,11 @@ describe("hooksSpec", () => {
 	it("Copilot is a bare copilot spec", () => {
 		expect(copilotAdapter.hooksSpec()).toEqual({ kind: "copilot" });
 	});
-	it("Gemini / Cursor / OpenCode / Generic install no hooks", () => {
+	it("Gemini / Cursor / OpenCode / omp / Generic install no hooks", () => {
 		expect(geminiAdapter.hooksSpec()).toBeNull();
 		expect(cursorAdapter.hooksSpec()).toBeNull();
 		expect(opencodeAdapter.hooksSpec()).toBeNull();
+		expect(ompAdapter.hooksSpec()).toBeNull();
 		expect(genericAdapter.hooksSpec()).toBeNull();
 	});
 });
@@ -223,6 +228,8 @@ describe("buildResumeCommand", () => {
 		[opencodeAdapter, "opencode", "sid", "opencode --session sid"],
 		[copilotAdapter, "copilot", undefined, "copilot --continue"],
 		[copilotAdapter, "copilot", "sid", "copilot --resume=sid"],
+		[ompAdapter, "omp", undefined, "omp -c"],
+		[ompAdapter, "omp", "sid", "omp --resume sid"],
 		[genericAdapter, "aider", "sid", null],
 	] as const)("%s (sid=%s)", (adapter, base, sid, expected) => {
 		expect(adapter.buildResumeCommand(base, sid ?? undefined)).toBe(expected);
@@ -233,11 +240,12 @@ describe("skillBody", () => {
 	it("each adapter carries the right body", () => {
 		expect(claudeAdapter.skillBody).toBe(CLAUDE_SKILL_BODY);
 		expect(codexAdapter.skillBody).toBe(CODEX_SKILL_BODY);
-		// Gemini/Cursor/OpenCode/Generic use the generic body.
+		// Gemini/Cursor/OpenCode/omp/Generic use the generic body.
 		expect(geminiAdapter.skillBody).toBe(GENERIC_SKILL_BODY);
 		expect(cursorAdapter.skillBody).toBe(GENERIC_SKILL_BODY);
 		expect(opencodeAdapter.skillBody).toBe(GENERIC_SKILL_BODY);
 		expect(copilotAdapter.skillBody).toBe(GENERIC_SKILL_BODY);
+		expect(ompAdapter.skillBody).toBe(GENERIC_SKILL_BODY);
 		expect(genericAdapter.skillBody).toBe(GENERIC_SKILL_BODY);
 	});
 });
@@ -430,6 +438,51 @@ describe("launchArgs — Copilot", () => {
 	});
 	it("drops maxBudgetUsd — Copilot budgets in AI credits, not dollars", () => {
 		expect(launch("copilot", cfg({ maxBudgetUsd: 12 }))).toBe("copilot -i 'Fix the login bug'");
+	});
+});
+
+describe("launchArgs — omp", () => {
+	it("omp maps permission mode to its approval tiers", () => {
+		expect(launch("omp", cfg({ permissionMode: "acceptEdits" })))
+			.toBe("omp --approval-mode write --append-system-prompt '<GENERIC_BODY>' -- 'Fix the login bug'");
+		expect(launch("omp", cfg({ permissionMode: "bypassPermissions" })))
+			.toBe("omp --approval-mode yolo --append-system-prompt '<GENERIC_BODY>' -- 'Fix the login bug'");
+		expect(launch("omp", cfg({ permissionMode: "dontAsk" })))
+			.toBe("omp --approval-mode yolo --append-system-prompt '<GENERIC_BODY>' -- 'Fix the login bug'");
+	});
+	// With no flag omp runs at its configured tier — `yolo` out of the box — so
+	// "no mapping" must never mean "no flag". The modes without a tier of their
+	// own (plan has no launch flag on omp, auto has no classifier) fail closed.
+	it("omp says always-ask for default, plan and auto instead of inheriting yolo", () => {
+		for (const permissionMode of ["default", "plan", "auto"] as const) {
+			expect(launch("omp", cfg({ permissionMode })))
+				.toBe("omp --approval-mode always-ask --append-system-prompt '<GENERIC_BODY>' -- 'Fix the login bug'");
+		}
+		expect(launch("omp", cfg())).toContain("--approval-mode always-ask");
+	});
+	it("omp keeps a --approval-mode or --thinking the preset already carries, undoubled", () => {
+		expect(launch("omp", cfg({ permissionMode: "acceptEdits", additionalArgs: ["--approval-mode", "yolo"] })))
+			.toBe("omp --append-system-prompt '<GENERIC_BODY>' --approval-mode yolo -- 'Fix the login bug'");
+		expect(launch("omp", cfg({ effort: "high", additionalArgs: ["--thinking", "max"] })))
+			.toBe("omp --approval-mode always-ask --append-system-prompt '<GENERIC_BODY>' --thinking max -- 'Fix the login bug'");
+		expect(launch("omp", cfg({ effort: "high", additionalArgs: ["--thinking=max"] })))
+			.toBe("omp --approval-mode always-ask --append-system-prompt '<GENERIC_BODY>' --thinking=max -- 'Fix the login bug'");
+	});
+	it("omp carries effort as --thinking and drops maxBudgetUsd, which it has no flag for", () => {
+		expect(launch("omp", cfg({ model: "opus", effort: "xhigh", maxBudgetUsd: 5 })))
+			.toBe("omp --model opus --approval-mode always-ask --thinking xhigh --append-system-prompt '<GENERIC_BODY>' -- 'Fix the login bug'");
+	});
+	it("omp takes the protocol as a file when the backend wrote one", () => {
+		// Same flag, either form. Keeping the body out of argv is what stops
+		// `pkill -f` matching every agent (h0x91b/dev-3.0#1734).
+		const cmd = launch("omp", cfg(), { systemPromptFile: "/home/u/.dev3.0/data/agent-prompts/omp.md" });
+		expect(cmd).toBe("omp --approval-mode always-ask --append-system-prompt /home/u/.dev3.0/data/agent-prompts/omp.md -- 'Fix the login bug'");
+		expect(cmd).not.toContain("<GENERIC_BODY>");
+	});
+	it("resumes without re-sending the prompt or the protocol, approval tier included", () => {
+		expect(launch("omp", cfg(), { resume: true })).toBe("omp -c --approval-mode always-ask");
+		expect(launch("omp", cfg({ model: "sonnet", permissionMode: "bypassPermissions" }), { resume: true, sessionId: "sid" }))
+			.toBe("omp --resume sid --model sonnet --approval-mode yolo");
 	});
 });
 

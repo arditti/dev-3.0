@@ -1,4 +1,6 @@
 import type { AgentConfiguration, ExternalApp } from "../../../../shared/types";
+import { DEFAULT_AGENTS } from "../../../../shared/types";
+import { OMP_APPROVAL_MODE } from "../../../../shared/agent-adapters/omp-flags";
 import {
 	AUTO_DIFF_VIEW_WIDTH_THRESHOLD,
 	buildCommandPreview,
@@ -144,6 +146,39 @@ describe("global-settings utils", () => {
 				"agent --force '{{TASK_DESCRIPTION}}\\n\\n…dev3 prompt…'",
 			envLine: null,
 		});
+	});
+
+	it("previews omp with the flags omp actually receives", () => {
+		expect(buildCommandPreview("omp", { id: "o", name: "YOLO (X-High)", permissionMode: "bypassPermissions", effort: "xhigh", maxBudgetUsd: 5 }).command)
+			.toBe("omp --approval-mode yolo --thinking xhigh --append-system-prompt '…dev3 prompt file…' -- '{{TASK_DESCRIPTION}}'");
+		// No flag would mean omp's own tier (`yolo`), so the launcher says
+		// always-ask for default, plan and auto — and the preview must show it.
+		for (const permissionMode of ["default", "plan", "auto"] as const) {
+			expect(buildCommandPreview("omp", { id: "o", name: "Plan", permissionMode }).command)
+				.toBe("omp --approval-mode always-ask --append-system-prompt '…dev3 prompt file…' -- '{{TASK_DESCRIPTION}}'");
+		}
+		expect(buildCommandPreview("omp", { id: "o", name: "Default" }).command)
+			.toBe("omp --approval-mode always-ask --append-system-prompt '…dev3 prompt file…' -- '{{TASK_DESCRIPTION}}'");
+	});
+
+	it("previews omp without doubling a flag the preset's own args already carry", () => {
+		expect(buildCommandPreview("omp", { id: "o", name: "x", effort: "high", additionalArgs: ["--thinking", "max"] }).command)
+			.toBe("omp --approval-mode always-ask --append-system-prompt '…dev3 prompt file…' --thinking max -- '{{TASK_DESCRIPTION}}'");
+		expect(buildCommandPreview("omp", { id: "o", name: "x", additionalArgs: ["--approval-mode=yolo"] }).command)
+			.toBe("omp --append-system-prompt '…dev3 prompt file…' --approval-mode=yolo -- '{{TASK_DESCRIPTION}}'");
+	});
+
+	it("never previews a shipped omp preset with the generic flags omp does not take", () => {
+		// The preview is a hand-kept mirror of the launcher. For omp a stale copy
+		// is worse than cosmetic: it shows --permission-mode, which the launcher
+		// replaced because a wrong approval value falls silently into yolo.
+		const omp = DEFAULT_AGENTS.find((a) => a.id === "builtin-omp")!;
+		for (const config of omp.configurations) {
+			const { command } = buildCommandPreview("omp", config);
+			expect(command).not.toMatch(/--permission-mode|--effort|--max-budget-usd/);
+			expect(command).toContain(`--approval-mode ${OMP_APPROVAL_MODE[config.permissionMode ?? "default"]}`);
+			expect(command.match(/--thinking/g)?.length ?? 0).toBeLessThanOrEqual(1);
+		}
 	});
 
 	it("omits --model for Claude when provider is bedrock", () => {

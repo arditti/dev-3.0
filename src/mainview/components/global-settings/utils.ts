@@ -7,6 +7,7 @@ import type {
 	ProviderConfig,
 } from "../../../shared/types";
 import { agentKey } from "../../../shared/agent-adapters/families";
+import { hasOmpFlag, OMP_APPROVAL_MODE } from "../../../shared/agent-adapters/omp-flags";
 import { buildProviderEnv, getProviderDefinition, providerPinnedModel } from "../../../shared/llm-provider";
 import { ENV_UNSET } from "../../../shared/agent-accounts";
 import { type ModelCatalog, resolveModelRoleLaunch, roleUnsetEnv } from "../../../shared/model-catalog";
@@ -142,6 +143,7 @@ export function buildCommandPreview(
 	const isCodex = cmdName === "codex";
 	const isClaude = cmdName === "claude";
 	const isCopilot = cmdName === "copilot";
+	const isOmp = cmdName === "omp";
 
 	// Mirror the launcher: only a backend registered for THIS agent applies
 	// (same guard as agentProvider in agents.ts).
@@ -173,7 +175,13 @@ export function buildCommandPreview(
 		parts.push(quoteIfUnsafeForPreview(arg));
 	}
 
-	if (!isCodex && config.permissionMode && config.permissionMode !== "default") {
+	// omp is explicit for every mode, `default` included — no flag means its own
+	// configured tier, `yolo` out of the box (see omp-flags.ts).
+	if (isOmp) {
+		if (!hasOmpFlag(config.additionalArgs, "--approval-mode")) {
+			parts.push("--approval-mode", OMP_APPROVAL_MODE[config.permissionMode ?? "default"]);
+		}
+	} else if (!isCodex && config.permissionMode && config.permissionMode !== "default") {
 		if (isCursor) {
 			if (config.permissionMode === "plan") {
 				parts.push("--mode", "plan");
@@ -200,16 +208,20 @@ export function buildCommandPreview(
 	// Copilot refuses `--model auto --effort <level>` outright; the launcher drops
 	// the flag there, so the preview must too.
 	if (config.effort && !isCursor && !isCodex && !(isCopilot && config.model === "auto")) {
-		parts.push("--effort", config.effort);
+		if (!isOmp) parts.push("--effort", config.effort);
+		else if (!hasOmpFlag(config.additionalArgs, "--thinking")) parts.push("--thinking", config.effort);
 	}
 
-	// Copilot budgets in AI credits, not dollars — the launcher drops this too.
-	if (config.maxBudgetUsd != null && config.maxBudgetUsd > 0 && !isCursor && !isCodex && !isCopilot) {
+	// Copilot budgets in AI credits, not dollars, and omp has no budget flag —
+	// the launcher drops this for both.
+	if (config.maxBudgetUsd != null && config.maxBudgetUsd > 0 && !isCursor && !isCodex && !isCopilot && !isOmp) {
 		parts.push("--max-budget-usd", String(config.maxBudgetUsd));
 	}
 
 	if (cmdName === "claude") {
 		parts.push("--append-system-prompt-file", "'…dev3 prompt file…'");
+	} else if (isOmp) {
+		parts.push("--append-system-prompt", "'…dev3 prompt file…'");
 	}
 
 	if (config.additionalArgs) {
@@ -225,8 +237,10 @@ export function buildCommandPreview(
 	if (isCursor) {
 		prompt += "\\n\\n…dev3 prompt…";
 	}
-	// Copilot takes the prompt behind -i, which runs it and STAYS interactive.
+	// Copilot takes the prompt behind -i, which runs it and STAYS interactive;
+	// omp takes it positionally after the `--` separator.
 	if (isCopilot) parts.push("-i");
+	if (isOmp) parts.push("--");
 	parts.push(`'${prompt}'`);
 
 	// Mirror the launcher's env: provider env (Bedrock flag + pinned model)
