@@ -253,7 +253,7 @@ describe("projects add", () => {
 
 		expect(stderrOutput).toContain('error: No space matches "Nope"');
 		expect(stderrOutput).not.toContain(SPACE_REF_INVALID_PREFIX);
-		expect(stderrOutput).toContain("--new-space");
+		expect(stderrOutput).toContain("dev3 spaces list");
 	});
 
 	it("says the app is too old when it does not know the method", async () => {

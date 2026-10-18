@@ -14,7 +14,7 @@ const ADD_TIMEOUT_MS = 2 * 60_000;
 const CLONE_TIMEOUT_MS = 30 * 60_000;
 
 const SPACE_FLAGS = ["space", "new-space", "no-space"];
-const SPACE_HINT = 'See every space with: dev3 spaces list. Create one with the project instead: --new-space "name"';
+const SPACE_HINT = 'See every space with: dev3 spaces list (--space joins one, --new-space "name" creates one)';
 
 function expandHome(path: string): string {
 	if (path === "~") return homedir();
