@@ -51,7 +51,7 @@ vi.mock("../rpc-handlers/spaces", async () => {
 });
 
 import { changeProjectSpaces, cloneProject, createSpaceWith, registerProject } from "../project-registration";
-import { _resetSpacesCache, createSpace, loadSpacesFile } from "../spaces-data";
+import { _resetSpacesCache, createSpace, deleteSpace, loadSpacesFile } from "../spaces-data";
 
 const REPO = `${ROOT}/repos/app`;
 const CLONES = `${ROOT}/clones`;
@@ -249,6 +249,30 @@ describe("cloneProject", () => {
 	it("checks spaces before cloning", async () => {
 		await expect(cloneProject({ url: URL, dir: CLONES, spaces: ["Nope"] })).rejects.toThrow(SPACE_REF_INVALID_PREFIX);
 		expect(mocks.cloneAndAddProject).not.toHaveBeenCalled();
+	});
+
+	// A clone can take minutes; the plan checked before it may be stale by the time it lands.
+	it("re-checks --new-space after the clone, so a same-named space made meanwhile is not duplicated", async () => {
+		mocks.cloneAndAddProject.mockImplementation(async ({ baseDir, repoName }: { baseDir: string; repoName: string }) => {
+			await createSpace("Tools", ["other-1"]);
+			return { ok: true, project: project("clone-1", `${baseDir}/${repoName}`) };
+		});
+
+		const attempt = cloneProject({ url: URL, dir: CLONES, newSpaces: ["Tools"] });
+
+		await expect(attempt).rejects.toThrow(/was added, but setting its spaces failed: A space named "Tools" already exists/);
+		await expect(attempt).rejects.not.toThrow(SPACE_REF_INVALID_PREFIX);
+		expect((await loadSpacesFile()).spaces.filter((s) => s.name === "Tools")).toHaveLength(1);
+	});
+
+	it("re-checks --space after the clone, so a space deleted meanwhile is reported, not skipped", async () => {
+		const target = await createSpace("Target", ["other-1"]);
+		mocks.cloneAndAddProject.mockImplementation(async ({ baseDir, repoName }: { baseDir: string; repoName: string }) => {
+			await deleteSpace(target.id);
+			return { ok: true, project: project("clone-1", `${baseDir}/${repoName}`) };
+		});
+
+		await expect(cloneProject({ url: URL, dir: CLONES, spaces: ["Target"] })).rejects.toThrow(/was added, but setting its spaces failed: No space matches "Target"/);
 	});
 
 	it("surfaces a failed clone", async () => {

@@ -1,13 +1,14 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Project, SpacesFile } from "../../shared/types";
+import { EMPTY_SPACES_FILE } from "../../shared/types";
 import { CLI_EXIT_CODE_PROJECT_ALREADY_REGISTERED } from "../../shared/cli-exit-codes";
 import { looksLikeGitUrl, shortSpaceId, toCliProject, type ProjectRegistrationResult } from "../../shared/project-registration";
 import { sendRequest } from "../socket-client";
 import { printTable, exitUsage } from "../output";
 import type { ParsedArgs } from "../args";
 import { rejectUnknownFlags } from "../flag-validation";
-import { exitRequestFailed, flagValue, flagValues, spaceNames, withBooleanFlags } from "./spaces";
+import { exitRequestFailed, flagValue, flagValues, isUnknownMethod, spaceNames, withBooleanFlags } from "./spaces";
 
 const ADD_TIMEOUT_MS = 2 * 60_000;
 // The whole clone happens inside this one request.
@@ -42,9 +43,10 @@ async function listProjects(args: ParsedArgs, socketPath: string): Promise<void>
 	const resp = await sendRequest(socketPath, "projects.list");
 	if (!resp.ok) exitRequestFailed(resp, "Failed to list projects");
 	const spacesResp = await sendRequest(socketPath, "spaces.list");
-	if (!spacesResp.ok) exitRequestFailed(spacesResp, "Failed to list spaces");
+	// An app older than this CLI has no spaces.list; the list it printed before still works.
+	if (!spacesResp.ok && !isUnknownMethod(spacesResp)) exitRequestFailed(spacesResp, "Failed to list spaces");
 
-	const file = spacesResp.data as SpacesFile;
+	const file = spacesResp.ok ? spacesResp.data as SpacesFile : EMPTY_SPACES_FILE;
 	const projects = (resp.data as Project[]).map((p) => toCliProject(p, file));
 	if ("json" in args.flags) {
 		process.stdout.write(`${JSON.stringify(projects, null, 2)}\n`);

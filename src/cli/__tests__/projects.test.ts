@@ -119,6 +119,17 @@ describe("projects list", () => {
 		expect(listed[1].spaces).toEqual([]);
 	});
 
+	// A CLI updated before the app restarted must not lose the command it already had.
+	it("still lists projects when the app is older than spaces.list", async () => {
+		mockSend.mockImplementation(async (_socket, method) =>
+			method === "spaces.list" ? errResp("Unknown method: spaces.list") : okResp(PROJECTS));
+
+		await handleProjects("list", { positional: [], flags: {} }, SOCKET);
+
+		expect(stdoutOutput).toMatch(/My App\s+-\s+\/Users\/dev\/my-app/);
+		expect(stderrOutput).toBe("");
+	});
+
 	it("shows short (8-char) project IDs", async () => {
 		answerLists();
 
@@ -254,6 +265,13 @@ describe("projects add", () => {
 		expect(stderrOutput).toContain('error: No space matches "Nope"');
 		expect(stderrOutput).not.toContain(SPACE_REF_INVALID_PREFIX);
 		expect(stderrOutput).toContain("dev3 spaces list");
+	});
+
+	// The project exists by then, so exit 34 ("nothing written") would be a lie.
+	it("does not read a space-ref message inside a later failure as exit 34", async () => {
+		mockSend.mockResolvedValue(errResp(`Project a1b2c3d4 was added, but setting its spaces failed: ${SPACE_REF_INVALID_PREFIX}No space matches "X".`));
+
+		await expect(run(["add", "/x", "--space", "X"])).rejects.toThrow("EXIT_1");
 	});
 
 	it("says the app is too old when it does not know the method", async () => {

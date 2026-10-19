@@ -76,7 +76,10 @@ function newSpaceNames(file: SpacesFile, names: string[]): string[] {
 	return out;
 }
 
-/** Settled BEFORE anything is written, so a bad ref never leaves a half-done project behind. */
+/**
+ * Checked BEFORE anything is written, so a bad ref never leaves a half-done
+ * project behind — and once more right before the memberships are applied.
+ */
 function planSpaces(file: SpacesFile, flags: SpaceFlags): SpacePlan {
 	const refs = flags.spaces ?? [];
 	const names = flags.newSpaces ?? [];
@@ -141,17 +144,22 @@ async function existingOutcome(project: Project): Promise<ProjectRegistrationRes
 	return { outcome: "exists", project: toCliProject(project, await spacesHandlers.getSpaces({})), createdSpaces: [] };
 }
 
-async function finishRegistration(project: Project, plan: SpacePlan): Promise<ProjectRegistrationResult> {
+async function finishRegistration(project: Project, flags: SpaceFlags): Promise<ProjectRegistrationResult> {
 	// Announced first: the project exists whatever happens to its memberships next.
 	getPushMessage()?.("projectAdded", { project });
 	let created: Space[];
 	try {
+		// Planned again on the file as it is NOW: a clone can take minutes, and a space deleted,
+		// or a same-named one created, in the meantime must not slip through.
+		const plan = planSpaces(await spacesHandlers.getSpaces({}), flags);
 		created = await applySpacePlan(project.id, plan);
 	} catch (err) {
-		log.error("Project added but its spaces could not be set", { projectId: project.id, error: String(err) });
-		throw new Error(`Project ${project.id.slice(0, 8)} was added, but setting its spaces failed: ${String(err)}`);
+		// No space-ref prefix past this point: the project WAS written, so this is not exit 34.
+		const reason = err instanceof Error ? err.message.replace(SPACE_REF_INVALID_PREFIX, "") : String(err);
+		log.error("Project added but its spaces could not be set", { projectId: project.id, error: reason });
+		throw new Error(`Project ${project.id.slice(0, 8)} was added, but setting its spaces failed: ${reason}`);
 	}
-	log.info("Project registered", { projectId: project.id, joined: plan.join.length, created: created.length });
+	log.info("Project registered", { projectId: project.id, created: created.length });
 	return {
 		outcome: "added",
 		project: toCliProject(project, await spacesHandlers.getSpaces({})),
@@ -161,7 +169,7 @@ async function finishRegistration(project: Project, plan: SpacePlan): Promise<Pr
 
 export async function registerProject(params: SpaceFlags & { path: string; name?: string; init?: boolean }): Promise<ProjectRegistrationResult> {
 	const path = requireFolder(params.path, "Project folder");
-	const plan = planSpaces(await spacesHandlers.getSpaces({}), params);
+	planSpaces(await spacesHandlers.getSpaces({}), params);
 	const existing = await findRegisteredProject(path);
 	if (existing) return existingOutcome(existing);
 
@@ -170,7 +178,7 @@ export async function registerProject(params: SpaceFlags & { path: string; name?
 		? await appHandlers.initAndAddProject({ path, name, initNonEmpty: true })
 		: await appHandlers.addProject({ path, name });
 	if (!result.ok) throw new Error(result.gitInit ? gitInitAdvice(result.gitInit) : result.error);
-	return finishRegistration(result.project, plan);
+	return finishRegistration(result.project, params);
 }
 
 export async function cloneProject(params: SpaceFlags & { url: string; dir?: string; name?: string }): Promise<ProjectRegistrationResult> {
@@ -184,14 +192,14 @@ export async function cloneProject(params: SpaceFlags & { url: string; dir?: str
 	const repoName = params.name?.trim() || extractRepoName(url);
 	const nameProblem = cloneDirNameProblem(repoName);
 	if (nameProblem) throw new Error(nameProblem);
-	const plan = planSpaces(await spacesHandlers.getSpaces({}), params);
+	planSpaces(await spacesHandlers.getSpaces({}), params);
 
 	const existing = await findRegisteredProject(`${baseDir}/${repoName}`);
 	if (existing) return existingOutcome(existing);
 
 	const result = await appHandlers.cloneAndAddProject({ url, baseDir, repoName });
 	if (!result.ok) throw new Error(result.error);
-	return finishRegistration(result.project, plan);
+	return finishRegistration(result.project, params);
 }
 
 async function activeProject(projectId: string): Promise<Project> {

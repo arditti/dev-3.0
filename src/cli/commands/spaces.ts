@@ -48,17 +48,21 @@ export function flagValues(args: ParsedArgs, key: string): string[] {
 	return values;
 }
 
+/** The app predates the method — it is older than this CLI. */
+export function isUnknownMethod(resp: CliResponse): boolean {
+	return !resp.ok && (resp.error ?? "").startsWith("Unknown method:");
+}
+
 /**
  * Exit for a failed request, with the dedicated code when the app refused a
  * space reference. `hint` is what the caller can do about that refusal.
  */
 export function exitRequestFailed(resp: CliResponse, fallback: string, spaceHint?: string): never {
 	const error = resp.error || fallback;
-	const marker = error.indexOf(SPACE_REF_INVALID_PREFIX);
-	if (marker !== -1) {
-		exitError(error.slice(marker + SPACE_REF_INVALID_PREFIX.length), spaceHint, CLI_EXIT_CODE_SPACE_REF_INVALID);
+	if (error.startsWith(SPACE_REF_INVALID_PREFIX)) {
+		exitError(error.slice(SPACE_REF_INVALID_PREFIX.length), spaceHint, CLI_EXIT_CODE_SPACE_REF_INVALID);
 	}
-	if (error.startsWith("Unknown method:")) {
+	if (isUnknownMethod(resp)) {
 		exitError(error, "The running dev3 app is older than this CLI. Update or restart the app, then retry.");
 	}
 	exitError(error);
